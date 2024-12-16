@@ -59,6 +59,7 @@ timm==0.9.16
 pydantic==1.10.15
 pyparsing==3.1.4
 typing-extensions==4.12.2
+torch==2.4.1+cu121
 
 # additional
 blendmodes
@@ -71,5 +72,5 @@ seam-carving
 sentencepiece
 
 # block
-torch!=2.5.0
+torch<2.5.0
 torchvision!=0.20.0
