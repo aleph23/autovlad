@@ -1,6 +1,6 @@
 # required for python 3.12
 setuptools==69.5.1
-
+--extra-index-url https://download.pytorch.org/whl/cu121
 # standard
 patch-ng
 anyio
