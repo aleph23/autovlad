@@ -68,3 +68,5 @@ tunableop_results*.csv
 !/models/VAE-approx/model.pt
 !/models/Reference
 !/models/Reference/**/*
+config.json-bak
+autovlad/
