@@ -29,7 +29,7 @@
     "test": ". venv/bin/activate; python launch.py --debug --test"
   },
   "devDependencies": {
-    "esbuild": "^0.18.20"
+    "esbuild": "^0.28.1"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
