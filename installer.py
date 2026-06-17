@@ -56,14 +56,14 @@ args = Dot({
     'skip_torch': False,
     'use_directml': False,
     'use_ipex': False,
-    'use_cuda': False,
+    'use_cuda': True,
     'use_rocm': False,
     'experimental': False,
     'test': False,
     'tls_selfsign': False,
     'reinstall': False,
     'version': False,
-    'ignore': False,
+    'ignore': True,
     'uv': False,
 })
 git_commit = "unknown"
@@ -199,10 +199,10 @@ def uninstall(package, quiet = False):
     packages = package if isinstance(package, list) else [package]
     txt = ''
     for p in packages:
-        if installed(p, p, quiet=True):
+        if installed(p, p, quiet=False):
             if not quiet:
                 log.warning(f'Package: {p} uninstall')
-            _result, _txt = pip(f"uninstall {p} --yes --quiet", ignore=True, quiet=True, uv=False)
+            _result, _txt = pip(f"uninstall {p} --yes --quiet", ignore=True, quiet=False, uv=False)
             txt += _txt
     ts('uninstall', t_start)
     return txt
@@ -276,7 +276,7 @@ def cleanup_broken_packages():
         pass
 
 
-def pip(arg: str, ignore: bool = False, quiet: bool = True, *, uv = True, constraints = True) -> tuple[subprocess.CompletedProcess | None, str]:
+def pip(arg: str, ignore: bool = False, quiet: bool = False, uv = True):
     t_start = time.time()
     originalArg = arg
     arg = arg.replace('>=', '==').strip()
@@ -545,11 +545,9 @@ def check_diffusers():
         if minor == -1:
             log.info(f'Install: package="diffusers" commit={target_commit}')
         else:
-            log.info(f'Update: package="diffusers" current={pkg.version} hash={current} target={target_commit}')
-            pip('uninstall --yes diffusers', ignore=True, quiet=True, uv=False)
-        if args.skip_git:
-            log.warning('Git: marked as not available but required for diffusers installation')
-        pip(f'install --upgrade git+https://github.com/huggingface/diffusers@{target_commit}', ignore=False, quiet=True, uv=False)
+            log.info(f'Diffusers update: current={pkg.version} hash={cur} target={sha}')
+            pip('uninstall --yes diffusers', ignore=True, quiet=False, uv=False)
+        pip(f'install --upgrade git+https://github.com/huggingface/diffusers@{sha}', ignore=False, quiet=False, uv=False)
         global diffusers_commit # pylint: disable=global-statement
         diffusers_commit = target_commit
     ts('diffusers', t_start)
@@ -579,9 +577,9 @@ def check_transformers():
                 log.info(f'Install: package="transformers" version={target_transformers}')
             else:
                 log.info(f'Update: package="transformers" current={pkg_transformers.version} target={target_transformers}')
-            pip('uninstall --yes transformers', ignore=True, quiet=True)
-            pip(f'install --upgrade tokenizers=={target_tokenizers}', ignore=False, quiet=True)
-            pip(f'install --upgrade transformers=={target_transformers}', ignore=False, quiet=True)
+            pip('uninstall --yes transformers', ignore=True, quiet=False)
+            pip(f'install --upgrade tokenizers=={target_tokenizers}', ignore=False, quiet=False)
+            pip(f'install --upgrade transformers=={target_transformers}', ignore=False, quiet=False)
     else:
         # Git commit-pinned version
         current = opts.get('transformers_version', '')
@@ -590,9 +588,9 @@ def check_transformers():
                 log.info(f'Install: package="transformers" commit={target_commit}')
             else:
                 log.info(f'Update: package="transformers" current={pkg_transformers.version} hash={current} target={target_commit}')
-            pip('uninstall --yes transformers', ignore=True, quiet=True)
-            pip(f'install --upgrade tokenizers=={target_tokenizers}', ignore=False, quiet=True)
-            pip(f'install --upgrade git+https://github.com/huggingface/transformers@{target_commit}', ignore=False, quiet=True)
+            pip('uninstall --yes transformers', ignore=True, quiet=False)
+            pip(f'install --upgrade tokenizers=={target_tokenizers}', ignore=False, quiet=False)
+            pip(f'install --upgrade git+https://github.com/huggingface/transformers@{target_commit}', ignore=False, quiet=False)
             global transformers_commit # pylint: disable=global-statement
             transformers_commit = target_commit
     ts('transformers', t_start)
@@ -603,9 +601,9 @@ def check_onnx():
     t_start = time.time()
     if args.skip_all or args.skip_requirements:
         return
-    if not installed('onnx', quiet=True):
+    if not installed('onnx', quiet=False):
         install('onnx', 'onnx', ignore=True)
-    if not installed('onnxruntime', quiet=True) and not (installed('onnxruntime-gpu', quiet=True) or installed('onnxruntime-openvino', quiet=True) or installed('onnxruntime-training', quiet=True)): # allow either
+    if not installed('onnxruntime', quiet=False) and not (installed('onnxruntime-gpu', quiet=False) or installed('onnxruntime-openvino', quiet=False) or installed('onnxruntime-training', quiet=False)): # allow either
         install(os.environ.get('ONNXRUNTIME_COMMAND', 'onnxruntime'), ignore=True)
     ts('onnx', t_start)
 
@@ -773,15 +771,13 @@ def install_torch_addons():
     t_start = time.time()
     triton_command = os.environ.get('TRITON_COMMAND', None)
     if triton_command is not None and triton_command != 'skip':
-        install(triton_command, 'triton', quiet=True)
+        install(triton_command, 'triton', quiet=False)
     xformers_package = os.environ.get('XFORMERS_PACKAGE', '--pre xformers') if opts.get('cross_attention_optimization', '') == 'xFormers' or args.use_xformers else 'none'
     if 'xformers' in xformers_package:
         try:
             install(xformers_package, ignore=True, no_deps=True)
         except Exception as e:
             log.debug(f'xFormers cannot install: {e}')
-    elif not args.experimental and not args.use_xformers and opts.get('cross_attention_optimization', '') != 'xFormers':
-        uninstall('xformers')
     if opts.get('cuda_compile_backend', '') == 'hidet':
         install('hidet', 'hidet')
     if opts.get('cuda_compile_backend', '') == 'deep-cache':
@@ -791,8 +787,8 @@ def install_torch_addons():
     if opts.get('samples_format', 'jpg') == 'jxl' or opts.get('grid_format', 'jpg') == 'jxl':
         install('pillow-jxl-plugin==1.3.7', 'pillow-jxl-plugin')
     if not args.experimental:
-        uninstall('wandb', quiet=True)
-        uninstall('pynvml', quiet=True)
+        uninstall('wandb', quiet=False)
+        uninstall('pynvml', quiet=False)
     ts('addons', t_start)
 
 
@@ -932,13 +928,13 @@ def check_torch():
                 if is_cuda_available:
                     if args.use_cuda:
                         log.warning(f'Torch: version="{torch.__version__}" CPU version installed and CUDA is selected - reinstalling')
-                        install(torch_command, 'torch torchvision', quiet=True, reinstall=True, force=True) # foce reinstall
+                        install(torch_command, 'torch torchvision', quiet=False, reinstall=True, force=True) # foce reinstall
                     else:
                         log.warning(f'Torch: version="{torch.__version__}" CPU version installed and CUDA is available - consider reinstalling')
                 elif is_rocm_available:
                     if args.use_rocm:
                         log.warning(f'Torch: version="{torch.__version__}" CPU version installed and ROCm is selected - reinstalling')
-                        install(torch_command, 'torch torchvision', quiet=True, reinstall=True, force=True) # foce reinstall
+                        install(torch_command, 'torch torchvision', quiet=False, reinstall=True, force=True) # foce reinstall
                     else:
                         log.warning(f'Torch: version="{torch.__version__}" CPU version installed and ROCm is available - consider reinstalling')
                 if args.use_openvino:
@@ -1044,6 +1040,26 @@ def check_modified_files():
     ts('files', t_start)
 
 
+# install required packages
+def install_packages():
+    t_start = time.time()
+    if args.profile:
+        pr = cProfile.Profile()
+        pr.enable()
+    # log.info('Install: verifying packages')
+    clip_package = os.environ.get('CLIP_PACKAGE', "git+https://github.com/openai/CLIP.git")
+    install(clip_package, 'clip', quiet=False)
+    install('open-clip-torch', no_deps=True, quiet=False)
+    # tensorflow_package = os.environ.get('TENSORFLOW_PACKAGE', 'tensorflow==2.13.0')
+    # tensorflow_package = os.environ.get('TENSORFLOW_PACKAGE', None)
+    # if tensorflow_package is not None:
+    #    install(tensorflow_package, 'tensorflow-rocm' if 'rocm' in tensorflow_package else 'tensorflow', ignore=True, quiet=False)
+    if args.profile:
+        pr.disable( )
+        print_profile(pr, 'Packages')
+    ts('packages', t_start)
+
+
 # run extension installer
 def run_extension_installer(folder):
     path_installer = os.path.realpath(os.path.join(folder, "install.py"))
@@ -1120,7 +1136,7 @@ def install_extensions(force=False):
     for folder in extension_folders:
         if not os.path.isdir(folder):
             continue
-        extensions = list_extensions_folder(folder, quiet=True)
+        extensions = list_extensions_folder(folder, quiet=False)
         log.debug(f'Extensions all: {extensions}')
         for ext in extensions:
             if os.path.basename(ext).lower() in extensions_disabled:
@@ -1174,8 +1190,8 @@ def install_submodules(force=True):
         txt = git('submodule')
         git_reset()
         log.info('Continuing setup')
-    git('submodule --quiet update --init --recursive')
-    git('submodule --quiet sync --recursive')
+    git('submodule update --init --recursive')
+    git('submodule sync --recursive')
     submodules = txt.splitlines()
     res = []
     for submodule in submodules:
@@ -1213,17 +1229,53 @@ def reload(package, desired=None):
     log.debug(f'Reload: package={package} version={sys.modules[package].__version__ if hasattr(sys.modules[package], "__version__") else "N/A"}')
 
 
+def ensure_base_requirements():
+    t_start = time.time()
+    setuptools_version = '69.5.1'
+
+    def update_setuptools():
+        global pkg_resources, setuptools, distutils # pylint: disable=global-statement
+        # python may ship with incompatible setuptools
+        subprocess.run(f'"{sys.executable}" -m pip install setuptools=={setuptools_version}', shell=True, check=False, env=os.environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # need to delete all references to modules to be able to reload them otherwise python will use cached version
+        modules = [m for m in sys.modules if m.startswith('setuptools') or m.startswith('pkg_resources') or m.startswith('distutils')]
+        for m in modules:
+            del sys.modules[m]
+        setuptools = importlib.import_module('setuptools')
+        sys.modules['setuptools'] = setuptools
+        distutils = importlib.import_module('distutils')
+        sys.modules['distutils'] = distutils
+        pkg_resources = importlib.import_module('pkg_resources')
+        sys.modules['pkg_resources'] = pkg_resources
+
+    try:
+        global pkg_resources, setuptools # pylint: disable=global-statement
+        import pkg_resources # pylint: disable=redefined-outer-name
+        import setuptools # pylint: disable=redefined-outer-name
+        if setuptools.__version__ != setuptools_version:
+            update_setuptools()
+    except ImportError:
+        update_setuptools()
+
+    # used by installler itself so must be installed before requirements
+    install('rich==14.1.0', 'rich', quiet=False)
+    install('psutil', 'psutil', quiet=False)
+    install('requests==2.32.3', 'requests', quiet=False)
+    ts('base', t_start)
+
+
 def install_gradio():
     # pip install gradio==3.43.2 installs:
     # aiofiles-23.2.1 altair-5.5.0 annotated-types-0.7.0 anyio-4.9.0 attrs-25.3.0 certifi-2025.6.15 charset_normalizer-3.4.2 click-8.2.1 contourpy-1.3.2 cycler-0.12.1 fastapi-0.115.14 ffmpy-0.6.0 filelock-3.18.0 fonttools-4.58.4 fsspec-2025.5.1 gradio-3.43.2 gradio-client-0.5.0 h11-0.16.0 hf-xet-1.1.5 httpcore-1.0.9 httpx-0.28.1 huggingface-hub-0.33.1 idna-3.10 importlib-resources-6.5.2 jinja2-3.1.6 jsonschema-4.24.0 jsonschema-specifications-2025.4.1 kiwisolver-1.4.8 markupsafe-2.1.5 matplotlib-3.10.3 narwhals-1.45.0 numpy-1.26.4 orjson-3.10.18 packaging-25.0 pandas-2.3.0 pillow-10.4.0 pydantic-2.11.7 pydantic-core-2.33.2 pydub-0.25.1 pyparsing-3.2.3 python-dateutil-2.9.0.post0 python-multipart-0.0.20 pytz-2025.2 pyyaml-6.0.2 referencing-0.36.2 requests-2.32.4 rpds-py-0.25.1 semantic-version-2.10.0 six-1.17.0 sniffio-1.3.1 starlette-0.46.2 tqdm-4.67.1 typing-extensions-4.14.0 typing-inspection-0.4.1 tzdata-2025.2 urllib3-2.5.0 uvicorn-0.35.0 websockets-11.0.3
     if installed('gradio', quiet=True):
         return
     install('gradio==3.43.2', no_deps=True)
-    install('gradio-client==0.5.0', no_deps=True, quiet=True)
+    install('gradio-client==0.5.0', no_deps=True, quiet=False)
+    install('dctorch==0.1.2', no_deps=True, quiet=False)
     pkgs = ['fastapi', 'websockets', 'aiofiles', 'ffmpy', 'pydub', 'uvicorn', 'semantic-version', 'altair', 'python-multipart', 'matplotlib', 'importlib-resources']
     for pkg in pkgs:
-        if not installed(pkg, quiet=True):
-            install(pkg, quiet=True)
+        if not installed(pkg, quiet=False):
+            install(pkg, quiet=False)
 
 
 def install_compel():
@@ -1233,22 +1285,22 @@ def install_compel():
 
 
 def install_pydantic():
-    install('pydantic==2.13.4', ignore=True, quiet=True)
+    install('pydantic==2.13.4', ignore=True, quiet=False)
     reload('pydantic', '2.13.4')
 
 
 def install_scipy():
     if args.new or (sys.version_info >= (3, 14)):
-        install('scipy==1.17.1', ignore=True, quiet=True)
+        install('scipy==1.17.1', ignore=True, quiet=False)
     else:
-        install('scipy==1.14.1', ignore=True, quiet=True)
+        install('scipy==1.14.1', ignore=True, quiet=False)
 
 
 def install_opencv():
-    install('opencv-python==4.13.0.92', ignore=True, quiet=True)
-    install('opencv-python-headless==4.13.0.92', ignore=True, quiet=True)
-    install('opencv-contrib-python==4.13.0.92', ignore=True, quiet=True)
-    install('opencv-contrib-python-headless==4.13.0.92', ignore=True, quiet=True)
+    install('opencv-python==4.13.0.92', ignore=True, quiet=False)
+    install('opencv-python-headless==4.13.0.92', ignore=True, quiet=False)
+    install('opencv-contrib-python==4.13.0.92', ignore=True, quiet=False)
+    install('opencv-contrib-python-headless==4.13.0.92', ignore=True, quiet=False)
 
 
 def install_insightface():
@@ -1262,7 +1314,7 @@ def install_insightface():
         uninstall('albumentationsx')
         install('albumentations==1.4.3', ignore=True, quiet=True)
     """
-    install('insightfacex==0.7.4', 'insightfacex', ignore=True, quiet=True)
+    install('insightfacex==0.7.4', 'insightfacex', ignore=True, quiet=False)
     uninstall('albumentations')
     install('albumentationsx')
     install_pydantic()
@@ -1274,20 +1326,20 @@ def install_optional():
     install('pi-heif')
     install('addict')
     install('yapf')
-    install('--no-build-isolation git+https://github.com/Disty0/BasicSR@23c1fb6f5c559ef5ce7ad657f2fa56e41b121754', 'basicsr', ignore=True, quiet=True)
-    install('av', ignore=True, quiet=True)
-    install('beautifulsoup4', ignore=True, quiet=True)
-    install('clean-fid', ignore=True, quiet=True)
-    install('clip_interrogator==0.6.0', ignore=True, quiet=True)
-    install('Cython', ignore=True, quiet=True)
-    install('gguf', ignore=True, quiet=True)
-    install('hf_transfer', ignore=True, quiet=True)
-    install('hf_xet', ignore=True, quiet=True)
-    install('nvidia-ml-py', ignore=True, quiet=True)
-    install('pillow-jxl-plugin==1.3.7', ignore=True, quiet=True)
-    install('ultralytics==8.4.67', ignore=True, quiet=True)
-    install('open-clip-torch', no_deps=True, quiet=True)
-    install('git+https://github.com/tencent-ailab/IP-Adapter.git', 'ip_adapter', ignore=True, quiet=True)
+    install('--no-build-isolation git+https://github.com/Disty0/BasicSR@23c1fb6f5c559ef5ce7ad657f2fa56e41b121754', 'basicsr', ignore=True, quiet=False)
+    install('av', ignore=True, quiet=False)
+    install('beautifulsoup4', ignore=True, quiet=False)
+    install('clean-fid', ignore=True, quiet=False)
+    install('clip_interrogator==0.6.0', ignore=True, quiet=False)
+    install('Cython', ignore=True, quiet=False)
+    install('gguf', ignore=True, quiet=False)
+    install('hf_transfer', ignore=True, quiet=False)
+    install('hf_xet', ignore=True, quiet=False)
+    install('nvidia-ml-py', ignore=True, quiet=False)
+    install('pillow-jxl-plugin==1.3.7', ignore=True, quiet=False)
+    install('ultralytics==8.4.67', ignore=True, quiet=False)
+    install('open-clip-torch', no_deps=True, quiet=False)
+    install('git+https://github.com/tencent-ailab/IP-Adapter.git', 'ip_adapter', ignore=True, quiet=False)
     # install('git+https://github.com/openai/CLIP.git', 'clip', quiet=True, no_build_isolation=True)
     ts('optional', t_start)
 
@@ -1301,7 +1353,7 @@ def install_requirements():
         pr.enable()
     if int(sys.version_info.minor) >= 13:
         install('audioop-lts')
-    if not installed('diffusers', quiet=True) or args.reinstall: # diffusers are not installed, so run initial installation
+    if not installed('diffusers', quiet=False) or args.reinstall: # diffusers are not installed, so run initial installation
         global quick_allowed # pylint: disable=global-statement
         quick_allowed = False
         log.info('Install requirements: this may take a while...')
@@ -1315,7 +1367,7 @@ def install_requirements():
     with open('requirements.txt', encoding='utf8') as f:
         lines = [line.strip() for line in f.readlines() if line.strip() != '' and not line.startswith('#') and line is not None]
         for line in lines:
-            if not installed(line, quiet=True) or args.reinstall:
+            if not installed(line, quiet=False) or args.reinstall:
                 if args.reinstall:
                     log.trace(f'Install: package="{line}" reinstall')
                 _res = install(line, reinstall=args.reinstall)
@@ -1588,30 +1640,8 @@ def check_version(reset=True): # pylint: disable=unused-argument
     commits = None
     branch_names = []
     try:
-        if ver and 'url' in ver:
-            url_parts = ver['url'].replace('https://github.com/', '').split('/tree/')[0]
-            api_base = f'https://api.github.com/repos/{url_parts}'
-        else:
-            api_base = 'https://api.github.com/repos/vladmandic/sdnext'
-        branches = requests.get(f'{api_base}/branches', timeout=5).json()
-        if not isinstance(branches, list):
-            log.error(f'Repository: branches API returned {branches!r} from {api_base}')
-            return
-        branch_names = [b['name'] for b in branches if 'name' in b]
-        log.trace(f'Repository branches: active={branch_name} available={branch_names}')
-    except Exception as e:
-        log.error(f'Repository: failed to get branches: {e}')
-        return
-    if branch_name not in branch_names:
-        log.warning(f'Repository: branch={branch_name} skipping update')
-        ts('latest', t_start)
-        return
-    try:
-        commits = requests.get(f'{api_base}/branches/{branch_name}', timeout=5).json()
-        latest = commits['commit']['sha']
-        if len(latest) != 40:
-            log.error(f'Repository error: commit={latest} invalid')
-        elif latest != commit and args.upgrade:
+        commits = requests.get(f'https://api.github.com/repos/aleph23/autovlad/branches/{branch_name}', timeout=10).json()
+        if commits['commit']['sha'] != commit and args.upgrade:
             global quick_allowed # pylint: disable=global-statement
             quick_allowed = False
             log.info('Updating main repository')

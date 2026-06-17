@@ -65,9 +65,5 @@ tunableop_results*.csv
 !/models/VAE-approx/model.pt
 !/models/Reference
 !/models/Reference/**/*
-
-# copilot instructions
-!/.github/
-!/.github/copilot-instructions.md
-!/.github/instructions/
-!/.github/instructions/**/*
+config.json-bak
+autovlad/
