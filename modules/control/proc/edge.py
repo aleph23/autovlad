@@ -33,7 +33,7 @@ class EdgeDetector:
         params.PFmode = pf
         ed.setParams(params)
         if "img" in kwargs:
-            warnings.warn("img is deprecated, please use `input_image=...` instead.", DeprecationWarning)
+            warnings.warn("img is deprecated, please use `input_image=...` instead.", DeprecationWarning, stacklevel=2)
             input_image = kwargs.pop("img")
         if input_image is None:
             raise ValueError("input_image must be defined.")

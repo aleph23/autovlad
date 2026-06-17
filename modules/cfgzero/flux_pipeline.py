@@ -217,7 +217,7 @@ class FluxCFGZeroPipeline(
 
     def _get_t5_prompt_embeds(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         num_images_per_prompt: int = 1,
         max_sequence_length: int = 512,
         device: Optional[torch.device] = None,
@@ -535,7 +535,7 @@ class FluxCFGZeroPipeline(
 
     @staticmethod
     def _unpack_latents(latents, height, width, vae_scale_factor):
-        batch_size, num_patches, channels = latents.shape
+        batch_size, _num_patches, channels = latents.shape
 
         # VAE applies 8x compression on images but we must also account for packing which requires
         # latent height and width to be divisible by 2.
@@ -637,9 +637,9 @@ class FluxCFGZeroPipeline(
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
-        negative_prompt: Union[str, List[str]] = None,
+        negative_prompt: Union[str, List[str]] | None = None,
         negative_prompt_2: Optional[Union[str, List[str]]] = None,
         true_cfg_scale: float = 1.0,
         height: Optional[int] = None,

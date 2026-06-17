@@ -788,16 +788,16 @@ class ConsistorySDXLUNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditio
             b1 (`float`): Scaling factor for stage 1 to amplify the contributions of backbone features.
             b2 (`float`): Scaling factor for stage 2 to amplify the contributions of backbone features.
         """
-        for i, upsample_block in enumerate(self.up_blocks):
-            setattr(upsample_block, "s1", s1)
-            setattr(upsample_block, "s2", s2)
-            setattr(upsample_block, "b1", b1)
-            setattr(upsample_block, "b2", b2)
+        for _i, upsample_block in enumerate(self.up_blocks):
+            upsample_block.s1 = s1
+            upsample_block.s2 = s2
+            upsample_block.b1 = b1
+            upsample_block.b2 = b2
 
     def disable_freeu(self):
         """Disables the FreeU mechanism."""
         freeu_keys = {"s1", "s2", "b1", "b2"}
-        for i, upsample_block in enumerate(self.up_blocks):
+        for _i, upsample_block in enumerate(self.up_blocks):
             for k in freeu_keys:
                 if hasattr(upsample_block, k) or getattr(upsample_block, k, None) is not None:
                     setattr(upsample_block, k, None)
@@ -857,7 +857,7 @@ class ConsistorySDXLUNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditio
             cross_attention_kwargs (`dict`, *optional*):
                 A kwargs dictionary that if specified is passed along to the [`AttnProcessor`].
             added_cond_kwargs: (`dict`, *optional*):
-                A kwargs dictionary containin additional embeddings that if specified are added to the embeddings that
+                A kwargs dictionary containing additional embeddings that if specified are added to the embeddings that
                 are passed along to the UNet blocks.
             down_block_additional_residuals (`tuple` of `torch.Tensor`, *optional*):
                 additional residuals to be added to UNet long skip connections from down blocks to up blocks for

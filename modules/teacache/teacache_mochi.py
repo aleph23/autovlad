@@ -32,7 +32,7 @@ def teacache_mochi_forward(
                 "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
             )
 
-    batch_size, num_channels, num_frames, height, width = hidden_states.shape
+    batch_size, _num_channels, num_frames, height, width = hidden_states.shape
     p = self.config.patch_size
 
     post_patch_height = height // p
@@ -61,7 +61,7 @@ def teacache_mochi_forward(
     if self.enable_teacache:
         inp = hidden_states.clone()
         temb_ = temb.clone()
-        modulated_inp, gate_msa, scale_mlp, gate_mlp = self.transformer_blocks[0].norm1(inp, temb_)
+        modulated_inp, _gate_msa, _scale_mlp, _gate_mlp = self.transformer_blocks[0].norm1(inp, temb_)
         if self.cnt == 0 or self.cnt == self.num_steps-1:
             should_calc = True
             self.accumulated_rel_l1_distance = 0
@@ -84,7 +84,7 @@ def teacache_mochi_forward(
             hidden_states += self.previous_residual
         else:
             ori_hidden_states = hidden_states.clone()
-            for i, block in enumerate(self.transformer_blocks):
+            for _i, block in enumerate(self.transformer_blocks):
                 if torch.is_grad_enabled() and self.gradient_checkpointing:
 
                     def create_custom_forward(module):
@@ -114,7 +114,7 @@ def teacache_mochi_forward(
             hidden_states = self.norm_out(hidden_states, temb)
             self.previous_residual = hidden_states - ori_hidden_states
     else:
-        for i, block in enumerate(self.transformer_blocks):
+        for _i, block in enumerate(self.transformer_blocks):
                 if torch.is_grad_enabled() and self.gradient_checkpointing:
                     def create_custom_forward(module):
                             def custom_forward(*inputs):

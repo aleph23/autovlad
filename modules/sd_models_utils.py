@@ -1,15 +1,18 @@
 import io
+import os
 import copy
 import json
 import inspect
-import os.path
 from rich import progress # pylint: disable=redefined-builtin
 import torch
 import safetensors.torch
 
 from modules import paths, shared, errors
-from modules.sd_checkpoint import CheckpointInfo, select_checkpoint, list_models, checkpoints_list, checkpoint_titles, get_closest_checkpoint_match, model_hash, update_model_hashes, setup_model, write_metadata, read_metadata_from_safetensors # pylint: disable=unused-import
-from modules.sd_offload import disable_offload, set_diffuser_offload, apply_balanced_offload, set_accelerate # pylint: disable=unused-import
+from modules.logger import log, console
+from modules.sd_checkpoint import CheckpointInfo # pylint: disable=unused-import
+
+
+debug = log.trace if os.environ.get('SD_LOAD_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
 class NoWatermark:
@@ -38,17 +41,48 @@ def path_to_repo(checkpoint_info):
         repo_id = checkpoint_info.name
     else:
         repo_id = checkpoint_info # fallback if fn is used with str param
+    repo_orig = repo_id
     repo_id = repo_id.replace('\\', '/')
-    if repo_id.startswith('Diffusers/'):
-        repo_id = repo_id.split('Diffusers/')[-1]
-    if repo_id.startswith('models--'):
-        repo_id = repo_id.split('models--')[-1]
+
+    remove_prefix = ['Diffusers', 'huggingface', 'models--', 'https://huggingface.co/', 'http://huggingface.co/']
+    for opt in [shared.opts.ckpt_dir, shared.opts.diffusers_dir, shared.opts.hfcache_dir]:
+        remove_prefix.append(opt.replace('\\', '/'))
+        try:
+            relative = os.path.relpath(opt, start=shared.opts.models_dir).replace('\\', '/')
+            if not relative.startswith('.'):
+                remove_prefix.append(relative)
+        except Exception:
+            pass
+        basename = os.path.basename(opt).replace('\\', '/')
+        if basename:
+            remove_prefix.append(basename)
+
+    debug(f'Path sanitize: prefixes={remove_prefix}')
+    for prefix in remove_prefix:
+        if repo_id.startswith(prefix):
+            repo_id = repo_id.lstrip(prefix)
+            break
+
+    repo_id = repo_id.lstrip('/')
     repo_id = repo_id.replace('--', '/')
-    if repo_id.count('/') != 1:
-        shared.log.warning(f'Model: repo="{repo_id}" repository not recognized')
     if '+' in repo_id:
         repo_id = repo_id.split('+')[0]
+    if repo_id.count('/') > 1:
+        log.warning(f'Model: repo="{repo_id}" repository not recognized')
+    debug(f'Path: from="{repo_orig}" to="{repo_id}"')
     return repo_id
+
+
+def repo_to_path(repo_id):
+    if repo_id.name.startswith('Diffusers'):
+        folder = repo_id[len('Diffusers'):].lstrip('/')
+        folder = 'models--' + repo_id.replace('/', '--')
+        folder = os.path.join(shared.opts.diffusers_dir, repo_id)
+        if os.path.exists(folder):
+            return folder
+    if os.path.exists(repo_id.filename):
+        return repo_id.filename
+    return ''
 
 
 def convert_to_faketensors(tensor):
@@ -64,28 +98,31 @@ def convert_to_faketensors(tensor):
 
 def read_state_dict(checkpoint_file, map_location=None, what:str='model'): # pylint: disable=unused-argument
     if not os.path.isfile(checkpoint_file):
-        shared.log.error(f'Load dict: path="{checkpoint_file}" not a file')
+        log.error(f'Load dict: path="{checkpoint_file}" not a file')
+        return None
+    _, extension = os.path.splitext(checkpoint_file)
+    if extension.lower() == ".ckpt" and shared.opts.sd_disable_ckpt:
+        log.warning(f"Checkpoint loading disabled: {checkpoint_file}")
         return None
     try:
         pl_sd = None
-        with progress.open(checkpoint_file, 'rb', description=f'[cyan]Load {what}: [yellow]{checkpoint_file}', auto_refresh=True, console=shared.console) as f:
-            _, extension = os.path.splitext(checkpoint_file)
-            if extension.lower() == ".ckpt" and shared.opts.sd_disable_ckpt:
-                shared.log.warning(f"Checkpoint loading disabled: {checkpoint_file}")
-                return None
-            if shared.opts.stream_load:
-                if extension.lower() == ".safetensors":
-                    buffer = f.read()
-                    pl_sd = safetensors.torch.load(buffer)
-                else:
-                    buffer = io.BytesIO(f.read())
-                    pl_sd = torch.load(buffer, map_location='cpu')
-            else:
-                if extension.lower() == ".safetensors":
-                    pl_sd = safetensors.torch.load_file(checkpoint_file, device='cpu')
+        # safetensors.torch.load_file opens its own handle by path, so wrapping
+        # with progress.open leaves the bar stuck at 0/total. Skip the wrapper
+        # on that path; other paths actually read through f and update.
+        if extension.lower() == ".safetensors" and not shared.opts.stream_load:
+            pl_sd = safetensors.torch.load_file(checkpoint_file, device='cpu')
+        else:
+            with progress.open(checkpoint_file, 'rb', description=f'[cyan]Load {what}: [yellow]{checkpoint_file}', auto_refresh=True, console=console) as f:
+                if shared.opts.stream_load:
+                    if extension.lower() == ".safetensors":
+                        buffer = f.read()
+                        pl_sd = safetensors.torch.load(buffer)
+                    else:
+                        buffer = io.BytesIO(f.read())
+                        pl_sd = torch.load(buffer, map_location='cpu')
                 else:
                     pl_sd = torch.load(f, map_location='cpu')
-            sd = get_state_dict_from_checkpoint(pl_sd)
+        sd = get_state_dict_from_checkpoint(pl_sd)
         del pl_sd
     except Exception as e:
         errors.display(e, f'Load model: {checkpoint_file}')
@@ -124,11 +161,11 @@ def patch_diffuser_config(sd_model, model_file):
         cfg_file = f'{model_file}_{k}.json'
         try:
             if os.path.exists(cfg_file):
-                with open(cfg_file, 'r', encoding='utf-8') as f:
+                with open(cfg_file, encoding='utf-8') as f:
                     return json.load(f)
             cfg_file = f'{os.path.join(paths.sd_configs_path, os.path.basename(model_file))}_{k}.json'
             if os.path.exists(cfg_file):
-                with open(cfg_file, 'r', encoding='utf-8') as f:
+                with open(cfg_file, encoding='utf-8') as f:
                     return json.load(f)
         except Exception:
             pass
@@ -179,6 +216,7 @@ def apply_function_to_model(sd_model, function, options, op=None):
             sd_model.prior_pipe.prior = function(sd_model.prior_pipe.prior, op="prior_pipe.prior", sd_model=sd_model)
             if op == "sdnq" and "StableCascade" in sd_model.__class__.__name__:
                 sd_model.prior_pipe.prior.clip_txt_pooled_mapper = backup_clip_txt_pooled_mapper
+
     if "TE" in options:
         if hasattr(sd_model, 'text_encoder') and hasattr(sd_model.text_encoder, 'config'):
             if hasattr(sd_model, 'decoder_pipe') and hasattr(sd_model.decoder_pipe, 'text_encoder') and hasattr(sd_model.decoder_pipe.text_encoder, 'config'):
@@ -195,13 +233,22 @@ def apply_function_to_model(sd_model, function, options, op=None):
             sd_model.mllm = function(sd_model.mllm, op="text_encoder_mllm", sd_model=sd_model)
         if hasattr(sd_model, 'prior_pipe') and hasattr(sd_model.prior_pipe, 'text_encoder') and hasattr(sd_model.prior_pipe.text_encoder, 'config'):
             sd_model.prior_pipe.text_encoder = function(sd_model.prior_pipe.text_encoder, op="prior_pipe.text_encoder", sd_model=sd_model)
+
     if "VAE" in options:
         if hasattr(sd_model, 'vae') and hasattr(sd_model.vae, 'decode'):
             if op == "compile":
-                sd_model.vae.decode = function(sd_model.vae.decode, op="vae_decode", sd_model=sd_model)
-                sd_model.vae.encode = function(sd_model.vae.encode, op="vae_encode", sd_model=sd_model)
+                if hasattr(sd_model.vae, 'decoder'):
+                    sd_model.vae.decoder = function(sd_model.vae.decoder, op="vae_decoder", sd_model=sd_model)
+                else:
+                    sd_model.vae.decode = function(sd_model.vae.decode, op="vae_decode", sd_model=sd_model)
             else:
                 sd_model.vae = function(sd_model.vae, op="vae", sd_model=sd_model)
+        if hasattr(sd_model, 'vae') and hasattr(sd_model.vae, 'encode'):
+            if op == "compile":
+                if hasattr(sd_model.vae, 'encoder'):
+                    sd_model.vae.encoder = function(sd_model.vae.encoder, op="vae_encoder", sd_model=sd_model)
+                else:
+                    sd_model.vae.encode = function(sd_model.vae.encode, op="vae_encode", sd_model=sd_model)
         if hasattr(sd_model, 'movq') and hasattr(sd_model.movq, 'decode'):
             if op == "compile":
                 sd_model.movq.decode = function(sd_model.movq.decode, op="movq_decode", sd_model=sd_model)

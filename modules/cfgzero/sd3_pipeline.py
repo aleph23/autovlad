@@ -246,7 +246,7 @@ class StableDiffusion3CFGZeroPipeline(DiffusionPipeline, SD3LoraLoaderMixin, Fro
 
     def _get_t5_prompt_embeds(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         num_images_per_prompt: int = 1,
         max_sequence_length: int = 256,
         device: Optional[torch.device] = None,
@@ -786,7 +786,7 @@ class StableDiffusion3CFGZeroPipeline(DiffusionPipeline, SD3LoraLoaderMixin, Fro
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         prompt_3: Optional[Union[str, List[str]]] = None,
         height: Optional[int] = None,
@@ -813,7 +813,7 @@ class StableDiffusion3CFGZeroPipeline(DiffusionPipeline, SD3LoraLoaderMixin, Fro
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 256,
-        skip_guidance_layers: List[int] = None,
+        skip_guidance_layers: List[int] | None = None,
         skip_layer_guidance_scale: float = 2.8,
         skip_layer_guidance_stop: float = 0.2,
         skip_layer_guidance_start: float = 0.01,

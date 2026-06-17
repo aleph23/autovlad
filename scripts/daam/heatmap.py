@@ -2,7 +2,6 @@ import io
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Dict, Tuple, Set, Iterable
 
 from matplotlib import pyplot as plt
@@ -19,7 +18,6 @@ __all__ = ['GlobalHeatMap', 'RawHeatMapCollection', 'WordHeatMap', 'ParsedHeatMa
 
 
 def plot_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None, color_normalize=True, ax=None, cmap='jet'):
-    # type: (PIL.Image.Image | np.ndarray, torch.Tensor, str, Path, int, bool, plt.Axes) -> None
     if ax is None:
         plt.rcParams['font.size'] = 16
         plt.rcParams['figure.facecolor'] = 'black'
@@ -66,7 +64,7 @@ def plot_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None, col
 
 
 class WordHeatMap:
-    def __init__(self, heatmap: torch.Tensor, word: str = None, word_idx: int = None):
+    def __init__(self, heatmap: torch.Tensor, word: str | None = None, word_idx: int | None = None):
         self.word = word
         self.word_idx = word_idx
         self.heatmap = heatmap
@@ -76,7 +74,6 @@ class WordHeatMap:
         return self.heatmap
 
     def plot_overlay(self, image, out_file=None, color_normalize=True, ax=None, cmap='jet', **expand_kwargs):
-        # type: (PIL.Image.Image | np.ndarray, Path, bool, plt.Axes, Dict[str, Any]) -> None
         return plot_overlay_heat_map(
             image,
             self.expand_as(image, **expand_kwargs),
@@ -131,7 +128,7 @@ class GlobalHeatMap:
         self.prompt = prompt
         self.compute_word_heat_map = lru_cache(maxsize=50)(self.compute_word_heat_map)
 
-    def compute_word_heat_map(self, word: str, word_idx: int = None, offset_idx: int = 0) -> WordHeatMap:
+    def compute_word_heat_map(self, word: str, word_idx: int | None = None, offset_idx: int = 0) -> WordHeatMap:
         merge_idxs, word_idx = compute_token_merge_indices(self.tokenizer, self.prompt, word, word_idx, offset_idx)
         return WordHeatMap(self.heat_maps[merge_idxs].mean(0), word, word_idx)
 

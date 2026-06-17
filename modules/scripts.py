@@ -1,6 +1,6 @@
 # compatibility with extensions that import scripts directly
 from modules import scripts_manager
-from modules.scripts_manager import * # noqa: F403 # pylint: disable=wildcard-import
+from modules.scripts_manager import * # pylint: disable=wildcard-import
 
 
 scripts_txt2img = None

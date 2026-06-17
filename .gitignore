@@ -1,7 +1,10 @@
 # defaults
+venv/
 __pycache__
 .ruff_cache
-/cache.json
+.vscode/
+.idea/
+**/.DS_Store
 /*.json
 /*.yaml
 /params.txt
@@ -9,17 +12,14 @@ __pycache__
 /user.css
 /webui-user.bat
 /webui-user.sh
-/html/extensions.json
-/html/themes.json
-config_states
+/data/metadata.json
+/data/extensions.json
+/data/cache.json
+/data/themes.json
+/data/installer.json
+/data/rocm.json
 node_modules
-pnpm-lock.yaml
 package-lock.json
-venv
-.history
-cache
-**/.DS_Store
-tunableop_results*.csv
 
 # all models and temp files
 *.log
@@ -36,34 +36,31 @@ tunableop_results*.csv
 *.rar
 *.7z
 *.pyc
+*.out
 /*.bat
 /*.sh
 /*.txt
 /*.mp3
 /*.lnk
-!webui.bat
-!webui.sh
-!package.json
-!requirements.txt
+/*.swp
 
 # all dynamic stuff
 /extensions/**/*
 /outputs/**/*
-/embeddings/**/*
 /models/**/*
-/interrogate/**/*
-/train/log/**/*
-/textual_inversion/**/*
-/detected_maps/**/*
 /tmp
-/log
-/cert
-.vscode/
-.idea/
-/localizations
 .*/
+cache
+tunableop_results*.csv
 
 # force included
+!webui.bat
+!webui.sh
+!package.json
+!requirements.txt
+!constraints.txt
+!pnpm-lock.yaml
+!/data
 !/models/VAE-approx
 !/models/VAE-approx/model.pt
 !/models/Reference

@@ -67,8 +67,16 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
     def __init__(
             self,
             num_train_timesteps: int = 1000,
+            beta_start: float = 0.00085,
+            beta_end: float = 0.012,
+            beta_schedule: str = "linear",
             shift: float = 1.0,
             use_dynamic_shifting=False,
+            prediction_type: str = "flow_prediction",
+            use_flow_sigmas: bool = True,
+            rescale_betas_zero_snr: bool = False,
+            timestep_spacing: str = "linspace",
+            steps_offset: int = 0,
             base_shift: Optional[float] = 0.5,
             max_shift: Optional[float] = 1.15,
             base_image_seq_len: Optional[int] = 256,
@@ -182,8 +190,8 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
 
     def set_timesteps(
             self,
-            num_inference_steps: int = None,
-            device: Union[str, torch.device] = None,
+            num_inference_steps: Optional[int] = None,
+            device: Optional[Union[str, torch.device]] = None,
             sigmas: Optional[List[float]] = None,
             mu: Optional[float] = None,
     ):
@@ -206,7 +214,11 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
 
             sigmas = timesteps / self.config.num_train_timesteps
         else:
-            sigmas = np.array(sigmas).astype(np.float32)
+            if isinstance(sigmas, torch.Tensor):
+                sigmas = sigmas.detach().cpu().numpy()
+            else:
+                sigmas = np.asarray(sigmas, dtype=np.float32)
+            sigmas = sigmas.astype(np.float32, copy=False)
             num_inference_steps = len(sigmas)
         self.num_inference_steps = num_inference_steps
 
@@ -261,6 +273,22 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
         else:
             self._step_index = self._begin_index
 
+    def scale_model_input(self, sample: torch.FloatTensor, timestep: Optional[int] = None) -> torch.FloatTensor:
+        """
+        Ensures interchangeability with schedulers that need to scale the denoising model input depending on the
+        current timestep.
+
+        Args:
+            sample (`torch.FloatTensor`):
+                The input sample.
+            timestep (`int`, *optional*):
+                The current timestep in the diffusion chain.
+        Returns:
+            `torch.FloatTensor`:
+                A scaled input sample.
+        """
+        return sample
+
     def step(
             self,
             model_output: torch.FloatTensor,
@@ -270,6 +298,7 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
             s_tmin: float = 0.0,
             s_tmax: float = float("inf"),
             s_noise: float = 1.0,
+            noise_clip_std: float = 0.0,
             generator: Optional[torch.Generator] = None,
             return_dict: bool = True,
     ) -> Union[FlashFlowMatchEulerDiscreteSchedulerOutput, Tuple]:
@@ -334,7 +363,9 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
                 device=model_output.device,
                 dtype=denoised.dtype,
             )
-            sample = sigma_next * noise + (1.0 - sigma_next) * denoised
+            if noise_clip_std > 0.0:
+                noise = noise.clamp(-noise_clip_std, noise_clip_std)
+            sample = sigma_next * s_noise * noise + (1.0 - sigma_next) * denoised
 
         self._step_index += 1
         sample = sample.to(model_output.dtype)
@@ -349,7 +380,6 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
         """Constructs the noise schedule of Karras et al. (2022)."""
 
         # Hack to make sure that other schedulers which copy this function don't break
-        # TODO: Add this logic to the other schedulers
         if hasattr(self.config, "sigma_min"):
             sigma_min = self.config.sigma_min
         else:
@@ -375,7 +405,6 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
         """Constructs an exponential noise schedule."""
 
         # Hack to make sure that other schedulers which copy this function don't break
-        # TODO: Add this logic to the other schedulers
         if hasattr(self.config, "sigma_min"):
             sigma_min = self.config.sigma_min
         else:
@@ -399,7 +428,6 @@ class FlashFlowMatchEulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
         """From "Beta Sampling is All You Need" [arXiv:2407.12173] (Lee et. al, 2024)"""
 
         # Hack to make sure that other schedulers which copy this function don't break
-        # TODO: Add this logic to the other schedulers
         if hasattr(self.config, "sigma_min"):
             sigma_min = self.config.sigma_min
         else:

@@ -3,7 +3,7 @@
 # https://huggingface.co/OpenGVLab/InternVL-14B-224px
 
 """
-- [MuLan](https://github.com/mulanai/MuLan) Multi-langunage prompts - wirte your prompts in ~110 auto-detected languages!
+- [MuLan](https://github.com/mulanai/MuLan) Multi-langunage prompts - write your prompts in ~110 auto-detected languages!
   Compatible with SD15 and SDXL
   Enable in scripts -> MuLan and set encoder to `InternVL-14B-224px` encoder
   (that is currently only supported encoder, but others will be added)
@@ -25,6 +25,7 @@ Examples:
 
 import gradio as gr
 from modules import shared, scripts_manager, processing, devices
+from modules.logger import log
 
 
 ENCODERS =[
@@ -44,11 +45,11 @@ tokenizer = None
 text_encoder_path = None
 
 
-class Script(scripts_manager.Script):
+class MuLanScript(scripts_manager.Script):
     def title(self):
         return 'MuLan: Multi Language Prompts'
 
-    def show(self, is_img2img):
+    def show(self, _is_img2img):
         return True
 
     def ui(self, _is_img2img):
@@ -64,7 +65,7 @@ class Script(scripts_manager.Script):
             return None
         # create pipeline
         if shared.sd_model_type != 'sd' and shared.sd_model_type != 'sdxl':
-            shared.log.error(f'MuLan: incorrect base model: {shared.sd_model.__class__.__name__}')
+            log.error(f'MuLan: incorrect base model: {shared.sd_model.__class__.__name__}')
             return None
 
         adapter_path = None
@@ -92,7 +93,7 @@ class Script(scripts_manager.Script):
             p.prompt = p.prompt[0]
         p.task_args['prompt'] = p.prompt
         if isinstance(p.negative_prompt, list):
-            p.prompt = p.negative_prompt[0]
+            p.negative_prompt = p.negative_prompt[0]
         p.task_args['negative_prompt'] = p.negative_prompt
 
         if pipe_type != ('sd15' if shared.sd_model_type == 'sd' else 'sdxl'):
@@ -100,21 +101,21 @@ class Script(scripts_manager.Script):
             adapter = None
         if text_encoder is None or tokenizer is None or text_encoder_path != selected_encoder:
             text_encoder_path = selected_encoder
-            shared.log.debug(f'MuLan loading: encoder="{text_encoder_path}"')
+            log.debug(f'MuLan loading: encoder="{text_encoder_path}"')
             text_encoder = None
             tokenizer = None
             devices.torch_gc(force=True)
             text_encoder, tokenizer = mulankit.api.load_internvl(text_encoder_path, text_encoder, tokenizer, torch_dtype=shared.sd_model.text_encoder.dtype)
             devices.torch_gc(force=True)
         if adapter is None:
-            shared.log.debug(f'MuLan loading: adapter="{adapter_path}"')
+            log.debug(f'MuLan loading: adapter="{adapter_path}"')
             adapter = None
             devices.torch_gc(force=True)
             adapter = mulankit.api.load_adapter(adapter_path, type=pipe_type)
             devices.torch_gc(force=True)
 
         if not getattr(shared.sd_model, 'mulan', False):
-            shared.log.info(f'MuLan apply: adapter="{adapter_path}" encoder="{text_encoder_path}"')
+            log.info(f'MuLan apply: adapter="{adapter_path}" encoder="{text_encoder_path}"')
             # mulankit.setup(force_sdxl_zero_empty_prompt=False, force_sdxl_zero_pool_prompt=False)
             shared.sd_model = mulankit.transform(shared.sd_model,
                 adapter=adapter,

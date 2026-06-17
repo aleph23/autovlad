@@ -6,19 +6,18 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-import torchsde
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.utils import BaseOutput
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
-import scipy.stats
 
 
 class BatchedBrownianTree:
     """A wrapper around torchsde.BrownianTree that enables batches of entropy."""
 
     def __init__(self, x, t0, t1, seed=None, **kwargs):
+        import torchsde
         t0, t1, self.sign = self.sort(t0, t1)
         w0 = kwargs.get("w0", torch.zeros_like(x))
         if seed is None:
@@ -155,6 +154,8 @@ class FlowMatchDPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
         algorithm_type: str = "dpmsolver++2M",
         solver_type: str = "midpoint",
         sigma_schedule: Optional[str] = None,
+        prediction_type: str = "flow_prediction",
+        use_flow_sigmas: bool = True,
         shift: float = 3.0,
         midpoint_ratio: Optional[float] = 0.5,
         s_noise: Optional[float] = 1.0,
@@ -166,6 +167,13 @@ class FlowMatchDPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
         base_image_seq_len: Optional[int] = 256,
         max_image_seq_len: Optional[int] = 4096,
     ):
+        from installer import install
+        install('torchsde==0.2.6', 'torchsde', quiet=True)
+        try:
+            import torchsde
+        except Exception as e:
+            raise ImportError("Failed to import torchsde. Please make sure it is installed correctly.") from e
+
         # settings for DPM-Solver
         if algorithm_type not in ["dpmsolver2", "dpmsolver2A", "dpmsolver++2M", "dpmsolver++2S", "dpmsolver++sde", "dpmsolver++2Msde", "dpmsolver++3Msde"]:
             raise NotImplementedError(f"{algorithm_type} is not implemented for {self.__class__}")
@@ -173,7 +181,7 @@ class FlowMatchDPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
         if solver_type not in ["midpoint", "heun"]:
             raise NotImplementedError(f"{solver_type} is not implemented for {self.__class__}")
 
-        if sigma_schedule not in [None, "karras", "exponential", "lambdas", "betas"]:
+        if sigma_schedule not in [None, "karras", "exponential", "lambdas", "betas", "flowmatch"]:
             raise NotImplementedError(f"{sigma_schedule} is not implemented for {self.__class__}")
 
         if beta_schedule not in ["linear", "scaled linear"]:
@@ -226,7 +234,7 @@ class FlowMatchDPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
         return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
 
     def set_timesteps(self,
-        num_inference_steps: int = None,
+        num_inference_steps: int | None = None,
         device: Union[str, torch.device] = None,
         sigmas: Optional[List[float]] = None,
         mu: Optional[float] = None,
@@ -287,6 +295,10 @@ class FlowMatchDPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
         else:
             num_inference_steps = len(sigmas)
             self.num_inference_steps = num_inference_steps
+            if isinstance(sigmas, torch.Tensor):
+                sigmas = sigmas.detach().cpu().numpy()
+            else:
+                sigmas = np.asarray(sigmas, dtype=np.float64)
 
         if self.config.sigma_schedule == "exponential":
             if self.use_beta_sigmas:
@@ -376,6 +388,7 @@ class FlowMatchDPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
     # Copied from diffusers.schedulers.scheduling_euler_discrete.EulerDiscreteScheduler._convert_to_beta
     def _convert_to_beta(self, sigma_min, sigma_max, num_inference_steps, device: Union[str, torch.device] = None, alpha: float = 0.6, beta: float = 0.6) -> torch.Tensor:
         """From "Beta Sampling is All You Need" [arXiv:2407.12173] (Lee et. al, 2024)"""
+        import scipy.stats
         sigmas = torch.Tensor(
             [
                 sigma_min + (ppf * (sigma_max - sigma_min))

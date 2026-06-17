@@ -1,34 +1,37 @@
 # pylint: disable=relative-beyond-top-level,redefined-builtin,protected-access
 
-from typing import List
-
 import torch
 
-from ...common import compile_func, int_mm_func # noqa: TID252
-from ...packed_int import unpack_int_symetric # noqa: TID252
-from ...dequantizer import dequantize_symmetric, dequantize_symmetric_with_bias # noqa: TID252
-from ..linear.linear_int8 import quantize_int8_matmul_input # noqa: TID252
-from ..linear.forward import check_mats # noqa: TID252
+from ...common import compile_func, int_mm_func
+from ...dequantizer import dequantize_symmetric, dequantize_symmetric_with_bias
+from ...quant_utils import rotate_hadamard, get_hadamard
+from ...packed_int import unpack_int
+
 from .forward import get_conv_args, process_conv_input
+from ..linear.linear_int8 import quantize_int_mm_input
+from ..linear.forward import check_mats
 
 
 def conv_int8_matmul(
     input: torch.FloatTensor,
-    weight: torch.CharTensor,
-    bias: torch.FloatTensor,
+    weight: torch.Tensor,
     scale: torch.FloatTensor,
-    svd_up: torch.FloatTensor,
-    svd_down: torch.FloatTensor,
-    quantized_weight_shape: torch.Size,
     result_shape: torch.Size,
-    weights_dtype: str,
-    reversed_padding_repeated_twice: List[int],
+    reversed_padding_repeated_twice: list[int],
     padding_mode: str, conv_type: int,
-    groups: int, stride: List[int],
-    padding: List[int], dilation: List[int],
+    groups: int, stride: list[int],
+    padding: list[int], dilation: list[int],
+    bias: torch.FloatTensor | None = None,
+    svd_up: torch.FloatTensor | None = None,
+    svd_down: torch.FloatTensor | None = None,
+    hadamard: torch.FloatTensor | None = None,
+    quantized_weight_shape: torch.Size | None = None,
+    weights_dtype: str | None = None,
 ) -> torch.FloatTensor:
     return_dtype = input.dtype
     input, mm_output_shape = process_conv_input(conv_type, input, reversed_padding_repeated_twice, padding_mode, result_shape, stride, padding, dilation)
+    if hadamard is not None:
+        input = rotate_hadamard(input, hadamard=hadamard)
     if svd_up is not None:
         input = input.flatten(0,-2)
         if bias is not None:
@@ -36,24 +39,25 @@ def conv_int8_matmul(
         else:
             bias = torch.mm(torch.mm(input.to(dtype=svd_down.dtype), svd_down), svd_up)
 
-    input, scale = quantize_int8_matmul_input(input, scale)
     if quantized_weight_shape is not None:
-        weight = unpack_int_symetric(weight, quantized_weight_shape, weights_dtype, dtype=torch.int8)
+        weight = unpack_int(weight, weights_dtype, quantized_weight_shape, dtype=torch.int8).t_()
+        scale = scale.t()
+    input, input_scale = quantize_int_mm_input(input, dtype=scale.dtype)
     input, weight = check_mats(input, weight)
 
     if groups == 1:
-        result = int_mm_func(input, weight)
+        result = int_mm_func(input, weight).to(dtype=input_scale.dtype).mul_(input_scale)
     else:
         weight = weight.view(weight.shape[0], groups, weight.shape[1] // groups)
         input = input.view(input.shape[0], groups, input.shape[1] // groups)
         result = []
         for i in range(groups):
             result.append(int_mm_func(input[:, i], weight[:, i]))
-        result = torch.cat(result, dim=-1)
+        result = torch.cat(result, dim=-1).to(dtype=input_scale.dtype).mul_(input_scale)
     if bias is not None:
-        result = dequantize_symmetric_with_bias(result, scale, bias, return_dtype, mm_output_shape)
+        result = dequantize_symmetric_with_bias(result, scale, bias, dtype=return_dtype, result_shape=mm_output_shape)
     else:
-        result = dequantize_symmetric(result, scale, return_dtype, mm_output_shape)
+        result = dequantize_symmetric(result, scale, dtype=return_dtype, result_shape=mm_output_shape)
 
     if conv_type == 1:
         result = result.transpose_(1,2)
@@ -66,24 +70,31 @@ def conv_int8_matmul(
 
 def quantized_conv_forward_int8_matmul(self, input) -> torch.FloatTensor:
     if torch.numel(input) / input.shape[2] < 32:
-        return self._conv_forward(input, self.sdnq_dequantizer(self.weight, self.scale, self.zero_point, self.svd_up, self.svd_down, skip_quantized_matmul=True), self.bias)
-    conv_type, stride, padding, dilation = get_conv_args(input.ndim, self.stride, self.padding, self.dilation)
+        return self._conv_forward(input, self.sdnq_dequantizer(self.weight, self.scale, zero_point=self.zero_point, svd_up=self.svd_up, svd_down=self.svd_down, skip_quantized_matmul=True), self.bias)
     if self.sdnq_dequantizer.re_quantize_for_matmul:
-        weight, scale = self.sdnq_dequantizer.re_quantize_matmul(self.weight, self.scale, self.zero_point, None, None)
+        weight, scale = self.sdnq_dequantizer.re_quantize_matmul(self.weight, self.scale, zero_point=self.zero_point)
         quantized_weight_shape = None
     else:
-        weight = self.weight
-        scale = self.scale
-        quantized_weight_shape = getattr(self.sdnq_dequantizer, "quantized_weight_shape", None)
+        weight, scale = self.weight, self.scale
+        quantized_weight_shape = self.sdnq_dequantizer.quantized_weight_shape if self.sdnq_dequantizer.is_packed else None
+    if self.sdnq_dequantizer.use_hadamard:
+        hadamard = get_hadamard(self.sdnq_dequantizer.hadamard_group_size, dtype=input.dtype, device=input.device)
+    else:
+        hadamard = None
+
+    conv_type, stride, padding, dilation = get_conv_args(input.ndim, self.stride, self.padding, self.dilation)
     return conv_int8_matmul(
-        input, weight, self.bias,
-        scale, self.svd_up, self.svd_down,
-        quantized_weight_shape,
+        input, weight, scale,
         self.sdnq_dequantizer.result_shape,
-        self.sdnq_dequantizer.weights_dtype,
         self._reversed_padding_repeated_twice,
         self.padding_mode, conv_type,
         self.groups, stride, padding, dilation,
+        bias=self.bias,
+        svd_up=self.svd_up,
+        svd_down=self.svd_down,
+        hadamard=hadamard,
+        quantized_weight_shape=quantized_weight_shape,
+        weights_dtype=self.sdnq_dequantizer.weights_dtype,
     )
 
 

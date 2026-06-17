@@ -3,7 +3,9 @@ import threading
 import numpy as np
 from PIL import Image
 from modules import shared, errors
-from modules.images_namegen import FilenameGenerator # pylint: disable=unused-import
+from modules.logger import log
+from modules.image.namegen import FilenameGenerator # pylint: disable=unused-import
+from modules.paths import resolve_output_path
 
 
 def interpolate_frames(images, count: int = 0, scale: float = 1.0, pad: int = 1, change: float = 0.3):
@@ -18,7 +20,7 @@ def interpolate_frames(images, count: int = 0, scale: float = 1.0, pad: int = 1,
             if len(frames) > 0:
                 images = frames
         except Exception as e:
-            shared.log.error(f'RIFE interpolation: {e}')
+            log.error(f'RIFE interpolation: {e}')
             errors.display(e, 'RIFE interpolation')
     return [np.array(image) for image in images]
 
@@ -27,7 +29,7 @@ def save_video_atomic(images, filename, video_type: str = 'none', duration: floa
     try:
         import cv2
     except Exception as e:
-        shared.log.error(f'Save video: cv2: {e}')
+        log.error(f'Save video: cv2: {e}')
         return
     savejob = shared.state.begin('Save video')
     os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -46,23 +48,26 @@ def save_video_atomic(images, filename, video_type: str = 'none', duration: floa
             loop = 0 if loop else 1,
         )
         size = os.path.getsize(filename)
-        shared.log.info(f'Save video: file="{filename}" frames={len(append) + 1} duration={duration} loop={loop} size={size}')
+        log.info(f'Save video: file="{filename}" frames={len(append) + 1} duration={duration} loop={loop} size={size}')
     elif video_type.lower() != 'none':
         frames = interpolate_frames(images, count=interpolate, scale=scale, pad=pad, change=change)
         fourcc = "mp4v"
         h, w, _c = frames[0].shape
-        video_writer = cv2.VideoWriter(filename, fourcc=cv2.VideoWriter_fourcc(*fourcc), fps=len(frames)/duration, frameSize=(w, h))
+        fps = max(1.0, len(frames) / duration) if duration > 0 else 30.0
+        video_writer = cv2.VideoWriter(filename, fourcc=cv2.VideoWriter_fourcc(*fourcc), fps=fps, frameSize=(w, h))
         for i in range(len(frames)):
             img = cv2.cvtColor(frames[i], cv2.COLOR_RGB2BGR)
             video_writer.write(img)
         size = os.path.getsize(filename)
-        shared.log.info(f'Save video: file="{filename}" frames={len(frames)} duration={duration} fourcc={fourcc} size={size}')
+        log.info(f'Save video: file="{filename}" frames={len(frames)} duration={duration} fourcc={fourcc} size={size}')
     shared.state.end(savejob)
 
 
 def save_video(p, images, filename = None, video_type: str = 'none', duration: float = 2.0, loop: bool = False, interpolate: int = 0, scale: float = 1.0, pad: int = 1, change: float = 0.3, sync: bool = False):
     if images is None or len(images) < 2 or video_type is None or video_type.lower() == 'none':
         return None
+    if interpolate > 0 and getattr(p, 'video_interpolated', False):
+        interpolate = 0
     image = images[0]
     if p is not None:
         seed = p.all_seeds[0] if getattr(p, 'all_seeds', None) is not None else p.seed
@@ -70,13 +75,14 @@ def save_video(p, images, filename = None, video_type: str = 'none', duration: f
         namegen = FilenameGenerator(p, seed=seed, prompt=prompt, image=image)
     else:
         namegen = FilenameGenerator(None, seed=0, prompt='', image=image)
+    base_path = resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_video)
     if filename is None and p is not None:
         filename = namegen.apply(shared.opts.samples_filename_pattern if shared.opts.samples_filename_pattern and len(shared.opts.samples_filename_pattern) > 0 else "[seq]-[prompt_words]")
-        filename = os.path.join(shared.opts.outdir_video, filename)
+        filename = os.path.join(base_path, filename)
         filename = namegen.sequence(filename)
     else:
         if os.path.sep not in filename:
-            filename = os.path.join(shared.opts.outdir_video, filename)
+            filename = os.path.join(base_path, filename)
     ext = video_type.lower().split('/')[0] if '/' in video_type else video_type.lower()
     if not filename.lower().endswith(ext):
         filename += f'.{ext}'
@@ -95,7 +101,7 @@ def get_video_params(filepath: str, capture: bool = False):
     video = cv2.VideoCapture(filepath)
     if not video.isOpened():
         msg = f'Video open failed: path="{filepath}"'
-        shared.log.error(msg)
+        log.error(msg)
         raise RuntimeError(msg)
     frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = round(video.get(cv2.CAP_PROP_FPS), 2)

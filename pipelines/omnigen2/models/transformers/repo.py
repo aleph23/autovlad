@@ -23,7 +23,7 @@ class OmniGen2RotaryPosEmbed(nn.Module):
                       theta: int) -> List[torch.Tensor]:
         freqs_cis = []
         freqs_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
-        for i, (d, e) in enumerate(zip(axes_dim, axes_lens)):
+        for _i, (d, e) in enumerate(zip(axes_dim, axes_lens)):
             emb = get_1d_rotary_pos_embed(d, e, theta=theta, freqs_dtype=freqs_dtype)
             freqs_cis.append(emb)
         return freqs_cis
@@ -114,7 +114,7 @@ class OmniGen2RotaryPosEmbed(nn.Module):
             batch_size, max_img_len, freqs_cis.shape[-1], device=device, dtype=freqs_cis.dtype
         )
 
-        for i, (cap_seq_len, ref_img_len, img_len, seq_len) in enumerate(zip(l_effective_cap_len, l_effective_ref_img_len, l_effective_img_len, seq_lengths)):
+        for i, (cap_seq_len, ref_img_len, img_len, _) in enumerate(zip(l_effective_cap_len, l_effective_ref_img_len, l_effective_img_len, seq_lengths)):
             cap_freqs_cis[i, :cap_seq_len] = freqs_cis[i, :cap_seq_len]
             ref_img_freqs_cis[i, :sum(ref_img_len)] = freqs_cis[i, cap_seq_len:cap_seq_len + sum(ref_img_len)]
             img_freqs_cis[i, :img_len] = freqs_cis[i, cap_seq_len + sum(ref_img_len):cap_seq_len + sum(ref_img_len) + img_len]

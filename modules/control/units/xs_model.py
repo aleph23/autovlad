@@ -26,20 +26,8 @@ from diffusers.models.attention_processor import AttentionProcessor
 from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.models.lora import LoRACompatibleConv
 from diffusers.models.modeling_utils import ModelMixin
-
-try:
-    from diffusers.models.unet_2d_blocks import CrossAttnDownBlock2D, CrossAttnUpBlock2D, DownBlock2D, Downsample2D, ResnetBlock2D, Transformer2DModel, UpBlock2D, Upsample2D # pylint: disable=no-name-in-module
-except Exception:
-    pass
-try:
-    from diffusers.models.unets.unet_2d_blocks import CrossAttnDownBlock2D, CrossAttnUpBlock2D, DownBlock2D, Downsample2D, ResnetBlock2D, Transformer2DModel, UpBlock2D, Upsample2D
-except Exception:
-    pass
-
-try:
-    from diffusers.models.unet_2d_condition import UNet2DConditionModel
-except Exception:
-    from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
+from diffusers.models.unets.unet_2d_blocks import CrossAttnDownBlock2D, CrossAttnUpBlock2D, DownBlock2D, Downsample2D, ResnetBlock2D, Transformer2DModel, UpBlock2D, Upsample2D
+from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
 from diffusers.utils import BaseOutput, logging, USE_PEFT_BACKEND
 
 
@@ -64,9 +52,9 @@ class ControlNetXSOutput(BaseOutput):
 class ControlNetConditioningEmbedding(nn.Module):
     """
     Quoting from https://arxiv.org/abs/2302.05543: "Stable Diffusion uses a pre-processing method similar to VQ-GAN
-    [11] to convert the entire dataset of 512 × 512 images into smaller 64 × 64 “latent images” for stabilized
-    training. This requires ControlNets to convert image-based conditions to 64 × 64 feature space to match the
-    convolution size. We use a tiny network E(·) of four convolution layers with 4 × 4 kernels and 2 × 2 strides
+    [11] to convert the entire dataset of 512 x 512 images into smaller 64 x 64 “latent images” for stabilized
+    training. This requires ControlNets to convert image-based conditions to 64 x 64 feature space to match the
+    convolution size. We use a tiny network E(·) of four convolution layers with 4 x 4 kernels and 2 x 2 strides
     (activated by ReLU, channels are 16, 32, 64, 128, initialized with Gaussian weights, trained jointly with the full
     model) to encode image-space conditions ... into feature maps ..."
     """
@@ -357,7 +345,7 @@ class ControlNetXSModel(ModelMixin, ConfigMixin):
             conditioning_channels=conditioning_channels,
         )
 
-        # In the mininal implementation setting, we only need the control model up to the mid block
+        # In the minimal implementation setting, we only need the control model up to the mid block
         del self.control_model.up_blocks
         del self.control_model.conv_norm_out
         del self.control_model.conv_out
@@ -389,7 +377,7 @@ class ControlNetXSModel(ModelMixin, ConfigMixin):
             controlnet_conditioning_channel_order (`str`, defaults to `"rgb"`):
                 The channel order of conditional image. Will convert to `rgb` if it's `bgr`.
             learn_embedding (`bool`, defaults to `False`):
-                Wether to use time embedding of the control model. If yes, the time embedding is a linear interpolation
+                Whether to use time embedding of the control model. If yes, the time embedding is a linear interpolation
                 of the time embeddings of the control and base model with interpolation parameter
                 `time_embedding_mix**3`.
             time_embedding_mix (`float`, defaults to 1.0):
@@ -657,7 +645,7 @@ class ControlNetXSModel(ModelMixin, ConfigMixin):
             if base_model.config.addition_embed_type == "text":
                 aug_emb = base_model.add_embedding(encoder_hidden_states)
             elif base_model.config.addition_embed_type == "text_image":
-                raise NotImplementedError()
+                raise NotImplementedError
             elif base_model.config.addition_embed_type == "text_time":
                 # SDXL - style
                 if "text_embeds" not in added_cond_kwargs:
@@ -676,9 +664,9 @@ class ControlNetXSModel(ModelMixin, ConfigMixin):
                 add_embeds = add_embeds.to(temb.dtype)
                 aug_emb = base_model.add_embedding(add_embeds)
             elif base_model.config.addition_embed_type == "image":
-                raise NotImplementedError()
+                raise NotImplementedError
             elif base_model.config.addition_embed_type == "image_hint":
-                raise NotImplementedError()
+                raise NotImplementedError
 
         temb = temb + aug_emb if aug_emb is not None else temb
 

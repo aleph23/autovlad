@@ -45,7 +45,7 @@ def teacache_lumina2_forward(
     attention_mask_for_main_loop_arg = None
     if use_mask:
         mask = input_to_main_loop.new_zeros(batch_size, max_seq_len, dtype=torch.bool)
-        for i, (enc_len, seq_len_val) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
+        for i, (_, seq_len_val) in enumerate(zip(encoder_seq_lengths, seq_lengths)):
             mask[i, :seq_len_val] = True
         attention_mask_for_main_loop_arg = mask
 

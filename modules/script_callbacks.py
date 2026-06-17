@@ -2,10 +2,11 @@ import os
 import sys
 import time
 from collections import namedtuple
-from typing import Optional, Dict, Any
+from typing import Any
 from fastapi import FastAPI
 from gradio import Blocks
 import modules.errors as errors
+from modules.logger import log
 
 
 def report_exception(e, c, job):
@@ -108,8 +109,8 @@ callback_map = dict(
     callbacks_before_process=[],
     callbacks_after_process=[],
     callbacks_model_loaded=[],
-    callbacks_ui_tabs=[],
     callbacks_ui_settings=[],
+    callbacks_ui_tabs=[],
     callbacks_before_image_saved=[],
     callbacks_image_saved=[],
     callbacks_image_save_btn=[],
@@ -141,7 +142,7 @@ def print_timers():
         if v > 0.05:
             long_callbacks.append(f'{k}={v:.2f}')
     if len(long_callbacks) > 0:
-        errors.log.debug(f'Script init: {long_callbacks}')
+        log.debug(f'Script init: {long_callbacks}')
 
 
 def clear_callbacks():
@@ -149,7 +150,7 @@ def clear_callbacks():
         callback_list.clear()
 
 
-def app_started_callback(demo: Optional[Blocks], app: FastAPI):
+def app_started_callback(demo: Blocks | None, app: FastAPI):
     for c in callback_map['callbacks_app_started']:
         try:
             t0 = time.time()
@@ -199,6 +200,16 @@ def model_loaded_callback(sd_model):
             report_exception(e, c, 'model_loaded_callback')
 
 
+def ui_settings_callback():
+    for c in callback_map['callbacks_ui_settings']:
+        try:
+            t0 = time.time()
+            c.callback()
+            timer(t0, c.script, 'ui_settings')
+        except Exception as e:
+            report_exception(e, c, 'ui_settings_callback')
+
+
 def ui_tabs_callback():
     res = []
     for c in callback_map['callbacks_ui_tabs']:
@@ -209,16 +220,6 @@ def ui_tabs_callback():
         except Exception as e:
             report_exception(e, c, 'ui_tabs_callback')
     return res
-
-
-def ui_settings_callback():
-    for c in callback_map['callbacks_ui_settings']:
-        try:
-            t0 = time.time()
-            c.callback()
-            timer(t0, c.script, 'ui_settings')
-        except Exception as e:
-            report_exception(e, c, 'ui_settings_callback')
 
 
 def before_image_saved_callback(params: ImageSaveParams):
@@ -319,7 +320,7 @@ def image_grid_callback(params: ImageGridLoopParams):
             report_exception(e, c, 'image_grid')
 
 
-def infotext_pasted_callback(infotext: str, params: Dict[str, Any]):
+def infotext_pasted_callback(infotext: str, params: dict[str, Any]):
     for c in callback_map['callbacks_infotext_pasted']:
         try:
             t0 = time.time()
@@ -410,6 +411,12 @@ def on_model_loaded(callback):
     add_callback(callback_map['callbacks_model_loaded'], callback)
 
 
+def on_ui_settings(callback):
+    """register a function to be called before UI settings are populated; add your settings
+    by using shared.opts.add_option(shared.OptionInfo(...)) """
+    add_callback(callback_map['callbacks_ui_settings'], callback)
+
+
 def on_ui_tabs(callback):
     """register a function to be called when the UI is creating new tabs.
     The function must either return a None, which means no new tabs to be added, or a list, where
@@ -421,12 +428,6 @@ def on_ui_tabs(callback):
     elem_id is HTML id for the tab
     """
     add_callback(callback_map['callbacks_ui_tabs'], callback)
-
-
-def on_ui_settings(callback):
-    """register a function to be called before UI settings are populated; add your settings
-    by using shared.opts.add_option(shared.OptionInfo(...)) """
-    add_callback(callback_map['callbacks_ui_settings'], callback)
 
 
 def on_before_image_saved(callback):

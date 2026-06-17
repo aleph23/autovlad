@@ -1,19 +1,22 @@
 import transformers
 import diffusers
 from modules import shared, devices, sd_models, model_quant, sd_hijack_te, sd_hijack_vae
+from modules.logger import log
 
 
-def load_qwen(checkpoint_info, diffusers_load_config={}):
+def load_qwen(checkpoint_info, diffusers_load_config=None):
     from pipelines import generic, qwen
+    if diffusers_load_config is None:
+        diffusers_load_config = {}
     repo_id = sd_models.path_to_repo(checkpoint_info)
     repo_subfolder = checkpoint_info.subfolder
     sd_models.hf_auth_check(checkpoint_info)
     transformer = None
 
     load_args, _quant_args = model_quant.get_dit_args(diffusers_load_config, module='Model')
-    shared.log.debug(f'Load model: type=Qwen model="{checkpoint_info.name}" repo="{repo_id}" offload={shared.opts.diffusers_offload_mode} dtype={devices.dtype} args={load_args}')
+    log.debug(f'Load model: type=Qwen model="{checkpoint_info.name}" repo="{repo_id}" offload={shared.opts.diffusers_offload_mode} dtype={devices.dtype} args={load_args}')
 
-    if '2509' in repo_id :
+    if '2509' in repo_id or '2511' in repo_id:
         cls_name = diffusers.QwenImageEditPlusPipeline
         diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageEditPlusPipeline
         diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageEditPlusPipeline
@@ -23,14 +26,24 @@ def load_qwen(checkpoint_info, diffusers_load_config={}):
         diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageEditPipeline
         diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageEditPipeline
         diffusers.pipelines.auto_pipeline.AUTO_INPAINT_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageEditPipeline
-    else:
+    elif 'Layered' in repo_id:
+        cls_name = diffusers.QwenImageLayeredPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["qwen-layered"] = diffusers.QwenImageLayeredPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["qwen-layered"] = diffusers.QwenImageLayeredPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_INPAINT_PIPELINES_MAPPING["qwen-layered"] = diffusers.QwenImageLayeredPipeline
+    elif 'Unipic3' in repo_id:
+        cls_name = diffusers.QwenImageEditPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageEditPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageEditPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_INPAINT_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageEditPipeline
+    else: # qwen-image, qwen-image-2512
         cls_name = diffusers.QwenImagePipeline
         diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImagePipeline
         diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageImg2ImgPipeline
         diffusers.pipelines.auto_pipeline.AUTO_INPAINT_PIPELINES_MAPPING["qwen-image"] = diffusers.QwenImageInpaintPipeline
 
     if model_quant.check_nunchaku('Model'):
-        transformer = qwen.load_qwen_nunchaku(repo_id)
+        transformer = qwen.load_qwen_nunchaku(repo_id, subfolder=repo_subfolder)
 
     if 'Qwen-Image-Distill-Full' in repo_id:
         repo_transformer = repo_id
@@ -44,18 +57,27 @@ def load_qwen(checkpoint_info, diffusers_load_config={}):
             transformer_subfolder = "transformer"
 
     if transformer is None:
+        from pipelines.qwen import QWEN_SPEC
         transformer = generic.load_transformer(
             repo_transformer,
             subfolder=transformer_subfolder,
             cls_name=diffusers.QwenImageTransformer2DModel,
             load_config=diffusers_load_config,
             modules_to_not_convert=["transformer_blocks.0.img_mod.1.weight"],
+            native_spec=QWEN_SPEC,
         )
 
-    repo_te = 'Qwen/Qwen-Image'
-    text_encoder = generic.load_text_encoder(repo_te, cls_name=transformers.Qwen2_5_VLForConditionalGeneration, load_config=diffusers_load_config)
+    text_encoder = generic.load_text_encoder(
+        repo_id,
+        cls_name=transformers.Qwen2_5_VLForConditionalGeneration,
+        load_config=diffusers_load_config
+    )
 
+    if repo_id is None or repo_id.lower() == 'none':
+        return None
     repo_id, repo_subfolder = qwen.check_qwen_pruning(repo_id, repo_subfolder)
+    if repo_subfolder is not None and repo_subfolder.startswith('nunchaku'):
+        repo_subfolder = None
     pipe = cls_name.from_pretrained(
         repo_id,
         transformer=transformer,
@@ -67,6 +89,13 @@ def load_qwen(checkpoint_info, diffusers_load_config={}):
     pipe.task_args = {
         'output_type': 'np',
     }
+    if 'Layered' in repo_id:
+        pipe.task_args['use_en_prompt'] = True
+        pipe.task_args['cfg_normalize'] = False
+        pipe.task_args['layers'] = shared.opts.model_qwen_layers
+        pipe.task_args['resolution'] = 640
+
+    generic.load_vae_override(pipe, diffusers_load_config)
 
     del text_encoder
     del transformer

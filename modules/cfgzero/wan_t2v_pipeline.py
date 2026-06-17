@@ -15,7 +15,6 @@
 import html
 from typing import Any, Callable, Dict, List, Optional, Union
 
-import ftfy
 import regex as re
 import torch
 from transformers import AutoTokenizer, UMT5EncoderModel
@@ -86,6 +85,9 @@ def optimized_scale(positive_flat, negative_flat):
     return st_star
 
 def basic_clean(text):
+    from installer import install
+    install('ftfy')
+    import ftfy
     text = ftfy.fix_text(text)
     text = html.unescape(html.unescape(text))
     return text.strip()
@@ -151,7 +153,7 @@ class WanCFGZeroPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
     def _get_t5_prompt_embeds(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         num_videos_per_prompt: int = 1,
         max_sequence_length: int = 226,
         device: Optional[torch.device] = None,
@@ -372,8 +374,8 @@ class WanCFGZeroPipeline(DiffusionPipeline, WanLoraLoaderMixin):
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
-        negative_prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
+        negative_prompt: Union[str, List[str]] | None = None,
         height: int = 480,
         width: int = 832,
         num_frames: int = 81,

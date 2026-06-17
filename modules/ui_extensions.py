@@ -3,15 +3,17 @@ import json
 import shutil
 import errno
 import html
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timezone, timedelta
 import gradio as gr
 from modules import extensions, shared, paths, errors, ui_symbols, call_queue
+from modules.logger import log
 
 
-debug = shared.log.debug if os.environ.get('SD_EXT_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.debug if os.environ.get('SD_EXT_DEBUG', None) is not None else lambda *args, **kwargs: None
 extensions_index = "https://vladmandic.github.io/sd-data/pages/extensions.json"
 hide_tags = ["localization"]
-exclude_extensions = ['sdnext-modernui']
+exclude_extensions = ['sdnext-modernui', 'sdnext-kanvas']
 extensions_list = []
 sort_ordering = {
     "default": (True, lambda x: x.get('sort_default', '')),
@@ -27,22 +29,22 @@ sort_ordering = {
     "commits": (True, lambda x: x.get('commits', 0)),
     "issues": (True, lambda x: x.get('issues', 0)),
 }
+extensions_data_file = os.path.join("data", "extensions.json")
+
+re_snake_case = re.compile(r'_(?=[a-zA-z0-9])')
+re_camelCase = re.compile(r'(?<=[a-z])([A-Z])')
 
 
-def get_installed(ext) -> extensions.Extension:
-    installed: extensions.Extension = [e for e in extensions.extensions if (e.remote or '').startswith(ext['url'].replace('.git', ''))]
+def get_installed(ext):
+    installed = [e for e in extensions.extensions if (e.remote or '').startswith(ext['url'].replace('.git', ''))]
     return installed[0] if len(installed) > 0 else None
 
 
 def list_extensions():
     global extensions_list # pylint: disable=global-statement
-    fn = os.path.join(paths.script_path, "html", "extensions.json")
-    extensions_list = shared.readfile(fn, silent=True) or []
-    if type(extensions_list) != list:
-        shared.log.warning(f'Invalid extensions list: file="{fn}"')
-        extensions_list = []
+    extensions_list = shared.readfile(extensions_data_file, silent=True, as_type="list")
     if len(extensions_list) == 0:
-        shared.log.info('Extension list is empty: refresh required')
+        log.info("Extension list: No information found - refresh required")
     found = []
     for ext in extensions.extensions:
         ext.read_info()
@@ -73,9 +75,9 @@ def list_extensions():
 
 def apply_changes(disable_list, update_list, disable_all):
     if shared.cmd_opts.disable_extension_access:
-        shared.log.error('Extension: apply changes disallowed because public access is enabled and insecure is not specified')
+        log.error('Extension: apply changes disallowed because public access is enabled and insecure is not specified')
         return
-    shared.log.debug(f'Extensions apply: disable={disable_list} update={update_list}')
+    log.debug(f'Extensions apply: disable={disable_list} update={update_list}')
     disabled = json.loads(disable_list)
     assert type(disabled) == list, f"wrong disable_list data for apply_changes: {disable_list}"
     update = json.loads(update_list)
@@ -90,18 +92,18 @@ def apply_changes(disable_list, update_list, disable_all):
             errors.display(e, f'extensions apply update: {ext.name}')
     shared.opts.disabled_extensions = disabled
     shared.opts.disable_all_extensions = disable_all
-    shared.opts.save(shared.config_filename)
+    shared.opts.save()
     shared.restart_server(restart=True)
 
 
 def check_updates(_id_task, disable_list, search_text, sort_column):
     if shared.cmd_opts.disable_extension_access:
-        shared.log.error('Extension: apply changes disallowed because public access is enabled and insecure is not specified')
+        log.error('Extension: apply changes disallowed because public access is enabled and insecure is not specified')
         return create_html(search_text, sort_column)
     disabled = json.loads(disable_list)
     assert type(disabled) == list, f"wrong disable_list data for apply_and_restart: {disable_list}"
     exts = [ext for ext in extensions.extensions if ext.remote is not None and ext.name not in disabled]
-    shared.log.info(f'Extensions update check: update={len(exts)} disabled={len(disable_list)}')
+    log.info(f'Extensions update check: update={len(exts)} disabled={len(disable_list)}')
     shared.state.job_count = len(exts)
     for ext in exts:
         shared.state.textinfo = ext.name
@@ -111,10 +113,10 @@ def check_updates(_id_task, disable_list, search_text, sort_column):
                 ext.git_fetch()
                 ext.read_info()
                 commit_date = ext.commit_date or 1577836800
-                shared.log.info(f'Extensions updated: {ext.name} {ext.commit_hash[:8]} {datetime.utcfromtimestamp(commit_date)}')
+                log.info(f'Extensions updated: {ext.name} {ext.commit_hash[:8]} {extensions.format_dt(extensions.ts2utc(commit_date), seconds=True)}')
             else:
                 commit_date = ext.commit_date or 1577836800
-                shared.log.debug(f'Extensions no update available: {ext.name} {ext.commit_hash[:8]} {datetime.utcfromtimestamp(commit_date)}')
+                log.debug(f'Extensions no update available: {ext.name} {ext.commit_hash[:8]} {extensions.format_dt(extensions.ts2utc(commit_date), seconds=True)}')
         except FileNotFoundError as e:
             if 'FETCH_HEAD' not in str(e):
                 raise
@@ -124,41 +126,50 @@ def check_updates(_id_task, disable_list, search_text, sort_column):
     return create_html(search_text, sort_column), "Extension update complete | Restart required"
 
 
-def normalize_git_url(url):
-    if url is None:
-        return ""
-    url = url.replace(".git", "")
-    return url
+def normalize_git_url(url: str | None) -> str:
+    _url = '' if url is None else url.strip().removesuffix('.git')
+    # check if url starts with valid prefixes:https://, http://, git://, ssh://, else raise error
+    if _url.startswith(('https://', 'http://', 'git://', 'ssh://', 'git@')):
+        return _url
+    raise ValueError(f'Invalid git URL: {url}')
+
+
+def sanize_dirname(dirname: str) -> str:
+    # strip any characters now in allow r"[A-Za-z0-9_.-]
+    if '..' in dirname or dirname.startswith('/') or dirname.startswith('\\'):
+        raise ValueError(f'Invalid directory name: {dirname}')
+    _dirname = re.sub(r'[^A-Za-z0-9_.-]', '', dirname.strip())
+    if _dirname == '':
+        raise ValueError(f'Invalid directory name: {dirname}')
+    return _dirname
 
 
 def install_extension_from_url(dirname, url, branch_name, search_text, sort_column):
     if shared.cmd_opts.disable_extension_access:
-        shared.log.error('Extension: apply changes disallowed because public access is enabled and insecure is not specified')
+        log.error('Extension: apply changes disallowed because public access is enabled and insecure is not specified')
         return ['', '']
-    if url is None or len(url) == 0:
-        shared.log.error('Extension: url is not specified')
+    url = normalize_git_url(url)
+    if not url:
+        log.error('Extension: url is not specified')
         return ['', '']
-    if dirname is None or dirname == "":
-        *parts, last_part = url.split('/') # pylint: disable=unused-variable
-        last_part = normalize_git_url(last_part)
-        dirname = last_part
+    if not dirname:
+        dirname = url.split('/')[-1]
+    dirname = sanize_dirname(dirname)
     target_dir = os.path.join(extensions.extensions_dir, dirname)
-    shared.log.info(f'Installing extension: {url} into {target_dir}')
+    log.info(f'Installing extension: {url} into {target_dir}')
     if os.path.exists(target_dir):
-        shared.log.error(f'Extension: path="{target_dir}" directory already exists')
+        log.error(f'Extension: path="{target_dir}" directory already exists')
         return ['', '']
-    normalized_url = normalize_git_url(url)
-    assert len([x for x in extensions.extensions if normalize_git_url(x.remote) == normalized_url]) == 0, 'Extension with this URL is already installed'
+    if any(normalize_git_url(x.remote) == url for x in extensions.extensions):
+        return ['', "Extension with this URL is already installed"]
     tmpdir = os.path.join(paths.data_path, "tmp", dirname)
-    if url.endswith('.git'):
-        url = url.replace('.git', '')
     try:
         import git
         shutil.rmtree(tmpdir, True)
         args = {
             'url': url,
             'to_path': tmpdir,
-            'allow_unsafe_protocols': True,
+            'allow_unsafe_protocols': False,
             'allow_unsafe_options': True,
             'filter': ['blob:none'],
         }
@@ -167,7 +178,7 @@ def install_extension_from_url(dirname, url, branch_name, search_text, sort_colu
         ssh = os.environ.get('GIT_SSH_COMMAND', None)
         if ssh:
             args['env'] = {'GIT_SSH_COMMAND':ssh}
-        shared.log.debug(f'GIT: {args}')
+        log.debug(f'GIT: {args}')
         with git.Repo.clone_from(**args) as repo:
             repo.remote().fetch(verbose=True)
             for submodule in repo.submodules:
@@ -187,12 +198,12 @@ def install_extension_from_url(dirname, url, branch_name, search_text, sort_colu
     except Exception as e:
         # errors.display(e, 'GIT')
         shutil.rmtree(tmpdir, True)
-        shared.log.error(f'Error installing extension: {url} {e}')
+        log.error(f'Error installing extension: {url} {e}')
         return ['', str(e).replace('\n', '<br>')]
 
 
 def install_extension(extension_to_install, search_text, sort_column):
-    shared.log.info(f'Extension install: {extension_to_install}')
+    log.info(f'Extension install: {extension_to_install}')
     code, message = install_extension_from_url(None, extension_to_install, None, search_text, sort_column)
     return code, message
 
@@ -201,9 +212,9 @@ def uninstall_extension(extension_path, search_text, sort_column):
     def errorRemoveReadonly(func, path, exc):
         import stat
         excvalue = exc[1]
-        shared.log.debug(f'Exception during cleanup: {func} {path} {excvalue.strerror}')
+        log.debug(f'Exception during cleanup: {func} {path} {excvalue.strerror}')
         if func in (os.rmdir, os.remove, os.unlink) and excvalue.errno == errno.EACCES:
-            shared.log.debug(f'Retrying cleanup: {path}')
+            log.debug(f'Retrying cleanup: {path}')
             os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
             func(path)
 
@@ -214,15 +225,15 @@ def uninstall_extension(extension_path, search_text, sort_column):
             shutil.rmtree(found.path, ignore_errors=False, onerror=errorRemoveReadonly) # pylint: disable=deprecated-argument
             # extensions.extensions = [extension for extension in extensions.extensions if os.path.abspath(found.path) != os.path.abspath(extension_path)]
         except Exception as e:
-            shared.log.warning(f'Extension uninstall failed: {found.path} {e}')
+            log.warning(f'Extension uninstall failed: {found.path} {e}')
         list_extensions()
         global extensions_list # pylint: disable=global-statement
         extensions_list = [ext for ext in extensions_list if ext['name'] != found.name]
-        shared.log.info(f'Extension uninstalled: {found.path}')
+        log.info(f'Extension uninstalled: {found.path}')
         code = create_html(search_text, sort_column)
         return code, f"Extension uninstalled: {found.path} | Restart required"
     else:
-        shared.log.warning(f'Extension uninstall cannot find extension: {extension_path}')
+        log.warning(f'Extension uninstall cannot find extension: {extension_path}')
         code = create_html(search_text, sort_column)
         return code, f"Extension uninstalled failed: {extension_path}"
 
@@ -231,7 +242,7 @@ def update_extension(extension_path, search_text, sort_column):
     exts = [extension for extension in extensions.extensions if os.path.abspath(extension.path) == os.path.abspath(extension_path)]
     shared.state.job_count = len(exts)
     for ext in exts:
-        shared.log.debug(f'Extensions update start: {ext.name} {ext.commit_hash} {ext.commit_date}')
+        log.debug(f'Extensions update start: {ext.name} {ext.commit_hash} {ext.commit_date}')
         shared.state.textinfo = ext.name
         try:
             ext.check_updates()
@@ -239,35 +250,37 @@ def update_extension(extension_path, search_text, sort_column):
                 ext.git_fetch()
                 ext.read_info()
                 commit_date = ext.commit_date or 1577836800
-                shared.log.info(f'Extensions updated: {ext.name} {ext.commit_hash[:8]} {datetime.utcfromtimestamp(commit_date)}')
+                log.info(f'Extensions updated: {ext.name} {ext.commit_hash[:8]} {extensions.format_dt(extensions.ts2utc(commit_date), seconds=True)}')
             else:
                 commit_date = ext.commit_date or 1577836800
-                shared.log.info(f'Extensions no update available: {ext.name} {ext.commit_hash[:8]} {datetime.utcfromtimestamp(commit_date)}')
+                log.info(f'Extensions no update available: {ext.name} {ext.commit_hash[:8]} {extensions.format_dt(extensions.ts2utc(commit_date), seconds=True)}')
         except FileNotFoundError as e:
             if 'FETCH_HEAD' not in str(e):
                 raise
         except Exception as e:
-            shared.log.error(f'Extensions update failed: {ext.name}')
+            log.error(f'Extensions update failed: {ext.name}')
             errors.display(e, f'extensions check update: {ext.name}')
-        shared.log.debug(f'Extensions update finish: {ext.name} {ext.commit_hash} {ext.commit_date}')
+        log.debug(f'Extensions update finish: {ext.name} {ext.commit_hash} {ext.commit_date}')
         shared.state.nextjob()
     return create_html(search_text, sort_column), f"Extension updated | {extension_path} | Restart required"
 
 
 def refresh_extensions_list(search_text, sort_column):
     global extensions_list # pylint: disable=global-statement
+    import ssl
     import urllib.request
     try:
-        shared.log.debug(f'Updating extensions list: url={extensions_index}')
-        with urllib.request.urlopen(extensions_index, timeout=3.0) as response:
+        log.debug(f'Updating extensions list: url={extensions_index}')
+        context = ssl._create_unverified_context() # pylint: disable=protected-access
+        with urllib.request.urlopen(extensions_index, timeout=3.0, context=context) as response:
             text = response.read()
         extensions_list = json.loads(text)
-        with open(os.path.join(paths.script_path, "html", "extensions.json"), "w", encoding="utf-8") as outfile:
+        with open(extensions_data_file, "w", encoding="utf-8") as outfile:
             json_object = json.dumps(extensions_list, indent=2)
             outfile.write(json_object)
-            shared.log.info(f'Updated extensions list: items={len(extensions_list)} url={extensions_index}')
+            log.info(f'Updated extensions list: items={len(extensions_list)} url={extensions_index}')
     except Exception as e:
-        shared.log.warning(f'Updated extensions list failed: {extensions_index} {e}')
+        log.warning(f'Updated extensions list failed: {extensions_index} {e}')
     list_extensions()
     code = create_html(search_text, sort_column)
     return code, f'Extensions | {len(extensions.extensions)} registered | {len(extensions_list)} available'
@@ -278,8 +291,14 @@ def search_extensions(search_text, sort_column):
     return code, f'Search | {search_text} | {sort_column}'
 
 
+def make_wrappable_html(text: str) -> str:
+    text = html.escape(text)
+    text = re_snake_case.sub("<wbr />_", text)
+    return re_camelCase.sub(r"<wbr />\1", text)
+
+
 def create_html(search_text, sort_column):
-    # shared.log.debug(f'Extensions manager: refresh list search="{search_text}" sort="{sort_column}"')
+    # log.debug(f'Extensions manager: refresh list search="{search_text}" sort="{sort_column}"')
     code = """
         <div id="extensions-div">
         <table id="extensions">
@@ -294,8 +313,8 @@ def create_html(search_text, sort_column):
             </colgroup>
             <thead style="font-size: 110%; border-style: solid; border-bottom: 1px var(--button-primary-border-color) solid">
             <tr>
-                <th>Status</th>
-                <th>Enabled</th>
+                <th></th>
+                <th></th>
                 <th>Extension</th>
                 <th>Description</th>
                 <th>Type</th>
@@ -315,13 +334,13 @@ def create_html(search_text, sort_column):
         ext['enabled'] = installed.enabled if installed is not None else ''
         ext['remote'] = installed.remote if installed is not None else None
         ext['path'] = installed.path if installed is not None else ''
-        ext['sort_default'] = f"{'1' if ext['is_builtin'] else '0'}{'1' if ext['installed'] else '0'}{ext.get('updated', '2000-01-01T00:00')}"
+        ext['sort_default'] = f"{'1' if ext['is_builtin'] else '0'}{'1' if ext['installed'] else '0'}{ext.get('updated', '2000-01-01T00:00Z')}"
     sort_reverse, sort_function = sort_ordering[sort_column]
 
     def dt(x: str):
         val = ext.get(x, None)
         try:
-            return datetime.fromisoformat(val[:-1]).strftime('%a %b%d %Y %H:%M') if val is not None else "N/A"
+            return extensions.format_dt(extensions.parse_isotime(val)) if val is not None else "N/A"
         except Exception:
             return 'N/A'
 
@@ -329,22 +348,23 @@ def create_html(search_text, sort_column):
     for ext in sorted(extensions_list, key=sort_function, reverse=sort_reverse):
         installed = get_installed(ext)
         author = ''
-        updated = datetime.timestamp(datetime.now())
+        updated = datetime.now(timezone.utc) # TZ-aware
         try:
             if 'github' in ext['url']:
                 author = 'Author: ' + ext['url'].split('/')[-2].split(':')[-1] if '/' in ext['url'] else ext['url'].split(':')[1].split('/')[0]
-                updated = datetime.timestamp(datetime.fromisoformat(ext.get('updated', '2000-01-01T00:00:00.000Z').rstrip('Z')))
+                updated = extensions.parse_isotime(ext.get('updated', '2000-01-01T00:00:00Z')) # TZ-aware
             else:
                 debug(f'Extension not from github: name={ext["name"]} url={ext["url"]}')
         except Exception as e:
             debug(f'Extension get updated error: name={ext["name"]} url={ext["url"]} {e}')
-        update_available = (installed is not None) and (ext['remote'] is not None) and (ext['commit_date'] > updated)
+        local_ver_date = extensions.ts2utc(ext['commit_date']) # TZ-aware
+        update_available = (installed is not None) and (not ext['is_builtin']) and (ext['remote'] is not None) and (updated > local_ver_date) # TZ-aware
         if update_available:
-            debug(f'Extension update available: name={ext["name"]} updated={updated}/{datetime.utcfromtimestamp(updated)} commit={ext["commit_date"]}/{datetime.utcfromtimestamp(ext["commit_date"])}')
+            debug(f'Extension update available: name={ext["name"]} updated={extensions.format_dt(updated, seconds=True)} commit={extensions.format_dt(local_ver_date, seconds=True)}') # TZ-aware
         ext['sort_user'] = f"{'0' if ext['is_builtin'] else '1'}{'1' if ext['installed'] else '0'}{ext.get('name', '')}"
-        ext['sort_enabled'] = f"{'0' if ext['enabled'] else '1'}{'1' if ext['is_builtin'] else '0'}{'1' if ext['installed'] else '0'}{ext.get('updated', '2000-01-01T00:00')}"
-        ext['sort_update'] = f"{'1' if update_available else '0'}{'1' if ext['installed'] else '0'}{ext.get('updated', '2000-01-01T00:00')}"
-        delta = datetime.now() - datetime.fromisoformat(ext.get('created', '2000-01-01T00:00Z')[:-1])
+        ext['sort_enabled'] = f"{'0' if ext['enabled'] else '1'}{'1' if ext['is_builtin'] else '0'}{'1' if ext['installed'] else '0'}{ext.get('updated', '2000-01-01T00:00Z')}"
+        ext['sort_update'] = f"{'1' if update_available else '0'}{'1' if ext['installed'] else '0'}{ext.get('updated', '2000-01-01T00:00Z')}"
+        delta = datetime.now(timezone.utc) - extensions.parse_isotime(ext.get('created', '2000-01-01T00:00Z')) # TZ-aware to prep for 3.11+ datetime.fromisoformat() behavior
         ext['sort_trending'] = round(ext.get('stars', 0) / max(delta.days, 5), 1)
         tags = ext.get("tags", [])
         if not isinstance(tags, list):
@@ -377,7 +397,7 @@ def create_html(search_text, sort_column):
                 stats['enabled'] += 1
             type_code = f"""<div class="type">{"SYSTEM" if ext['is_builtin'] else 'USER'}</div>"""
             version_code = f"""<div class="version" style="background: {"--input-border-color-focus" if update_available else "inherit"}">{ext['version']}</div>"""
-            enabled_code = f"""<input class="gr-check-radio gr-checkbox" name="enable_{html.escape(ext.get("name", "unknown"))}" type="checkbox" {'checked="checked"' if ext.get("enabled", False) else ''}>"""
+            enabled_code = f"""<input class="gr-check-radio gr-checkbox" style="display:block;margin:auto;width:fit-content;" name="enable_{html.escape(ext.get("name", "unknown"))}" type="checkbox" {'checked="checked"' if ext.get("enabled", False) else ''}>"""
             masked_path = html.escape(ext.get("path", "").replace('\\', '/'))
             if not ext['is_builtin']:
                 install_code = f"""<button onclick="uninstall_extension(this, '{masked_path}')" class="lg secondary gradio-button custom-button extension-button">uninstall</button>"""
@@ -388,49 +408,50 @@ def create_html(search_text, sort_column):
         tags_text = ", ".join([f"<span class='extension-tag'>{x}</span>" for x in tags])
         if ext.get('status', None) is None or type(ext['status']) == str: # old format
             ext['status'] = 0
+        style = "style='cursor: help;width: 1rem;margin: 0.2em;'"
         if ext['url'] is None or ext['url'] == '':
-            status = f"<span style='cursor:pointer;color:#00C0FD' title='Local'>{ui_symbols.bullet}</span>"
+            status = f"<div {style} title='Local'>{ui_symbols.svg_bullet.style('#00C0FD')}</div>"
         elif ext['status'] > 0:
             if ext['status'] == 1:
-                status = f"<span style='cursor:pointer;color:#00FD9C ' title='Verified'>{ui_symbols.bullet}</span>"
+                status = f"<div {style} title='Verified'>{ui_symbols.svg_bullet.style('#00FD9C')}</div>"
             elif ext['status'] == 2:
-                status = f"<span style='cursor:pointer;color:#FFC300' title='Supported only with backend:Original'>{ui_symbols.bullet}</span>"
+                status = f"<div {style} title='Supported only with backend: Original'>{ui_symbols.svg_bullet.style('#FFC300')}</div>"
             elif ext['status'] == 3:
-                status = f"<span style='cursor:pointer;color:#FFC300' title='Supported only with backend:Diffusers'>{ui_symbols.bullet}</span>"
+                status = f"<div {style} title='Supported only with backend: Diffusers'>{ui_symbols.svg_bullet.style('#FFC300')}</div>"
             elif ext['status'] == 4:
-                status = f"<span style='cursor:pointer;color:#4E22FF' title=\"{ext.get('note', 'custom value')}\">{ui_symbols.bullet}</span>"
+                status = f"<div {style} title=\"{html.escape(ext.get('note', 'custom value'))}\">{ui_symbols.svg_bullet.style('#4E22FF')}</div>"
             elif ext['status'] == 5:
-                status = f"<span style='cursor:pointer;color:#CE0000' title='Not supported'>{ui_symbols.bullet}</span>"
+                status = f"<div {style} title='Not supported'>{ui_symbols.svg_bullet.style('#CE0000')}</div>"
             elif ext['status'] == 6:
-                status = f"<span style='cursor:pointer;color:#AEAEAE' title='Just discovered'>{ui_symbols.bullet}</span>"
+                status = f"<div {style} title='Just discovered'>{ui_symbols.svg_bullet.style('#AEAEAE')}</div>"
             else:
-                status = f"<span style='cursor:pointer;color:#008EBC' title='Unknown status'>{ui_symbols.bullet}</span>"
+                status = f"<div {style} title='Unknown status'>{ui_symbols.svg_bullet.style('#008EBC')}</div>"
         else:
-            if updated < datetime.timestamp(datetime.now() - timedelta(6*30)):
-                status = f"<span style='cursor:pointer;color:#C000CF' title='Unmaintained'>{ui_symbols.bullet}</span>"
+            if updated < datetime.now(timezone.utc) - timedelta(6*30): # TZ-aware
+                status = f"<div {style} title='Unmaintained'>{ui_symbols.svg_bullet.style('#C000CF')}</div>"
             else:
-                status = f"<span style='cursor:pointer;color:#7C7C7C' title='No info'>{ui_symbols.bullet}</span>"
+                status = f"<div {style} title='No info'>{ui_symbols.svg_bullet.style('#7C7C7C')}</div>"
 
         code += f"""
             <tr style="display: {visible}">
-                <td>{status}</td>
                 <td{' class="extension_status"' if ext['installed'] else ''}>{enabled_code}</td>
-                <td><a href="{html.escape(ext.get('url', ''))}" title={html.escape(ext.get('url', ''))} target="_blank" class="name">{html.escape(ext.get("name", "unknown"))}</a><br>{tags_text}</td>
+                <td>{status}</td>
+                <td><a href="{html.escape(ext.get('url', ''))}" title={html.escape(ext.get('url', ''))} target="_blank" class="name">{make_wrappable_html(ext.get("name", "unknown"))}</a><br>{tags_text}</td>
                 <td>{html.escape(ext.get("description", ""))}
-                    <p class="info"><span class="date">Created {html.escape(dt('created'))} | Added {html.escape(dt('added'))} | Pushed {html.escape(dt('pushed'))} | Updated {html.escape(dt('updated'))}</span></p>
-                    <p class="info"><span class="date">{author} | Stars {html.escape(str(ext.get('stars', 0)))} | Size {html.escape(str(ext.get('size', 0)))} | Commits {html.escape(str(ext.get('commits', 0)))} | Issues {html.escape(str(ext.get('issues', 0)))} | Trending {html.escape(str(ext['sort_trending']))}</span></p>
+                    <p class="info"><span class="date">Created: {html.escape(dt('created'))} | Added: {html.escape(dt('added'))} | Pushed: {html.escape(dt('pushed'))} | Updated: {html.escape(dt('updated'))}</span></p>
+                    <p class="info"><span class="date">{author} | Stars: {html.escape(str(ext.get('stars', 0)))} | Size: {html.escape(str(ext.get('size', 0)))} | Commits: {html.escape(str(ext.get('commits', 0)))} | Issues: {html.escape(str(ext.get('issues', 0)))} | Trending: {html.escape(str(ext['sort_trending']))}</span></p>
                 </td>
                 <td>{type_code}</td>
                 <td>{version_code}</td>
                 <td>{install_code}</td>
             </tr>"""
     code += "</tbody></table></div>"
-    shared.log.debug(f'Extension list: processed={stats["processed"]} installed={stats["installed"]} enabled={stats["enabled"]} disabled={stats["installed"] - stats["enabled"]} visible={stats["processed"] - stats["hidden"]} hidden={stats["hidden"]}')
+    log.debug(f'Extension list: processed={stats["processed"]} installed={stats["installed"]} enabled={stats["enabled"]} disabled={stats["installed"] - stats["enabled"]} visible={stats["processed"] - stats["hidden"]} hidden={stats["hidden"]}')
     return code
 
 
 def create_ui():
-    shared.log.debug('UI initialize: tab=extensions')
+    log.debug('UI initialize: tab=extensions')
     extensions_disable_all = gr.Radio(label="Disable all extensions", choices=["none", "user", "all"], value=shared.opts.disable_all_extensions, elem_id="extensions_disable_all", visible=False)
     extensions_disabled_list = gr.Textbox(elem_id="extensions_disabled_list", visible=False, container=False)
     extensions_update_list = gr.Textbox(elem_id="extensions_update_list", visible=False, container=False)
@@ -453,7 +474,7 @@ def create_ui():
             list_extensions()
             gr.HTML('''<span style="color: var(--body-text-color)">
                         <h2>Extension list</h2>
-                        - Refesh extension list to download latest list with status<br>
+                        - Refresh extension list to download latest list with status<br>
                         - Check status of an extension by looking at status icon before installing it<br>
                         - After any operation such as install/uninstall or enable/disable, please restart the server<br>
                     </span>''')

@@ -123,6 +123,8 @@ class VDMScheduler(SchedulerMixin, ConfigMixin):
     def __init__(
         self,
         num_train_timesteps: Optional[int] = None,
+        beta_start: float = 1e-4,
+        beta_end: float = 0.02,
         beta_schedule: str = "linear",
         clip_sample: bool = True,
         clip_sample_range: float = 2.0,
@@ -135,13 +137,13 @@ class VDMScheduler(SchedulerMixin, ConfigMixin):
         order: int = 1,
     ):
         # Hardcoded as continuous schedules in `log_snr` are fitted to these values
-        self.beta_start = 1e-4
-        self.beta_end = 0.02
+        self.beta_start = beta_start
+        self.beta_end = beta_end
         self.init_noise_sigma = 1.0
 
         # For linear beta schedule, equivalent to torch.exp(-1e-4 - 10 * t ** 2)
         self.alphas_cumprod = lambda t: torch.sigmoid(self.log_snr(t))  # Equivalent to 1 - self.sigmas
-        self.sigmas = lambda t: torch.sigmoid(-self.log_snr(t))  # Equivalent to 1 - self.alphas_cumprod
+        self.sigmas = []
 
         self.num_inference_steps = None
         self.timesteps = torch.from_numpy(self.get_timesteps(len(self)))
@@ -240,6 +242,8 @@ class VDMScheduler(SchedulerMixin, ConfigMixin):
         self.num_inference_steps = num_inference_steps
         timesteps += self.config.steps_offset
         self.timesteps = torch.from_numpy(timesteps).to(device)
+        self.sigmas = [torch.sigmoid(-self.log_snr(t)) for t in self.timesteps]
+        self.sigmas = torch.stack(self.sigmas)
 
     # Copied from diffusers.schedulers.scheduling_ddpm.DDPMScheduler._threshold_sample
     def _threshold_sample(self, sample: torch.Tensor) -> torch.Tensor:
@@ -383,6 +387,24 @@ class VDMScheduler(SchedulerMixin, ConfigMixin):
             return (pred_prev_sample,)
 
         return VDMSchedulerOutput(prev_sample=pred_prev_sample, pred_original_sample=pred_original_sample)
+
+    def scale_noise(
+        self,
+        sample: torch.Tensor,
+        timestep: Union[float, torch.Tensor],
+        noise: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if noise is None:
+            noise = torch.randn_like(sample)
+        if not isinstance(timestep, torch.Tensor):
+            timestep = torch.tensor([timestep], device=sample.device, dtype=sample.dtype)
+        else:
+            timestep = timestep.to(device=sample.device)
+            if timestep.ndim == 0:
+                timestep = timestep.unsqueeze(0)
+        if timestep.shape[0] != sample.shape[0]:
+            timestep = timestep.repeat(sample.shape[0])
+        return self.add_noise(sample, noise, timestep)
 
     def add_noise(self, original_samples: torch.Tensor, noise: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
         """

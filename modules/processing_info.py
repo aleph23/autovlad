@@ -1,12 +1,14 @@
 import os
 from installer import git_commit
-from modules import shared, sd_samplers_common, sd_vae, generation_parameters_copypaste
+from modules import shared, sd_samplers_common, sd_vae
+from modules.logger import log
 from modules.processing_class import StableDiffusionProcessing
+from modules.infotext import quote
 
 
 args = {} # maintain history
 infotext = '' # maintain history
-debug = shared.log.trace if os.environ.get('SD_PROCESS_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.trace if os.environ.get('SD_PROCESS_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
 def get_last_args():
@@ -16,10 +18,11 @@ def get_last_args():
 def create_infotext(p: StableDiffusionProcessing, all_prompts=None, all_seeds=None, all_subseeds=None, comments=None, iteration=0, position_in_batch=0, index=None, all_negative_prompts=None, grid=None):
     global args, infotext # pylint: disable=global-statement
     if p is None:
-        shared.log.warning('Processing info: no data')
+        log.warning('Processing info: no data')
         return ''
     if not hasattr(shared.sd_model, 'sd_checkpoint_info'):
         return ''
+
     if index is None:
         index = position_in_batch + iteration * p.batch_size
     if all_prompts is None:
@@ -31,13 +34,20 @@ def create_infotext(p: StableDiffusionProcessing, all_prompts=None, all_seeds=No
     if all_subseeds is None:
         all_subseeds = p.all_subseeds or [p.subseed]
     while len(all_prompts) <= index:
-        all_prompts.insert(0, p.prompt)
+        all_prompts.append(p.prompt)
     while len(all_seeds) <= index:
-        all_seeds.insert(0, int(p.seed))
+        all_seeds.append(int(p.seed))
     while len(all_subseeds) <= index:
-        all_subseeds.insert(0, int(p.subseed))
+        all_subseeds.append(int(p.subseed))
     while len(all_negative_prompts) <= index:
-        all_negative_prompts.insert(0, p.negative_prompt)
+        all_negative_prompts.append(p.negative_prompt)
+    if p.all_templates is not None:
+        while len(p.all_templates) <= index:
+            p.all_templates.append('')
+    if p.all_negative_templates is not None:
+        while len(p.all_negative_templates) <= index:
+            p.all_negative_templates.append('')
+
     comment = ', '.join(comments) if comments is not None and type(comments) is list else None
     ops = list(set(p.ops))
     args = {
@@ -45,21 +55,22 @@ def create_infotext(p: StableDiffusionProcessing, all_prompts=None, all_seeds=No
         "Steps": p.steps,
         "Size": f"{p.width}x{p.height}" if hasattr(p, 'width') and hasattr(p, 'height') else None,
         "Sampler": p.sampler_name if p.sampler_name != 'Default' else None,
+        "Scheduler": shared.sd_model.scheduler.__class__.__name__ if getattr(shared.sd_model, 'scheduler', None) is not None else None,
         "Seed": all_seeds[index],
         "Seed resize from": None if p.seed_resize_from_w <= 0 or p.seed_resize_from_h <= 0 else f"{p.seed_resize_from_w}x{p.seed_resize_from_h}",
-        "CFG scale": p.cfg_scale if p.cfg_scale > 1.0 else 1.0,
-        "CFG rescale": p.diffusers_guidance_rescale if p.diffusers_guidance_rescale > 0 else None,
+        "CFG scale": p.cfg_scale if p.cfg_scale > -1 else None,
+        "CFG rescale": p.cfg_rescale if p.cfg_rescale > -1 else None,
         "CFG end": p.cfg_end if p.cfg_end < 1.0 else None,
-        "CFG true": p.pag_scale if p.pag_scale > 0 else None,
-        "CFG adaptive": p.pag_adaptive if p.pag_adaptive != 0.5 else None,
-        "Clip skip": p.clip_skip if p.clip_skip > 1 else None,
+        "CFG true": p.cfg_true if p.cfg_true > 0 else None,
+        "CFG adaptive": p.cfg_adaptive if p.cfg_adaptive != 0.5 else None,
+        "CLiP-skip": p.clip_skip if p.clip_skip > 1 else None,
         "Batch": f'{p.n_iter}x{p.batch_size}' if p.n_iter > 1 or p.batch_size > 1 else None,
         "Refiner prompt": p.refiner_prompt if len(p.refiner_prompt) > 0 else None,
         "Refiner negative": p.refiner_negative if len(p.refiner_negative) > 0 else None,
         "Styles": "; ".join(p.styles) if p.styles is not None and len(p.styles) > 0 else None,
         "App": 'SD.Next',
         "Version": git_commit,
-        "Parser": shared.opts.prompt_attention if shared.opts.prompt_attention != 'native' else None,
+        "Parser": (getattr(p, 'prompt_attention', None) or shared.opts.prompt_attention) if (getattr(p, 'prompt_attention', None) or shared.opts.prompt_attention) != 'native' else None,
         "Comment": comment,
         "Pipeline": shared.sd_model.__class__.__name__,
         "TE": None if (shared.opts.sd_text_encoder is None or shared.opts.sd_text_encoder == 'Default') else shared.opts.sd_text_encoder,
@@ -78,6 +89,8 @@ def create_infotext(p: StableDiffusionProcessing, all_prompts=None, all_seeds=No
         args["VAE"] = (None if not shared.opts.add_model_name_to_info or sd_vae.loaded_vae_file is None else os.path.splitext(os.path.basename(sd_vae.loaded_vae_file))[0])
     elif p.vae_type == 'Tiny':
         args["VAE"] = 'TAESD'
+    elif p.vae_type == 'REPA-E':
+        args["VAE"] = 'REPA-E'
     elif p.vae_type == 'Remote':
         args["VAE"] = 'Remote'
     if grid is None and (p.n_iter > 1 or p.batch_size > 1) and index >= 0:
@@ -103,21 +116,21 @@ def create_infotext(p: StableDiffusionProcessing, all_prompts=None, all_seeds=No
         if p.hr_force or ('Latent' in p.hr_upscaler):
             args["Hires force"] = p.hr_force
             args["Hires steps"] = p.hr_second_pass_steps
-            args["Hires strength"] = p.denoising_strength
-            args["Hires sampler"] = p.hr_sampler_name if p.hr_sampler_name != p.sampler_name else None
-            args["Hires CFG scale"] = p.image_cfg_scale
+            args["Hires strength"] = p.hr_denoising_strength
+            args["Hires sampler"] = p.hr_sampler_name if p.hr_sampler_name != 'Default' else None
+            args["Hires CFG scale"] = p.cfg_image if (p.cfg_image is not None and p.cfg_image > -1) else None
     if 'refine' in p.ops:
         args["Refine"] = p.enable_hr
         args["Refiner"] = None if (not shared.opts.add_model_name_to_info) or (not shared.sd_refiner) or (not shared.sd_refiner.sd_checkpoint_info.model_name) else shared.sd_refiner.sd_checkpoint_info.model_name.replace(',', '').replace(':', '')
-        args['Hires CFG scale'] = p.image_cfg_scale
+        args['Hires CFG scale'] = p.cfg_image if (p.cfg_image is not None and p.cfg_image > -1) else None
         args['Refiner steps'] = p.refiner_steps
         args['Refiner start'] = p.refiner_start
         args["Hires steps"] = p.hr_second_pass_steps
-        args["Hires sampler"] = p.hr_sampler_name
+        args["Hires sampler"] = p.hr_sampler_name if p.hr_sampler_name != 'Default' else None
     if ('img2img' in p.ops or 'inpaint' in p.ops) and ('txt2img' not in p.ops and 'hires' not in p.ops): # real img2img/inpaint
         args["Init image size"] = f"{getattr(p, 'init_img_width', 0)}x{getattr(p, 'init_img_height', 0)}"
         args["Init image hash"] = getattr(p, 'init_img_hash', None)
-        args['Image CFG scale'] = p.image_cfg_scale
+        args['Image CFG scale'] = p.cfg_image if (p.cfg_image is not None and p.cfg_image > -1) else None
         args["Mask weight"] = getattr(p, "inpainting_mask_weight", shared.opts.inpainting_mask_weight) if p.is_using_inpainting_conditioning else None
         args["Denoising strength"] = getattr(p, 'denoising_strength', None)
         if args["Size"] != args["Init image size"]:
@@ -141,7 +154,13 @@ def create_infotext(p: StableDiffusionProcessing, all_prompts=None, all_seeds=No
         args['Resize name mask'] = p.resize_name_mask
         args['Resize scale mask'] = float(p.scale_by_mask)
     if 'detailer' in p.ops:
-        args["Detailer"] = ', '.join(shared.opts.detailer_models) if len(shared.opts.detailer_args) == 0 else shared.opts.detailer_args
+        _d_models = getattr(p, 'detailer_models', None)
+        if _d_models is not None and len(_d_models) > 0:
+            args["Detailer"] = ', '.join(_d_models)
+        elif len(shared.opts.detailer_args) > 0:
+            args["Detailer"] = shared.opts.detailer_args
+        else:
+            args["Detailer"] = ', '.join(shared.opts.detailer_models)
         args["Detailer steps"] = p.detailer_steps
         args["Detailer strength"] = p.detailer_strength
         args["Detailer resolution"] = p.detailer_resolution if p.detailer_resolution != 1024 else None
@@ -149,31 +168,42 @@ def create_infotext(p: StableDiffusionProcessing, all_prompts=None, all_seeds=No
         args["Detailer negative"] = p.detailer_negative if len(p.detailer_negative) > 0 else None
     if 'color' in p.ops:
         args["Color correction"] = True
-    if shared.opts.token_merging_method == 'ToMe': # tome/todo
-        args['ToMe'] = shared.opts.tome_ratio if shared.opts.tome_ratio != 0 else None
-    else:
-        args['ToDo'] = shared.opts.todo_ratio if shared.opts.todo_ratio != 0 else None
+
+    def get_opt(key):
+        val = getattr(p, key, None)
+        if val is not None:
+            return val
+        return getattr(shared.opts, key, None)
+
+    _token_method = get_opt('token_merging_method')
+    _tome = get_opt('tome_ratio')
+    _todo = get_opt('todo_ratio')
+    if _token_method == 'ToMe': # tome/todo
+        args['ToMe'] = _tome if _tome != 0 else None
+    elif _token_method == 'ToDo':
+        args['ToDo'] = _todo if _todo != 0 else None
     if hasattr(shared.sd_model, 'embedding_db') and len(shared.sd_model.embedding_db.embeddings_used) > 0: # register used embeddings
         args['Embeddings'] = ', '.join(shared.sd_model.embedding_db.embeddings_used)
 
     # samplers
     if getattr(p, 'sampler_name', None) is not None and p.sampler_name.lower() != 'default':
-        args["Sampler eta delta"] = shared.opts.eta_noise_seed_delta if shared.opts.eta_noise_seed_delta != 0 and sd_samplers_common.is_sampler_using_eta_noise_seed_delta(p) else None
+        _eta_delta = get_opt('eta_noise_seed_delta')
+        args["Sampler eta delta"] = _eta_delta if _eta_delta != 0 and sd_samplers_common.is_sampler_using_eta_noise_seed_delta(p) else None
         args["Sampler eta multiplier"] = p.initial_noise_multiplier if getattr(p, 'initial_noise_multiplier', 1.0) != 1.0 else None
-        args['Sampler timesteps'] = shared.opts.schedulers_timesteps if shared.opts.schedulers_timesteps != shared.opts.data_labels.get('schedulers_timesteps').default else None
-        args['Sampler spacing'] = shared.opts.schedulers_timestep_spacing if shared.opts.schedulers_timestep_spacing != shared.opts.data_labels.get('schedulers_timestep_spacing').default else None
-        args['Sampler sigma'] = shared.opts.schedulers_sigma if shared.opts.schedulers_sigma != shared.opts.data_labels.get('schedulers_sigma').default else None
-        args['Sampler order'] = shared.opts.schedulers_solver_order if shared.opts.schedulers_solver_order != shared.opts.data_labels.get('schedulers_solver_order').default else None
-        args['Sampler type'] = shared.opts.schedulers_prediction_type if shared.opts.schedulers_prediction_type != shared.opts.data_labels.get('schedulers_prediction_type').default else None
-        args['Sampler beta schedule'] = shared.opts.schedulers_beta_schedule if shared.opts.schedulers_beta_schedule != shared.opts.data_labels.get('schedulers_beta_schedule').default else None
-        args['Sampler low order'] = shared.opts.schedulers_use_loworder if shared.opts.schedulers_use_loworder != shared.opts.data_labels.get('schedulers_use_loworder').default else None
-        args['Sampler dynamic'] = shared.opts.schedulers_use_thresholding if shared.opts.schedulers_use_thresholding != shared.opts.data_labels.get('schedulers_use_thresholding').default else None
-        args['Sampler rescale'] = shared.opts.schedulers_rescale_betas if shared.opts.schedulers_rescale_betas != shared.opts.data_labels.get('schedulers_rescale_betas').default else None
-        args['Sampler beta start'] = shared.opts.schedulers_beta_start if shared.opts.schedulers_beta_start != shared.opts.data_labels.get('schedulers_beta_start').default else None
-        args['Sampler beta end'] = shared.opts.schedulers_beta_end if shared.opts.schedulers_beta_end != shared.opts.data_labels.get('schedulers_beta_end').default else None
-        args['Sampler range'] = shared.opts.schedulers_timesteps_range if shared.opts.schedulers_timesteps_range != shared.opts.data_labels.get('schedulers_timesteps_range').default else None
-        args['Sampler shift'] = shared.opts.schedulers_shift if shared.opts.schedulers_shift != shared.opts.data_labels.get('schedulers_shift').default else None
-        args['Sampler dynamic shift'] = shared.opts.schedulers_dynamic_shift if shared.opts.schedulers_dynamic_shift != shared.opts.data_labels.get('schedulers_dynamic_shift').default else None
+        args['Sampler timesteps'] = get_opt('schedulers_timesteps') if get_opt('schedulers_timesteps') != shared.opts.data_labels.get('schedulers_timesteps').default else None
+        args['Sampler spacing'] = get_opt('schedulers_timestep_spacing') if get_opt('schedulers_timestep_spacing') != shared.opts.data_labels.get('schedulers_timestep_spacing').default else None
+        args['Sampler sigma'] = get_opt('schedulers_sigma') if get_opt('schedulers_sigma') != shared.opts.data_labels.get('schedulers_sigma').default else None
+        args['Sampler order'] = get_opt('schedulers_solver_order') if get_opt('schedulers_solver_order') != shared.opts.data_labels.get('schedulers_solver_order').default else None
+        args['Sampler type'] = get_opt('schedulers_prediction_type') if get_opt('schedulers_prediction_type') != shared.opts.data_labels.get('schedulers_prediction_type').default else None
+        args['Sampler beta schedule'] = get_opt('schedulers_beta_schedule') if get_opt('schedulers_beta_schedule') != shared.opts.data_labels.get('schedulers_beta_schedule').default else None
+        args['Sampler low order'] = get_opt('schedulers_use_loworder') if get_opt('schedulers_use_loworder') != shared.opts.data_labels.get('schedulers_use_loworder').default else None
+        args['Sampler dynamic'] = get_opt('schedulers_use_thresholding') if get_opt('schedulers_use_thresholding') != shared.opts.data_labels.get('schedulers_use_thresholding').default else None
+        args['Sampler rescale'] = get_opt('schedulers_rescale_betas') if get_opt('schedulers_rescale_betas') != shared.opts.data_labels.get('schedulers_rescale_betas').default else None
+        args['Sampler beta start'] = get_opt('schedulers_beta_start') if get_opt('schedulers_beta_start') != shared.opts.data_labels.get('schedulers_beta_start').default else None
+        args['Sampler beta end'] = get_opt('schedulers_beta_end') if get_opt('schedulers_beta_end') != shared.opts.data_labels.get('schedulers_beta_end').default else None
+        args['Sampler range'] = get_opt('schedulers_timesteps_range') if get_opt('schedulers_timesteps_range') != shared.opts.data_labels.get('schedulers_timesteps_range').default else None
+        args['Sampler shift'] = get_opt('schedulers_shift') if get_opt('schedulers_shift') != shared.opts.data_labels.get('schedulers_shift').default else None
+        args['Sampler dynamic shift'] = get_opt('schedulers_dynamic_shift') if get_opt('schedulers_dynamic_shift') != shared.opts.data_labels.get('schedulers_dynamic_shift').default else None
 
     # model specific
     if shared.sd_model_type == 'h1':
@@ -186,18 +216,29 @@ def create_infotext(p: StableDiffusionProcessing, all_prompts=None, all_seeds=No
         if type(v) is float or type(v) is int:
             if v <= -1:
                 del args[k]
-        if isinstance(v, str):
+        if type(v) is list:
+            if len(v) == 0:
+                del args[k]
+            else:
+                args[k] = ', '.join([str(x) for x in v])
+        if type(v) is str:
             if len(v) == 0 or v == '0x0':
                 del args[k]
     debug(f'Infotext: args={args}')
-    params_text = ", ".join([k if k == v else f'{k}: {generation_parameters_copypaste.quote(v)}' for k, v in args.items()])
+    params_text = ", ".join([k if k == v else f'{k}: {quote(v)}' for k, v in args.items()])
 
     if hasattr(p, 'original_prompt'):
         args['Original prompt'] = p.original_prompt
     if hasattr(p, 'original_negative'):
         args['Original negative'] = p.original_negative
 
+    template = p.all_templates[index] if p.all_templates is not None and p.all_templates[index] else None
+    negative_template = p.all_negative_templates[index] if p.all_negative_templates is not None and p.all_negative_templates[index] else None
+    template_text = f"\nTemplate: {template}" if template else ''
+    negative_template_text = f"\nNegative template: {negative_template}" if negative_template else ''
+
     negative_prompt_text = f"\nNegative prompt: {all_negative_prompts[index] if all_negative_prompts[index] else ''}"
-    infotext = f"{all_prompts[index]}{negative_prompt_text}\n{params_text}".strip()
+    infotext = f"{all_prompts[index]}{negative_prompt_text}{template_text}{negative_template_text}\n{params_text}".strip()
+
     debug(f'Infotext: "{infotext}"')
     return infotext

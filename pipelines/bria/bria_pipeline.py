@@ -94,14 +94,13 @@ class BriaPipeline(FluxPipeline):
             scheduler=scheduler,
         )
 
-        # TODO - why different than offical flux (-1)
         self.vae_scale_factor = (
             2 ** (len(self.vae.config.block_out_channels)) if hasattr(self, "vae") and self.vae is not None else 16
         )
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.default_sample_size = 64 # due to patchify=> 128,128 => res of 1k,1k
 
-        # T5 is senstive to precision so we use the precision used for precompute and cast as needed
+        # T5 is sensitive to precision so we use the precision used for precompute and cast as needed
         for block in self.text_encoder.encoder.block:
             block.layer[-1].DenseReluDense.wo.to(dtype=torch.float32)
 
@@ -238,11 +237,11 @@ class BriaPipeline(FluxPipeline):
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 30,
-        timesteps: List[int] = None,
+        timesteps: List[int] | None = None,
         guidance_scale: float = 5,
         negative_prompt: Optional[Union[str, List[str]]] = None,
         num_images_per_prompt: Optional[int] = 1,
@@ -385,7 +384,7 @@ class BriaPipeline(FluxPipeline):
 
 
         # 5. Prepare latent variables
-        num_channels_latents = self.transformer.config.in_channels // 4 # due to patch=2, we devide by 4
+        num_channels_latents = self.transformer.config.in_channels // 4 # due to patch=2, we divide by 4
         latents, latent_image_ids = self.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
@@ -428,7 +427,7 @@ class BriaPipeline(FluxPipeline):
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
         self._num_timesteps = len(timesteps)
 
-        # Supprot different diffusers versions
+        # Support different diffusers versions
         if diffusers.__version__>='0.32.0':
             latent_image_ids=latent_image_ids[0]
             text_ids=text_ids[0]
@@ -567,7 +566,7 @@ class BriaPipeline(FluxPipeline):
 
     def to(self, *args, **kwargs):
         DiffusionPipeline.to(self, *args, **kwargs)
-        # T5 is senstive to precision so we use the precision used for precompute and cast as needed
+        # T5 is sensitive to precision so we use the precision used for precompute and cast as needed
         for block in self.text_encoder.encoder.block:
             block.layer[-1].DenseReluDense.wo.to(dtype=torch.float32)
 
@@ -623,7 +622,7 @@ class BriaPipeline(FluxPipeline):
 
     @staticmethod
     def _unpack_latents(latents, height, width, vae_scale_factor):
-        batch_size, num_patches, channels = latents.shape
+        batch_size, _num_patches, channels = latents.shape
 
         height = height // vae_scale_factor
         width = width // vae_scale_factor

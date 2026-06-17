@@ -5,7 +5,7 @@ from typing import Union
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, FluxPipeline, StableDiffusion3Pipeline, ControlNetModel
 from modules.control.units import detect
 from modules.shared import log, opts, cmd_opts, state, listdir
-from modules import errors, sd_models, devices, model_quant
+from modules import errors, sd_models, devices, model_quant # pylint: disable=unused-import
 from modules.processing import StableDiffusionProcessingControl
 
 
@@ -20,7 +20,6 @@ predefined_sd15 = {
     'LineArt': "lllyasviel/control_v11p_sd15_lineart",
     'LineArt Anime': "lllyasviel/control_v11p_sd15s2_lineart_anime",
     'MLDS': "lllyasviel/control_v11p_sd15_mlsd",
-    'NormalBae': "lllyasviel/control_v11p_sd15_normalbae",
     'OpenPose': "lllyasviel/control_v11p_sd15_openpose",
     'Scribble': "lllyasviel/control_v11p_sd15_scribble",
     'Segment': "lllyasviel/control_v11p_sd15_seg",
@@ -33,7 +32,6 @@ predefined_sd15 = {
     'LineArt Anime FP16': 'Aptronym/SDNext/ControlNet11/controlnet11Models_animeline.safetensors',
     'LineArt FP16': 'Aptronym/SDNext/ControlNet11/controlnet11Models_lineart.safetensors',
     'MLSD FP16': 'Aptronym/SDNext/ControlNet11/controlnet11Models_mlsd.safetensors',
-    'NormalBae FP16': 'Aptronym/SDNext/ControlNet11/controlnet11Models_normal.safetensors',
     'OpenPose FP16': 'Aptronym/SDNext/ControlNet11/controlnet11Models_openpose.safetensors',
     'Pix2Pix FP16': 'Aptronym/SDNext/ControlNet11/controlnet11Models_pix2pix.safetensors',
     'Scribble FP16': 'Aptronym/SDNext/ControlNet11/controlnet11Models_scribble.safetensors',
@@ -89,7 +87,8 @@ predefined_f1 = {
     "Shakker-Labs Depth F1": 'Shakker-Labs/FLUX.1-dev-ControlNet-Depth',
     "XLabs-AI Canny F1": 'XLabs-AI/flux-controlnet-canny-diffusers',
     "XLabs-AI Depth F1": 'XLabs-AI/flux-controlnet-depth-diffusers',
-    "XLabs-AI HED F1": 'XLabs-AI/flux-controlnet-hed-diffusers'
+    "XLabs-AI HED F1": 'XLabs-AI/flux-controlnet-hed-diffusers',
+    "LibreFlux Segment F1": 'neuralvfx/LibreFlux-ControlNet',
 }
 predefined_sd3 = {
     "StabilityAI Canny SD35": 'diffusers-internal-dev/sd35-controlnet-canny-8b',
@@ -110,6 +109,11 @@ predefined_hunyuandit = {
     "HunyuanDiT Pose": 'Tencent-Hunyuan/HunyuanDiT-v1.2-ControlNet-Diffusers-Pose',
     "HunyuanDiT Depth": 'Tencent-Hunyuan/HunyuanDiT-v1.2-ControlNet-Diffusers-Depth',
 }
+predefined_zimage = {
+    "Z-Image-Turbo Union 1.0": 'hlky/Z-Image-Turbo-Fun-Controlnet-Union',
+    "Z-Image-Turbo Union 2.0": 'hlky/Z-Image-Turbo-Fun-Controlnet-Union-2.0',
+    "Z-Image-Turbo Union 2.1": 'hlky/Z-Image-Turbo-Fun-Controlnet-Union-2.1',
+}
 
 variants = {
     'NoobAI Canny XL': 'fp16',
@@ -119,6 +123,15 @@ variants = {
     'NoobAI SoftEdge XL': 'fp16',
     'TTPlanet Tile Realistic XL': 'fp16',
 }
+
+subfolders = {
+    "LibreFlux Segment F1": 'controlnet',
+}
+
+remote_code = {
+    "LibreFlux Segment F1": True,
+}
+
 models = {}
 all_models = {}
 all_models.update(predefined_sd15)
@@ -127,6 +140,7 @@ all_models.update(predefined_f1)
 all_models.update(predefined_sd3)
 all_models.update(predefined_qwen)
 all_models.update(predefined_hunyuandit)
+all_models.update(predefined_zimage)
 cache_dir = 'models/control/controlnet'
 load_lock = threading.Lock()
 
@@ -149,7 +163,7 @@ def find_models():
 find_models()
 
 
-def api_list_models(model_type: str = None):
+def api_list_models(model_type: str | None = None):
     import modules.shared
     model_type = model_type or modules.shared.sd_model_type
     model_list = []
@@ -165,6 +179,8 @@ def api_list_models(model_type: str = None):
         model_list += list(predefined_qwen)
     if model_type == 'hunyuandit' or model_type == 'all':
         model_list += list(predefined_hunyuandit)
+    if model_type == 'zimage' or model_type == 'all':
+        model_list += list(predefined_zimage)
     model_list += sorted(find_models())
     return model_list
 
@@ -189,15 +205,17 @@ def list_models(refresh=False):
         models = ['None'] + list(predefined_qwen) + sorted(find_models())
     elif modules.shared.sd_model_type == 'hunyuandit':
         models = ['None'] + list(predefined_hunyuandit) + sorted(find_models())
+    elif modules.shared.sd_model_type == 'zimage':
+        models = ['None'] + list(predefined_zimage) + sorted(find_models())
     else:
         log.warning(f'Control {what} model list failed: unknown model type')
-        models = ['None'] + sorted(predefined_sd15) + sorted(predefined_sdxl) + sorted(predefined_f1) + sorted(predefined_sd3) + sorted(find_models())
+        models = ['None'] + list(all_models) + sorted(find_models())
     debug_log(f'Control list {what}: path={cache_dir} models={models}')
     return models
 
 
 class ControlNet():
-    def __init__(self, model_id: str = None, device = None, dtype = None, load_config = None):
+    def __init__(self, model_id: str | None = None, device = None, dtype = None, load_config = None):
         self.model: ControlNetModel = None
         self.model_id: str = model_id
         self.device = device
@@ -205,6 +223,12 @@ class ControlNet():
         self.load_config = { 'cache_dir': cache_dir }
         if load_config is not None:
             self.load_config.update(load_config)
+        if opts.offline_mode:
+            self.load_config["local_files_only"] = True
+            os.environ['HF_HUB_OFFLINE'] = '1'
+        else:
+            os.environ.pop('HF_HUB_OFFLINE', None)
+            os.unsetenv('HF_HUB_OFFLINE')
         if model_id is not None:
             self.load()
 
@@ -247,6 +271,14 @@ class ControlNet():
         elif shared.sd_model_type == 'hunyuandit':
             from diffusers import HunyuanDiT2DControlNetModel as cls
             config = 'Tencent-Hunyuan/HunyuanDiT-v1.2-ControlNet-Diffusers-Canny'
+        elif shared.sd_model_type == 'zimage':
+            from diffusers import ZImageControlNetModel as cls
+            if '2.0' in model_id:
+                config = 'hlky/Z-Image-Turbo-Fun-Controlnet-Union-2.0'
+            elif '2.1' in model_id:
+                config = 'hlky/Z-Image-Turbo-Fun-Controlnet-Union-2.1'
+            else:
+                config = 'hlky/Z-Image-Turbo-Fun-Controlnet-Union'
         else:
             log.error(f'Control {what}: type={shared.sd_model_type} unsupported model')
             return None, None
@@ -279,34 +311,34 @@ class ControlNet():
             self.load_config['original_config_file '] = config_path
         self.model = cls.from_single_file(model_path, config=config, **self.load_config)
 
-    def load(self, model_id: str = None, force: bool = True) -> str:
+    def load(self, model_id: str | None = None, force: bool = False) -> str:
         with load_lock:
             try:
                 t0 = time.time()
                 model_id = model_id or self.model_id
                 if model_id is None or model_id == 'None':
                     self.reset()
-                    return
+                    return ''
                 if model_id not in all_models:
                     log.error(f'Control {what}: id="{model_id}" available={list(all_models)} unknown model')
-                    return
+                    return ''
                 model_path = all_models[model_id]
                 if model_path == '':
-                    return
+                    return ''
                 if model_path is None:
                     log.error(f'Control {what} model load: id="{model_id}" unknown model id')
-                    return
+                    return ''
                 if 'lora' in model_id.lower():
                     self.model = model_path
-                    return
+                    return ''
                 if model_id == self.model_id and not force:
                     # log.debug(f'Control {what} model: id="{model_id}" path="{model_path}" already loaded')
-                    return
+                    return ''
                 log.debug(f'Control {what} model loading: id="{model_id}" path="{model_path}"')
                 cls, config = self.get_class(model_id)
                 if cls is None:
                     log.error(f'Control {what} model load: id="{model_id}" unknown base model')
-                    return
+                    return ''
                 self.reset()
                 jobid = state.begin(f'Load {what}')
                 if model_path.endswith('.safetensors'):
@@ -320,6 +352,10 @@ class ControlNet():
                         self.load_config['use_safetensors'] = True
                     if variants.get(model_id, None) is not None:
                         kwargs['variant'] = variants[model_id]
+                    if subfolders.get(model_id, None) is not None:
+                        kwargs['subfolder'] = subfolders[model_id]
+                    if remote_code.get(model_id, None) is not None:
+                        kwargs['trust_remote_code'] = remote_code[model_id]
                     try:
                         self.model = cls.from_pretrained(model_path, **self.load_config, **kwargs)
                     except Exception as e:
@@ -327,36 +363,27 @@ class ControlNet():
                         if debug:
                             errors.display(e, 'Control')
                 if self.model is None:
-                    return
+                    return ''
                 if not cmd_opts.lowvram: # lowvram will cause unet<->controlnet to ping-pong but saves more memory
                     self.model.offload_never = True
                 if self.dtype is not None:
                     self.model.to(self.dtype)
+                if self.device is not None:
+                    if (opts.diffusers_offload_mode != 'balanced') and hasattr(self.model, 'to'):
+                        try:
+                            self.model.to(self.device)
+                        except Exception as e:
+                            if 'Cannot copy out of meta tensor' in str(e):
+                                self.model.to_empty(device=self.device)
                 if "Control" in opts.sdnq_quantize_weights:
                     try:
-                        log.debug(f'Control {what} model SDNQ Compress: id="{model_id}"')
+                        log.debug(f'Control {what} model SDNQ quantize: id="{model_id}"')
                         from modules.model_quant import sdnq_quantize_model
                         self.model = sdnq_quantize_model(self.model)
                     except Exception as e:
                         log.error(f'Control {what} model SDNQ Compression failed: id="{model_id}" {e}')
-                elif "Control" in opts.optimum_quanto_weights:
-                    try:
-                        log.debug(f'Control {what} model Optimum Quanto: id="{model_id}"')
-                        model_quant.load_quanto('Load model: type=Control')
-                        from modules.model_quant import optimum_quanto_model
-                        self.model = optimum_quanto_model(self.model)
-                    except Exception as e:
-                        log.error(f'Control {what} model Optimum Quanto: id="{model_id}" {e}')
-                elif "Control" in opts.torchao_quantization:
-                    try:
-                        log.debug(f'Control {what} model Torch AO: id="{model_id}"')
-                        model_quant.load_torchao('Load model: type=Control')
-                        from modules.model_quant import torchao_quantization
-                        self.model = torchao_quantization(self.model)
-                    except Exception as e:
-                        log.error(f'Control {what} model Torch AO: id="{model_id}" {e}')
                 if self.device is not None:
-                    self.model.to(self.device)
+                    sd_models.move_model(self.model, self.device)
                 if "Control" in opts.cuda_compile:
                     try:
                         from modules.sd_models_compile import compile_torch
@@ -365,9 +392,9 @@ class ControlNet():
                         log.warning(f"Control compile error: {e}")
                 t1 = time.time()
                 self.model_id = model_id
-                log.info(f'Control {what} model loaded: id="{model_id}" path="{model_path}" cls={cls.__name__} time={t1-t0:.2f}')
+                log.info(f'Control {what} model loaded: id="{self.model_id}" path="{model_path}" cls={cls.__name__} time={t1-t0:.2f}')
                 state.end(jobid)
-                return f'{what} loaded model: {model_id}'
+                return f'{what} loaded model: {self.model_id}'
             except Exception as e:
                 log.error(f'Control {what} model load: id="{model_id}" {e}')
                 errors.display(e, f'Control {what} load')
@@ -481,6 +508,17 @@ class ControlNetPipeline():
                 feature_extractor=None,
                 controlnet=controlnets[0] if isinstance(controlnets, list) else controlnets, # can be a list
             )
+        elif detect.is_zimage(pipeline) and len(controlnets) > 0:
+            from diffusers import ZImageControlNetPipeline
+            self.pipeline = ZImageControlNetPipeline(
+                vae=pipeline.vae,
+                text_encoder=pipeline.text_encoder,
+                tokenizer=pipeline.tokenizer,
+                transformer=pipeline.transformer,
+                scheduler=pipeline.scheduler,
+                controlnet=controlnets[0] if isinstance(controlnets, list) else controlnets, # can be a list
+            )
+            self.pipeline.task_args = { 'guidance_scale': 1 }
         elif len(loras) > 0:
             self.pipeline = pipeline
             for lora in loras:
@@ -507,7 +545,7 @@ class ControlNetPipeline():
         if opts.diffusers_offload_mode == 'none':
             sd_models.move_model(self.pipeline, devices.device)
         sd_models.clear_caches()
-        sd_models.set_diffuser_offload(self.pipeline, 'model')
+        sd_models.set_diffuser_offload(self.pipeline, 'model', force=True)
 
         t1 = time.time()
         debug_log(f'Control {what} pipeline: class={self.pipeline.__class__.__name__} time={t1-t0:.2f}')

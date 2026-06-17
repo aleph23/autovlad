@@ -27,6 +27,7 @@ from torch.nn import functional as F
 from ..types import PredictionType
 from ..utils import expand_dims
 from .base import Sampler, SamplerModelArgs
+import itertools
 
 
 class EulerSampler(Sampler):
@@ -46,9 +47,8 @@ class EulerSampler(Sampler):
 
         # Optimisations VRAM
         original_dtype = x.dtype
-        device = x.device
 
-        for t, s in zip(timesteps[:-1], timesteps[1:]):
+        for t, s in itertools.pairwise(timesteps):
             # Appel du modèle avec monitoring
             pred = f(SamplerModelArgs(x, t, i))
 

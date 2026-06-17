@@ -3,8 +3,9 @@ from functools import wraps
 from contextlib import nullcontext
 import torch
 import numpy as np
-from modules import devices
 
+from modules import devices
+from .device_prop import cache_size_dict
 
 torch_version = torch.__version__[:4]
 if torch_version[-1] not in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}:
@@ -14,8 +15,10 @@ torch_version[0], torch_version[1] = int(torch_version[0]), int(torch_version[1]
 
 device_supports_fp64 = torch.xpu.has_fp64_dtype() if hasattr(torch.xpu, "has_fp64_dtype") else torch.xpu.get_device_properties(devices.device).has_fp64
 
-# pylint: disable=protected-access, missing-function-docstring, line-too-long, unnecessary-lambda, no-else-return
+# pylint: disable=protected-access, missing-function-docstring, line-too-long, no-else-return, unused-argument, redefined-builtin, keyword-arg-before-vararg
 
+def return_false(*args, **kwargs):
+    return False
 
 @property
 def is_cuda(self):
@@ -23,7 +26,7 @@ def is_cuda(self):
 
 
 def check_device_type(device, device_type: str) -> bool:
-    if device is None or type(device) not in {str, int, torch.device}:
+    if device is None or not isinstance(device, (str, int, torch.device)):
         return False
     else:
         return bool(torch.device(device).type == device_type)
@@ -41,9 +44,7 @@ def return_xpu(device): # keep the device instance type, aka return string if th
 original_autocast_init = torch.amp.autocast_mode.autocast.__init__
 @wraps(torch.amp.autocast_mode.autocast.__init__)
 def autocast_init(self, device_type=None, dtype=None, enabled=True, cache_enabled=None):
-    if device_type is None or check_cuda(device_type) or check_device_type(device_type, "xpu"):
-        if dtype is None:
-            dtype = devices.dtype
+    if device_type is None or check_cuda(device_type):
         return original_autocast_init(self, device_type="xpu", dtype=dtype, enabled=enabled, cache_enabled=cache_enabled)
     else:
         return original_autocast_init(self, device_type=device_type, dtype=dtype, enabled=enabled, cache_enabled=cache_enabled)
@@ -51,7 +52,7 @@ def autocast_init(self, device_type=None, dtype=None, enabled=True, cache_enable
 
 original_grad_scaler_init = torch.amp.grad_scaler.GradScaler.__init__
 @wraps(torch.amp.grad_scaler.GradScaler.__init__)
-def GradScaler_init(self, device: str = None, init_scale: float = 2.0**16, growth_factor: float = 2.0, backoff_factor: float = 0.5, growth_interval: int = 2000, enabled: bool = True):
+def GradScaler_init(self, device: str | None = None, init_scale: float = 2.0**16, growth_factor: float = 2.0, backoff_factor: float = 0.5, growth_interval: int = 2000, enabled: bool = True):
     if device is None or check_cuda(device):
         return original_grad_scaler_init(self, device=return_xpu(device), init_scale=init_scale, growth_factor=growth_factor, backoff_factor=backoff_factor, growth_interval=growth_interval, enabled=enabled)
     else:
@@ -61,17 +62,18 @@ def GradScaler_init(self, device: str = None, init_scale: float = 2.0**16, growt
 original_is_autocast_enabled = torch.is_autocast_enabled
 @wraps(torch.is_autocast_enabled)
 def torch_is_autocast_enabled(device_type=None):
-    if device_type is None or check_cuda(device_type):
-        return original_is_autocast_enabled(return_xpu(device_type))
-    else:
-        return original_is_autocast_enabled(device_type)
+    dev = device_type
+    if dev is None or check_cuda(dev):
+        dev = return_xpu(dev)
+        dev = str(dev) if not isinstance(dev, str) else dev
+    return original_is_autocast_enabled(dev)
 
 
 original_get_autocast_dtype = torch.get_autocast_dtype
 @wraps(torch.get_autocast_dtype)
 def torch_get_autocast_dtype(device_type=None):
     if device_type is None or check_cuda(device_type) or check_device_type(device_type, "xpu"):
-        return devices.dtype
+        return devices.dtype or torch.bfloat16
     else:
         return original_get_autocast_dtype(device_type)
 
@@ -138,25 +140,9 @@ def as_tensor(data, dtype=None, device=None):
         return original_as_tensor(data, dtype=dtype, device=device)
 
 
-original_torch_tensor = torch.tensor
-@wraps(torch.tensor)
-def torch_tensor(data, *args, dtype=None, device=None, **kwargs):
-    global device_supports_fp64
-    if check_cuda(device):
-        device = return_xpu(device)
-    if not device_supports_fp64:
-        if check_device_type(device, "xpu"):
-            if dtype == torch.float64:
-                dtype = torch.float32
-            elif dtype is None and (hasattr(data, "dtype") and (data.dtype == torch.float64 or data.dtype == float)):
-                dtype = torch.float32
-    return original_torch_tensor(data, *args, dtype=dtype, device=device, **kwargs)
-
-
 torch.Tensor.original_Tensor_to = torch.Tensor.to
 @wraps(torch.Tensor.to)
 def Tensor_to(self, device=None, *args, **kwargs):
-    global device_supports_fp64
     if check_cuda(device):
         device = return_xpu(device)
     if not device_supports_fp64:
@@ -212,6 +198,24 @@ if torch_version[0] > 2 or (torch_version[0] == 2 and torch_version[1] >= 4):
             return original_UntypedStorage_cuda(self, device=device, non_blocking=non_blocking, **kwargs)
 
 
+original_torch_tensor = torch.tensor
+@wraps(torch.tensor)
+def torch_tensor(data, *args, dtype=None, device=None, **kwargs):
+    if check_cuda(device):
+        if not device_supports_fp64 and (dtype == torch.float64 or (dtype is None and getattr(data, "dtype", None) in {torch.float64, float})):
+            return original_torch_tensor(data, *args, dtype=torch.float32, device=return_xpu(device), **kwargs)
+        else:
+            return original_torch_tensor(data, *args, dtype=dtype, device=return_xpu(device), **kwargs)
+    else:
+        if (
+            not device_supports_fp64 and check_device_type(device, "xpu")
+            and (dtype == torch.float64 or (dtype is None and getattr(data, "dtype", None) in {torch.float64, float}))
+        ):
+            return original_torch_tensor(data, *args, dtype=torch.float32, device=device, **kwargs)
+        else:
+            return original_torch_tensor(data, *args, dtype=dtype, device=device, **kwargs)
+
+
 original_torch_empty = torch.empty
 @wraps(torch.empty)
 def torch_empty(*args, device=None, **kwargs):
@@ -223,13 +227,11 @@ def torch_empty(*args, device=None, **kwargs):
 
 original_torch_randn = torch.randn
 @wraps(torch.randn)
-def torch_randn(*args, device=None, dtype=None, **kwargs):
-    if dtype is bytes:
-        dtype = None
+def torch_randn(*args, device=None, **kwargs):
     if check_cuda(device):
-        return original_torch_randn(*args, device=return_xpu(device), dtype=dtype, **kwargs)
+        return original_torch_randn(*args, device=return_xpu(device), **kwargs)
     else:
-        return original_torch_randn(*args, device=device, dtype=dtype, **kwargs)
+        return original_torch_randn(*args, device=device, **kwargs)
 
 
 original_torch_ones = torch.ones
@@ -259,15 +261,6 @@ def torch_full(*args, device=None, **kwargs):
         return original_torch_full(*args, device=device, **kwargs)
 
 
-original_torch_linspace = torch.linspace
-@wraps(torch.linspace)
-def torch_linspace(*args, device=None, **kwargs):
-    if check_cuda(device):
-        return original_torch_linspace(*args, device=return_xpu(device), **kwargs)
-    else:
-        return original_torch_linspace(*args, device=device, **kwargs)
-
-
 original_torch_eye = torch.eye
 @wraps(torch.eye)
 def torch_eye(*args, device=None, **kwargs):
@@ -275,6 +268,36 @@ def torch_eye(*args, device=None, **kwargs):
         return original_torch_eye(*args, device=return_xpu(device), **kwargs)
     else:
         return original_torch_eye(*args, device=device, **kwargs)
+
+
+original_torch_arange = torch.arange
+@wraps(torch.arange)
+def torch_arange(*args, dtype=None, device=None, **kwargs):
+    if check_cuda(device):
+        if not device_supports_fp64 and dtype == torch.float64:
+            return original_torch_arange(*args, dtype=torch.float32, device=return_xpu(device), **kwargs)
+        else:
+            return original_torch_arange(*args, dtype=dtype, device=return_xpu(device), **kwargs)
+    else:
+        if not device_supports_fp64 and check_device_type(device, "xpu") and dtype == torch.float64:
+            return original_torch_arange(*args, dtype=torch.float32, device=device, **kwargs)
+        else:
+            return original_torch_arange(*args, dtype=dtype, device=device, **kwargs)
+
+
+original_torch_linspace = torch.linspace
+@wraps(torch.linspace)
+def torch_linspace(*args, dtype=None, device=None, **kwargs):
+    if check_cuda(device):
+        if not device_supports_fp64 and dtype == torch.float64:
+            return original_torch_linspace(*args, dtype=torch.float32, device=return_xpu(device), **kwargs)
+        else:
+            return original_torch_linspace(*args, dtype=dtype, device=return_xpu(device), **kwargs)
+    else:
+        if not device_supports_fp64 and check_device_type(device, "xpu") and dtype == torch.float64:
+            return original_torch_linspace(*args, dtype=torch.float32, device=device, **kwargs)
+        else:
+            return original_torch_linspace(*args, dtype=dtype, device=device, **kwargs)
 
 
 original_torch_load = torch.load
@@ -310,39 +333,68 @@ def torch_cuda_set_device(device):
         torch.xpu.set_device(device)
 
 
+@wraps(torch.cuda.get_device_properties)
+def get_device_properties(device=None):
+    device_prop = torch.xpu.get_device_properties(device)
+    new_keys = {
+        "major": 12,
+        "minor": 1,
+        "multi_processor_count": device_prop.gpu_subslice_count,
+    }
+    if not hasattr(device_prop, "L2_cache_size"):
+        new_keys["L2_cache_size"] = cache_size_dict.get(getattr(device_prop, "device_id", 0x56A0), cache_size_dict[0x0000])
+    return DeviceProperties(device_prop, new_keys)
+
+
+class DeviceProperties():
+    def __init__(self, device_prop, new_keys):
+        for key in dir(device_prop):
+            if not key.startswith("__"):
+                setattr(self, key, getattr(device_prop, key))
+        for key, value in new_keys.items():
+            setattr(self, key, value)
+
+
 # torch.Generator has to be a class for isinstance checks
 original_torch_Generator = torch.Generator
 class torch_Generator(original_torch_Generator):
-    def __new__(self, device=None):
+    def __new__(cls, device=None):
         # can't hijack __init__ because of C override so use return super().__new__
         if check_cuda(device):
-            return super().__new__(self, return_xpu(device))
+            return super().__new__(cls, return_xpu(device))
         else:
-            return super().__new__(self, device)
+            return super().__new__(cls, device)
 
 
 # Hijack Functions:
 def ipex_hijacks():
-    global device_supports_fp64
+    torch.UntypedStorage.__init__ = UntypedStorage_init
     if torch_version[0] > 2 or (torch_version[0] == 2 and torch_version[1] >= 4):
         torch.UntypedStorage.cuda = UntypedStorage_cuda
         torch.UntypedStorage.to = UntypedStorage_to
-    torch.tensor = torch_tensor
+
     torch.Tensor.to = Tensor_to
     torch.Tensor.cuda = Tensor_cuda
     torch.Tensor.pin_memory = Tensor_pin_memory
-    torch.UntypedStorage.__init__ = UntypedStorage_init
+
+    # transformers completely breaks when anything is done to torch.tensor
+    # even straight passthroughs breaks transformers for some reason
+    #torch.tensor = torch_tensor
+
     torch.empty = torch_empty
     torch.randn = torch_randn
     torch.ones = torch_ones
     torch.zeros = torch_zeros
     torch.full = torch_full
-    torch.linspace = torch_linspace
     torch.eye = torch_eye
+    torch.arange = torch_arange
+    torch.linspace = torch_linspace
     torch.load = torch_load
+
     torch.cuda.synchronize = torch_cuda_synchronize
     torch.cuda.device = torch_cuda_device
     torch.cuda.set_device = torch_cuda_set_device
+    torch.cuda.get_device_properties = get_device_properties
 
     torch.Generator = torch_Generator
     torch._C.Generator = torch_Generator
@@ -398,6 +450,6 @@ def ipex_hijacks():
 
     if not hasattr(torch.cuda.amp, "common"):
         torch.cuda.amp.common = nullcontext()
-    torch.cuda.amp.common.amp_definitely_not_available = lambda: False
+    torch.cuda.amp.common.amp_definitely_not_available = return_false
 
     return device_supports_fp64

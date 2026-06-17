@@ -1,6 +1,7 @@
 import gradio as gr
 import torch
 from modules import shared, devices, scripts_manager, processing, sd_models
+from modules.logger import log
 
 
 checked_ok = False
@@ -8,23 +9,18 @@ checked_ok = False
 
 def check_dependencies():
     global checked_ok # pylint: disable=global-statement
-    from installer import installed, install
-    packages = [
-        ('ligo-segments', 'ligo-segments'),
-    ]
-    for pkg in packages:
-        if not installed(pkg[1], reload=True, quiet=True):
-            install(pkg[0], pkg[1], ignore=False)
+    from installer import install
+    install('ligo-segments')
     try:
         from ligo.segments import segment # pylint: disable=unused-import
         checked_ok = True
         return True
     except Exception as e:
-        shared.log.error(f'Mixture tiling: {e}')
+        log.error(f'Mixture tiling: {e}')
         return False
 
 
-class Script(scripts_manager.Script):
+class MixtureTilingScript(scripts_manager.Script):
     def title(self):
         return 'Mixture Tiling: Scene Composition'
 
@@ -50,7 +46,7 @@ class Script(scripts_manager.Script):
                 return None
         prompts = p.prompt.splitlines()
         if len(prompts) != x_size * y_size:
-            shared.log.error(f'Mixture tiling prompt count mismatch: prompts={len(prompts)} required={x_size * y_size}')
+            log.error(f'Mixture tiling prompt count mismatch: prompts={len(prompts)} required={x_size * y_size}')
             return None
         # backup pipeline and params
         orig_pipeline = shared.sd_model
@@ -58,11 +54,11 @@ class Script(scripts_manager.Script):
         orig_prompt_attention = shared.opts.prompt_attention
         # create pipeline
         if shared.sd_model_type != 'sd':
-            shared.log.error(f'Mixture tiling: incorrect base model: {shared.sd_model.__class__.__name__}')
+            log.error(f'Mixture tiling: incorrect base model: {shared.sd_model.__class__.__name__}')
             return None
         shared.sd_model = sd_models.switch_pipe('mixture_tiling', shared.sd_model)
         if shared.sd_model.__class__.__name__ != 'StableDiffusionTilingPipeline': # switch failed
-            shared.log.error(f'Mixture tiling: not a tiling pipeline: {shared.sd_model.__class__.__name__}')
+            log.error(f'Mixture tiling: not a tiling pipeline: {shared.sd_model.__class__.__name__}')
             shared.sd_model = orig_pipeline
             return None
         sd_models.set_diffuser_options(shared.sd_model)
@@ -78,13 +74,13 @@ class Script(scripts_manager.Script):
             y_prompts.append(x_prompts)
         p.task_args['prompt'] = y_prompts
         p.task_args['seed'] = p.seed
-        p.task_args['tile_width'] = p.height
-        p.task_args['tile_height'] = p.width
-        p.task_args['tile_col_overlap'] = int(p.height * x_overlap)
-        p.task_args['tile_row_overlap'] = int(p.width * y_overlap)
+        p.task_args['tile_width'] = p.width
+        p.task_args['tile_height'] = p.height
+        p.task_args['tile_col_overlap'] = int(p.width * x_overlap)
+        p.task_args['tile_row_overlap'] = int(p.height * y_overlap)
         p.task_args['output_type'] = 'np'
         # run pipeline
-        shared.log.debug(f'Tiling: args={p.task_args}')
+        log.debug(f'Tiling: args={p.task_args}')
         processed: processing.Processed = processing.process_images(p) # runs processing using main loop
         # restore pipeline and params
         shared.opts.data['prompt_attention'] = orig_prompt_attention

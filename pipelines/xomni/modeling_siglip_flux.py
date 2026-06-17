@@ -291,8 +291,8 @@ def teacache_forward(
                 "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
             )
 
-    batch_size, seq_len, channels = hidden_states.shape
-    device, dtype = hidden_states.device, hidden_states.dtype
+    _batch_size, _seq_len, _channels = hidden_states.shape
+    _device, _dtype = hidden_states.device, hidden_states.dtype
     hidden_states = self.x_embedder(hidden_states)
 
     timestep = timestep.to(hidden_states.dtype) * 1000
@@ -332,7 +332,7 @@ def teacache_forward(
     if self.enable_teacache:
         inp = hidden_states.clone()
         temb_ = temb.clone()
-        modulated_inp, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.transformer_blocks[0].norm1(inp, emb=temb_)
+        modulated_inp, _gate_msa, _shift_mlp, _scale_mlp, _gate_mlp = self.transformer_blocks[0].norm1(inp, emb=temb_)
         if self.cnt == 0 or self.cnt == self.num_steps - 1:
             should_calc = True
             self.accumulated_rel_l1_distance = 0
@@ -502,9 +502,9 @@ class FluxPipelineWithSigLIP(FluxPipeline):
     def __call__(
             self,
             siglip_tensor: torch.Tensor,
-            prompt: Union[str, List[str]] = None,
+            prompt: Union[str, List[str]] | None = None,
             prompt_2: Optional[Union[str, List[str]]] = None,
-            negative_prompt: Union[str, List[str]] = None,
+            negative_prompt: Union[str, List[str]] | None = None,
             negative_prompt_2: Optional[Union[str, List[str]]] = None,
             true_cfg_scale: float = 1.0,
             true_cfg_scale_2: float = 1.0,

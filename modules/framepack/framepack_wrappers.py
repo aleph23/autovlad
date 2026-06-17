@@ -1,11 +1,12 @@
 import os
 import re
 import random
-import threading
 import numpy as np
 import torch
 import gradio as gr
-from modules import shared, processing, timer, paths, extra_networks, progress, ui_video_vlm
+from PIL import Image
+from modules import shared, processing, timer, paths, extra_networks, progress, ui_video_vlm, call_queue
+from modules.logger import log
 from modules.video_models.video_utils import check_av
 from modules.framepack import framepack_install # pylint: disable=wrong-import-order
 from modules.framepack import framepack_load # pylint: disable=wrong-import-order
@@ -17,7 +18,6 @@ tmp_dir = os.path.join(paths.data_path, 'tmp', 'framepack')
 git_dir = os.path.join(os.path.dirname(__file__), 'framepack')
 git_repo = 'https://github.com/lllyasviel/framepack'
 git_commit = 'c5d375661a2557383f0b8da9d11d14c23b0c4eaf'
-queue_lock = threading.Lock()
 loaded_variant = None
 
 
@@ -27,6 +27,8 @@ def prepare_image(image, resolution):
         (416, 960), (448, 864), (480, 832), (512, 768), (544, 704), (576, 672), (608, 640),
         (640, 608), (672, 576), (704, 544), (768, 512), (832, 480), (864, 448), (960, 416),
     ]
+    if isinstance(image, Image.Image):
+        image = np.array(image)
     h, w, _c = image.shape
     min_metric = float('inf')
     scale_factor = resolution / 640.0
@@ -40,7 +42,7 @@ def prepare_image(image, resolution):
 
     image = resize_and_center_crop(image, target_height=scaled_h, target_width=scaled_w)
     h0, w0, _c = image.shape
-    shared.log.debug(f'FramePack prepare: input="{w}x{h}" resized="{w0}x{h0}" resolution={resolution} scale={scale_factor}')
+    log.debug(f'FramePack prepare: input="{w}x{h}" resized="{w0}x{h0}" resolution={resolution} scale={scale_factor}')
     return image
 
 
@@ -59,7 +61,7 @@ def interpolate_prompts(prompts, steps):
     for i in range(steps):
         prompt_index = int(i / factor)
         interpolated_prompts[i] = prompts[prompt_index]
-        # shared.log.trace(f'FramePack interpolate: section={i} prompt="{interpolated_prompts[i]}"')
+        # log.trace(f'FramePack interpolate: section={i} prompt="{interpolated_prompts[i]}"')
     return interpolated_prompts
 
 
@@ -68,7 +70,7 @@ def prepare_prompts(p, init_image, prompt:str, section_prompt:str, num_sections:
     p.prompt = shared.prompt_styles.apply_styles_to_prompt(p.prompt, p.styles)
     p.negative_prompt = shared.prompt_styles.apply_negative_styles_to_prompt(p.negative_prompt, p.styles)
     shared.prompt_styles.apply_styles_to_extra(p)
-    p.prompts, p.network_data = extra_networks.parse_prompts([p.prompt])
+    p.prompts, p.network_data = extra_networks.parse_prompts([p.prompt], p.network_data)
     extra_networks.activate(p)
     prompt = p.prompts[0]
     generated_prompts = [''] * num_sections
@@ -107,12 +109,12 @@ def load_model(variant, attention):
 
 
 def unload_model():
-    shared.log.debug('FramePack unload')
+    log.debug('FramePack unload')
     framepack_load.unload_model()
     yield gr.update(), gr.update(), 'Model unloaded'
 
 
-def run_framepack(task_id, _ui_state, init_image, end_image, start_weight, end_weight, vision_weight, prompt, system_prompt, optimized_prompt, section_prompt, negative_prompt, styles, seed, resolution, duration, latent_ws, steps, cfg_scale, cfg_distilled, cfg_rescale, shift, use_teacache, use_cfgzero, use_preview, mp4_fps, mp4_codec, mp4_sf, mp4_video, mp4_frames, mp4_opt, mp4_ext, mp4_interpolate, attention, vae_type, variant, vlm_enhance, vlm_model, vlm_system_prompt):
+def run_framepack(task_id, _ui_state, init_image, end_image, start_weight, end_weight, vision_weight, prompt, system_prompt, optimized_prompt, section_prompt, negative_prompt, styles, seed, resolution, duration, latent_ws, steps, cfg_scale, cfg_distilled, cfg_rescale, shift, use_teacache, use_cfgzero, use_preview, mp4_fps, mp4_codec, mp4_sf, mp4_video, mp4_frames, mp4_thumb, mp4_opt, mp4_ext, mp4_interpolate, attention, vae_type, variant, vlm_enhance, vlm_model, vlm_system_prompt):
     variant = variant or 'bi-directional'
     if init_image is None:
         init_image = np.zeros((resolution, resolution, 3), dtype=np.uint8)
@@ -128,7 +130,7 @@ def run_framepack(task_id, _ui_state, init_image, end_image, start_weight, end_w
         return
 
     progress.add_task_to_queue(task_id)
-    with queue_lock:
+    with call_queue.get_lock():
         progress.start_task(task_id)
 
         yield from load_model(variant, attention)
@@ -148,8 +150,8 @@ def run_framepack(task_id, _ui_state, init_image, end_image, start_weight, end_w
         torch.manual_seed(seed)
         num_sections = len(framepack_worker.get_latent_paddings(mp4_fps, mp4_interpolate, latent_ws, duration, variant))
         num_frames = (latent_ws * 4 - 3) * num_sections + 1
-        shared.log.info(f'FramePack start: mode={mode} variant="{variant}" frames={num_frames} sections={num_sections} resolution={resolution} seed={seed} duration={duration} teacache={use_teacache} thres={shared.opts.teacache_thresh} cfgzero={use_cfgzero}')
-        shared.log.info(f'FramePack params: steps={steps} start={start_weight} end={end_weight} vision={vision_weight} scale={cfg_scale} distilled={cfg_distilled} rescale={cfg_rescale} shift={shift}')
+        log.info(f'FramePack start: mode={mode} variant="{variant}" frames={num_frames} sections={num_sections} resolution={resolution} seed={seed} duration={duration} teacache={use_teacache} thres={shared.opts.teacache_thresh} cfgzero={use_cfgzero}')
+        log.info(f'FramePack params: steps={steps} start={start_weight} end={end_weight} vision={vision_weight} scale={cfg_scale} distilled={cfg_distilled} rescale={cfg_rescale} shift={shift}')
         init_image = prepare_image(init_image, resolution)
         if end_image is not None:
             end_image = prepare_image(end_image, resolution)
@@ -179,7 +181,7 @@ def run_framepack(task_id, _ui_state, init_image, end_image, start_weight, end_w
             cfg_scale, cfg_distilled, cfg_rescale,
             shift,
             use_teacache, use_cfgzero, use_preview,
-            mp4_fps, mp4_codec, mp4_sf, mp4_video, mp4_frames, mp4_opt, mp4_ext, mp4_interpolate,
+            mp4_fps, mp4_codec, mp4_sf, mp4_video, mp4_frames, mp4_thumb, mp4_opt, mp4_ext, mp4_interpolate,
             vae_type, variant,
         )
 

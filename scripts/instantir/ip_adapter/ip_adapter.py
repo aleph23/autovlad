@@ -2,6 +2,8 @@ import os
 import torch
 from typing import List
 from collections import namedtuple, OrderedDict
+from utils import revise_state_dict
+
 
 def is_torch2_available():
     return hasattr(torch.nn.functional, "scaled_dot_product_attention")
@@ -154,7 +156,7 @@ class IPAdapterPlus(torch.nn.Module):
         orig_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj.parameters()]))
         orig_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.ip_adapter.parameters()]))
         org_unet_sum = []
-        for attn_name, attn_proc in self.unet.attn_processors.items():
+        for _attn_name, attn_proc in self.unet.attn_processors.items():
             if isinstance(attn_proc, (TA_IPAttnProcessor, IPAttnProcessor)):
                 org_unet_sum.append(torch.sum(torch.stack([torch.sum(p) for p in attn_proc.parameters()])))
         org_unet_sum = torch.sum(torch.stack(org_unet_sum))
@@ -188,7 +190,7 @@ class IPAdapterPlus(torch.nn.Module):
 
         # Verify if the weights loaded to unet
         unet_sum = []
-        for attn_name, attn_proc in self.unet.attn_processors.items():
+        for _attn_name, attn_proc in self.unet.attn_processors.items():
             if isinstance(attn_proc, (TA_IPAttnProcessor, IPAttnProcessor)):
                 unet_sum.append(torch.sum(torch.stack([torch.sum(p) for p in attn_proc.parameters()])))
         unet_sum = torch.sum(torch.stack(unet_sum))

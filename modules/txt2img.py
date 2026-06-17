@@ -1,10 +1,12 @@
 import os
 from modules import shared, processing, scripts_manager
+from modules.logger import log
 from modules.generation_parameters_copypaste import create_override_settings_dict
 from modules.ui_common import plaintext_to_html
+from modules.paths import resolve_output_path
 
 
-debug = shared.log.trace if os.environ.get('SD_PROCESS_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.trace if os.environ.get('SD_PROCESS_DEBUG', None) is not None else lambda *args, **kwargs: None
 debug('Trace: PROCESS')
 
 
@@ -15,34 +17,38 @@ def txt2img(id_task, state,
             detailer_enabled, detailer_prompt, detailer_negative, detailer_steps, detailer_strength, detailer_resolution,
             n_iter, batch_size,
             guidance_name, guidance_scale, guidance_rescale, guidance_start, guidance_stop,
-            cfg_scale, image_cfg_scale, diffusers_guidance_rescale, pag_scale, pag_adaptive, cfg_end,
+            cfg_scale, cfg_image, cfg_rescale, cfg_true, cfg_adaptive, cfg_end,
             clip_skip,
             seed, subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w,
             height, width,
             enable_hr, denoising_strength,
             hr_scale, hr_resize_mode, hr_resize_context, hr_upscaler, hr_force, hr_second_pass_steps, hr_resize_x, hr_resize_y,
             refiner_steps, refiner_start, refiner_prompt, refiner_negative,
-            hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundary, hdr_color_picker, hdr_tint_ratio,
+            hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundary, hdr_color_picker, hdr_tint_ratio, hdr_apply_hires,
+            grading_brightness, grading_contrast, grading_saturation, grading_hue, grading_gamma, grading_sharpness, grading_color_temp,
+            grading_shadows, grading_midtones, grading_highlights, grading_clahe_clip, grading_clahe_grid,
+            grading_shadows_tint, grading_highlights_tint, grading_split_tone_balance,
+            grading_vignette, grading_grain, grading_lut_file, grading_lut_strength,
             override_settings_texts,
             *args):
 
     debug(f'txt2img: {id_task}')
 
     if shared.sd_model is None:
-        shared.log.warning('Aborted: op=txt model not loaded')
+        log.warning('Aborted: op=txt model not loaded')
         return [], '', '', 'Error: model not loaded'
 
     override_settings = create_override_settings_dict(override_settings_texts)
     if sampler_index is None:
-        shared.log.warning('Sampler: invalid')
+        log.warning('Sampler: invalid')
         sampler_index = 0
     if hr_sampler_index is None:
         hr_sampler_index = sampler_index
 
     p = processing.StableDiffusionProcessingTxt2Img(
         sd_model=shared.sd_model,
-        outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_txt2img_samples,
-        outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_txt2img_grids,
+        outpath_samples=resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_txt2img_samples),
+        outpath_grids=resolve_output_path(shared.opts.outdir_grids, shared.opts.outdir_txt2img_grids),
         prompt=prompt,
         styles=prompt_styles,
         negative_prompt=negative_prompt,
@@ -62,10 +68,10 @@ def txt2img(id_task, state,
         guidance_start=guidance_start,
         guidance_stop=guidance_stop,
         cfg_scale=cfg_scale,
-        image_cfg_scale=image_cfg_scale,
-        diffusers_guidance_rescale=diffusers_guidance_rescale,
-        pag_scale=pag_scale,
-        pag_adaptive=pag_adaptive,
+        cfg_image=cfg_image,
+        cfg_rescale=cfg_rescale,
+        cfg_true=cfg_true,
+        cfg_adaptive=cfg_adaptive,
         cfg_end=cfg_end,
         clip_skip=clip_skip,
         width=width,
@@ -94,7 +100,14 @@ def txt2img(id_task, state,
         refiner_prompt=refiner_prompt,
         refiner_negative=refiner_negative,
         hdr_mode=hdr_mode, hdr_brightness=hdr_brightness, hdr_color=hdr_color, hdr_sharpen=hdr_sharpen, hdr_clamp=hdr_clamp,
-        hdr_boundary=hdr_boundary, hdr_threshold=hdr_threshold, hdr_maximize=hdr_maximize, hdr_max_center=hdr_max_center, hdr_max_boundary=hdr_max_boundary, hdr_color_picker=hdr_color_picker, hdr_tint_ratio=hdr_tint_ratio,
+        hdr_boundary=hdr_boundary, hdr_threshold=hdr_threshold, hdr_maximize=hdr_maximize, hdr_max_center=hdr_max_center, hdr_max_boundary=hdr_max_boundary, hdr_color_picker=hdr_color_picker, hdr_tint_ratio=hdr_tint_ratio, hdr_apply_hires=hdr_apply_hires,
+        grading_brightness=grading_brightness, grading_contrast=grading_contrast, grading_saturation=grading_saturation, grading_hue=grading_hue,
+        grading_gamma=grading_gamma, grading_sharpness=grading_sharpness, grading_color_temp=grading_color_temp,
+        grading_shadows=grading_shadows, grading_midtones=grading_midtones, grading_highlights=grading_highlights,
+        grading_clahe_clip=grading_clahe_clip, grading_clahe_grid=grading_clahe_grid,
+        grading_shadows_tint=grading_shadows_tint, grading_highlights_tint=grading_highlights_tint, grading_split_tone_balance=grading_split_tone_balance,
+        grading_vignette=grading_vignette, grading_grain=grading_grain,
+        grading_lut_file=grading_lut_file.name if grading_lut_file is not None else '', grading_lut_strength=grading_lut_strength,
         override_settings=override_settings,
     )
     p.scripts = scripts_manager.scripts_txt2img

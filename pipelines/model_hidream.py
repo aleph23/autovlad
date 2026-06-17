@@ -1,13 +1,16 @@
 import transformers
 import diffusers
-from modules import shared, devices, sd_models, model_quant, sd_hijack_te
+from modules import shared, devices, sd_models, model_quant, sd_hijack_te, sd_hijack_vae
+from modules.logger import log
 from pipelines import generic
 
 
-def load_llama(diffusers_load_config={}):
+def init_llama(diffusers_load_config=None):
+    if diffusers_load_config is None:
+        diffusers_load_config = {}
     load_args, quant_args = model_quant.get_dit_args(diffusers_load_config, module='TE', device_map=True)
     llama_repo = shared.opts.model_h1_llama_repo if shared.opts.model_h1_llama_repo != 'Default' else 'meta-llama/Meta-Llama-3.1-8B-Instruct'
-    shared.log.debug(f'Load model: type=HiDream te4="{llama_repo}" quant="{model_quant.get_quant_type(quant_args)}" args={load_args}')
+    log.debug(f'Load model: type=HiDream te4="{llama_repo}" quant="{model_quant.get_quant_type(quant_args)}" args={load_args}')
     sd_models.hf_auth_check(llama_repo)
 
     text_encoder_4 = transformers.LlamaForCausalLM.from_pretrained(
@@ -28,26 +31,89 @@ def load_llama(diffusers_load_config={}):
     return text_encoder_4, tokenizer_4
 
 
-def load_hidream(checkpoint_info, diffusers_load_config={}):
+def load_hidream_o1(checkpoint_info, diffusers_load_config=None):
+    if diffusers_load_config is None:
+        diffusers_load_config = {}
+    repo_id = sd_models.path_to_repo(checkpoint_info)
+    sd_models.hf_auth_check(checkpoint_info)
+
+    from pipelines.hidream.hidream_o1 import HiDreamO1Pipeline, HiDreamO1ImagePipeline
+    from pipelines.hidream.qwen3_vl_transformers import HiDreamO1Qwen3VLTransformer
+    from pipelines.hidream.scheduler_flashfloweuler import FlashFlowMatchEulerDiscreteScheduler
+    generic.set_pipeline('HiDreamO1', HiDreamO1Pipeline)
+
+    load_args, quant_args = model_quant.get_dit_args(diffusers_load_config, module='Model', device_map=True, allow_quant=True)
+    log.debug(f'Load model: type=HiDreamO1 repo="{repo_id}" offload={shared.opts.diffusers_offload_mode} dtype={devices.dtype} quant="{model_quant.get_quant_type(quant_args)}" args={load_args}')
+    if repo_id is None or repo_id.lower() == 'none':
+        return None
+
+    o1_load_config = diffusers_load_config.copy()
+    o1_load_config['trust_remote_code'] = True
+
+    path_args = {}
+    if 'vladmandic' in repo_id.lower():
+        path_args['subfolder'] = 'transformer'
+    transformer = HiDreamO1Qwen3VLTransformer.from_pretrained(
+        repo_id,
+        cache_dir=shared.opts.hfcache_dir,
+        trust_remote_code=True,
+        **path_args,
+        **load_args,
+        **quant_args,
+    )
+    if shared.opts.diffusers_offload_mode != 'none' and transformer is not None:
+        sd_models.move_model(transformer, devices.cpu)
+
+    if 'vladmandic' in repo_id.lower():
+        path_args['subfolder'] = 'processor'
+    processor = transformers.AutoProcessor.from_pretrained(
+        repo_id,
+        **path_args,
+        cache_dir=shared.opts.hfcache_dir,
+        trust_remote_code=True,
+    )
+    pipe = HiDreamO1Pipeline(
+        transformer=transformer,
+        processor=processor,
+        tokenizer=processor.tokenizer,
+        scheduler=FlashFlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=3.0, use_dynamic_shifting=False),
+    )
+    pipe.task_args = {
+        'output_type': 'pil',
+    }
+
+    del processor
+    del transformer
+    diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["hidream-o1"] = HiDreamO1Pipeline
+    diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["hidream-o1"] = HiDreamO1ImagePipeline
+
+    devices.torch_gc()
+    return pipe
+
+
+def load_hidream(checkpoint_info, diffusers_load_config=None):
+    if diffusers_load_config is None:
+        diffusers_load_config = {}
     repo_id = sd_models.path_to_repo(checkpoint_info)
     sd_models.hf_auth_check(checkpoint_info)
 
     load_args, _quant_args = model_quant.get_dit_args(diffusers_load_config, allow_quant=False)
-    shared.log.debug(f'Load model: type=HiDream repo="{repo_id}" config={diffusers_load_config} offload={shared.opts.diffusers_offload_mode} dtype={devices.dtype} args={load_args}')
+    log.debug(f'Load model: type=HiDream repo="{repo_id}" config={diffusers_load_config} offload={shared.opts.diffusers_offload_mode} dtype={devices.dtype} args={load_args}')
 
     transformer = generic.load_transformer(repo_id, cls_name=diffusers.HiDreamImageTransformer2DModel, load_config=diffusers_load_config, subfolder="transformer")
     text_encoder_3 = generic.load_text_encoder(repo_id, cls_name=transformers.T5EncoderModel, load_config=diffusers_load_config, subfolder="text_encoder_3")
-    text_encoder_4, tokenizer_4 = load_llama(diffusers_load_config)
 
     if shared.opts.teacache_enabled:
         from modules import teacache
-        shared.log.debug(f'Transformers cache: type=teacache patch=forward cls={diffusers.HiDreamImageTransformer2DModel.__name__}')
+        log.debug(f'Transformers cache: type=teacache patch=forward cls={diffusers.HiDreamImageTransformer2DModel.__name__}')
         diffusers.HiDreamImageTransformer2DModel.forward = teacache.teacache_hidream_forward # patch must be done before transformer is loaded
 
+    if repo_id is None or repo_id.lower() == 'none':
+        return None
     if 'I1' in repo_id:
         cls = diffusers.HiDreamImagePipeline
     elif 'E1' in repo_id:
-        from pipelines.hidream.pipeline_hidream_image_editing import HiDreamImageEditingPipeline
+        from pipelines.hidream.hidream_e1 import HiDreamImageEditingPipeline
         cls = HiDreamImageEditingPipeline
         diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["hidream-e1"] = diffusers.HiDreamImagePipeline
         diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["hidream-e1"] = HiDreamImageEditingPipeline
@@ -57,9 +123,10 @@ def load_hidream(checkpoint_info, diffusers_load_config={}):
         elif transformer and 'E1' in repo_id:
             transformer.max_seq = 4608
     else:
-        shared.log.error(f'Load model: type=HiDream model="{checkpoint_info.name}" repo="{repo_id}" not recognized')
+        log.error(f'Load model: type=HiDream model="{checkpoint_info.name}" repo="{repo_id}" not recognized')
         return False
 
+    text_encoder_4, tokenizer_4 = init_llama(diffusers_load_config)
     pipe = cls.from_pretrained(
         repo_id,
         transformer=transformer,
@@ -75,6 +142,7 @@ def load_hidream(checkpoint_info, diffusers_load_config={}):
     del tokenizer_4
     del transformer
     sd_hijack_te.init_hijack(pipe)
+    sd_hijack_vae.init_hijack(pipe)
 
     devices.torch_gc()
     return pipe

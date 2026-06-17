@@ -1,10 +1,10 @@
 import torch
 from torchvision.transforms import Compose, Lambda, Normalize
-from ..optimization.performance import optimized_video_rearrange, optimized_single_video_rearrange, optimized_sample_to_image_format
-from ..common.seed import set_seed
-from ..data.image.transforms.divisible_crop import DivisibleCrop
-from ..data.image.transforms.na_resize import NaResize
-from ..utils.color_fix import wavelet_reconstruction
+from modules.seedvr.src.optimization.performance import optimized_video_rearrange, optimized_single_video_rearrange, optimized_sample_to_image_format
+from modules.seedvr.src.common.seed import set_seed
+from modules.seedvr.src.data.image.transforms.divisible_crop import DivisibleCrop
+from modules.seedvr.src.data.image.transforms.na_resize import NaResize
+from modules.seedvr.src.utils.color_fix import wavelet_reconstruction
 
 
 

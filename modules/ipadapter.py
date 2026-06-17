@@ -5,13 +5,18 @@ Lightweight IP-Adapter applied to existing pipeline in Diffusers
 - IP adapters: https://huggingface.co/h94/IP-Adapter
 """
 
+from __future__ import annotations
 import os
 import time
 import json
+from typing import TYPE_CHECKING
 from PIL import Image
-import diffusers
 import transformers
 from modules import processing, shared, devices, sd_models, errors, model_quant
+from modules.logger import log
+
+if TYPE_CHECKING:
+    from diffusers import DiffusionPipeline
 
 
 clip_loaded = None
@@ -71,10 +76,10 @@ def get_adapters():
 def get_images(input_images):
     output_images = []
     if input_images is None or len(input_images) == 0:
-        shared.log.error('IP adapter: no init images')
+        log.error('IP adapter: no init images')
         return None
     if shared.sd_model_type not in ['sd', 'sdxl', 'sd3', 'f1']:
-        shared.log.error('IP adapter: base model not supported')
+        log.error('IP adapter: base model not supported')
         return None
     if isinstance(input_images, str):
         from modules.api.api import decode_base64_to_image
@@ -98,7 +103,7 @@ def get_images(input_images):
             pil_image.load()
             output_images.append(pil_image)
         else:
-            shared.log.error(f'IP adapter: unknown input: {image}')
+            log.error(f'IP adapter: unknown input: {image}')
     return output_images
 
 
@@ -129,9 +134,9 @@ def crop_images(images, crops):
                 if len(cropped) == len(images[i]):
                     images[i] = cropped
                 else:
-                    shared.log.error(f'IP adapter: failed to crop image: source={len(images[i])} faces={len(cropped)}')
+                    log.error(f'IP adapter: failed to crop image: source={len(images[i])} faces={len(cropped)}')
     except Exception as e:
-        shared.log.error(f'IP adapter: failed to crop image: {e}')
+        log.error(f'IP adapter: failed to crop image: {e}')
     if shared.sd_model_type == 'sd3' and len(images) == 1:
         return images[0]
     return images
@@ -144,7 +149,7 @@ def unapply(pipe, unload: bool = False): # pylint: disable=arguments-differ
         if hasattr(pipe, 'set_ip_adapter_scale'):
             pipe.set_ip_adapter_scale(0)
             if unload:
-                shared.log.debug('IP adapter unload')
+                log.debug('IP adapter unload')
                 pipe.unload_ip_adapter()
         if hasattr(pipe, 'unet') and pipe.unet is not None:
             module = pipe.unet
@@ -160,7 +165,7 @@ def unapply(pipe, unload: bool = False): # pylint: disable=arguments-differ
         pass
 
 
-def load_image_encoder(pipe: diffusers.DiffusionPipeline, adapter_names: list[str]):
+def load_image_encoder(pipe: DiffusionPipeline, adapter_names: list[str]):
     global clip_loaded # pylint: disable=global-statement
     for adapter_name in adapter_names:
         # which clip to use
@@ -183,22 +188,23 @@ def load_image_encoder(pipe: diffusers.DiffusionPipeline, adapter_names: list[st
                 clip_repo = OPEN_ID
                 clip_subfolder = None
             else:
-                shared.log.error(f'IP adapter: unknown model type: {adapter_name}')
+                log.error(f'IP adapter: unknown model type: {adapter_name}')
                 return False
 
     # load image encoder used by ip adapter
     if pipe.image_encoder is None or clip_loaded != f'{clip_repo}/{clip_subfolder}':
         jobid = shared.state.begin('Load encoder')
         try:
+            offline_config = { 'local_files_only': True } if shared.opts.offline_mode else {}
             if shared.sd_model_type == 'sd3':
-                image_encoder = transformers.SiglipVisionModel.from_pretrained(clip_repo, torch_dtype=devices.dtype, cache_dir=shared.opts.hfcache_dir)
+                image_encoder = transformers.SiglipVisionModel.from_pretrained(clip_repo, torch_dtype=devices.dtype, cache_dir=shared.opts.hfcache_dir, **offline_config)
             else:
                 if clip_subfolder is None:
-                    image_encoder = transformers.CLIPVisionModelWithProjection.from_pretrained(clip_repo, torch_dtype=devices.dtype, cache_dir=shared.opts.hfcache_dir, use_safetensors=True)
-                    shared.log.debug(f'IP adapter load: encoder="{clip_repo}" cls={pipe.image_encoder.__class__.__name__}')
+                    image_encoder = transformers.CLIPVisionModelWithProjection.from_pretrained(clip_repo, torch_dtype=devices.dtype, cache_dir=shared.opts.hfcache_dir, use_safetensors=True, **offline_config)
+                    log.debug(f'IP adapter load: encoder="{clip_repo}" cls={image_encoder.__class__.__name__}')
                 else:
-                    image_encoder = transformers.CLIPVisionModelWithProjection.from_pretrained(clip_repo, subfolder=clip_subfolder, torch_dtype=devices.dtype, cache_dir=shared.opts.hfcache_dir, use_safetensors=True)
-                    shared.log.debug(f'IP adapter load: encoder="{clip_repo}/{clip_subfolder}" cls={pipe.image_encoder.__class__.__name__}')
+                    image_encoder = transformers.CLIPVisionModelWithProjection.from_pretrained(clip_repo, subfolder=clip_subfolder, torch_dtype=devices.dtype, cache_dir=shared.opts.hfcache_dir, use_safetensors=True, **offline_config)
+                    log.debug(f'IP adapter load: encoder="{clip_repo}/{clip_subfolder}" cls={image_encoder.__class__.__name__}')
             sd_models.clear_caches()
             image_encoder = model_quant.do_post_load_quant(image_encoder, allow=True)
             if hasattr(pipe, 'register_modules'):
@@ -206,12 +212,16 @@ def load_image_encoder(pipe: diffusers.DiffusionPipeline, adapter_names: list[st
             else:
                 pipe.image_encoder = image_encoder
             clip_loaded = f'{clip_repo}/{clip_subfolder}'
+            pipe = sd_models.apply_balanced_offload(pipe, force=True)
         except Exception as e:
-            shared.log.error(f'IP adapter load: encoder="{clip_repo}/{clip_subfolder}" {e}')
+            log.error(f'IP adapter load: encoder="{clip_repo}/{clip_subfolder}" {e}')
             errors.display(e, 'IP adapter: type=encoder')
             return False
         shared.state.end(jobid)
     sd_models.move_model(pipe.image_encoder, devices.device)
+    if hasattr(pipe.unet, 'balanced_offload_device_map') and pipe.unet.balanced_offload_device_map.get('encoder_hid_proj', None) is None:
+        # image encoder patches unet, but diffusers creates full device map only during model load so if module is loaded later it will be missing
+        pipe.unet.balanced_offload_device_map['encoder_hid_proj'] = 0
     return True
 
 
@@ -220,21 +230,23 @@ def load_feature_extractor(pipe):
     if pipe.feature_extractor is None:
         try:
             jobid = shared.state.begin('Load extractor')
+            offline_config = { 'local_files_only': True } if shared.opts.offline_mode else {}
             if shared.sd_model_type == 'sd3':
-                feature_extractor = transformers.SiglipImageProcessor.from_pretrained(SIGLIP_ID, torch_dtype=devices.dtype, cache_dir=shared.opts.hfcache_dir)
+                feature_extractor = transformers.SiglipImageProcessor.from_pretrained(SIGLIP_ID, torch_dtype=devices.dtype, cache_dir=shared.opts.hfcache_dir, **offline_config)
             else:
                 feature_extractor = transformers.CLIPImageProcessor()
             if hasattr(pipe, 'register_modules'):
                 pipe.register_modules(feature_extractor=feature_extractor)
             else:
                 pipe.feature_extractor = feature_extractor
-                sd_models.apply_balanced_offload(pipe.feature_extractor)
-            shared.log.debug(f'IP adapter load: extractor={pipe.feature_extractor.__class__.__name__}')
+            pipe = sd_models.apply_balanced_offload(pipe, force=True, silent=True)
+            log.debug(f'IP adapter load: extractor={pipe.feature_extractor.__class__.__name__}')
         except Exception as e:
-            shared.log.error(f'IP adapter load: extractor {e}')
+            log.error(f'IP adapter load: extractor {e}')
             errors.display(e, 'IP adapter: type=extractor')
             return False
         shared.state.end(jobid)
+    sd_models.move_model(pipe.feature_extractor, devices.device)
     return True
 
 
@@ -262,14 +274,14 @@ def parse_params(p: processing.StableDiffusionProcessing, adapters: list, adapte
             adapter_masks[i] = mask_processor.preprocess(adapter_masks[i], height=p.height, width=p.width)
         adapter_masks = mask_processor.preprocess(adapter_masks, height=p.height, width=p.width)
     if adapter_images is None:
-        shared.log.error('IP adapter: no image provided')
+        log.error('IP adapter: no image provided')
         return [], [], [], [], [], []
     if len(adapters) < len(adapter_images):
         adapter_images = adapter_images[:len(adapters)]
     if len(adapters) < len(adapter_masks):
         adapter_masks = adapter_masks[:len(adapters)]
     if len(adapter_masks) > 0 and len(adapter_masks) != len(adapter_images):
-        shared.log.error('IP adapter: image and mask count mismatch')
+        log.error('IP adapter: image and mask count mismatch')
         return [], [], [], [], [], []
     adapter_scales = get_scales(adapter_scales, adapter_images)
     p.ip_adapter_scales = adapter_scales.copy()
@@ -282,7 +294,19 @@ def parse_params(p: processing.StableDiffusionProcessing, adapters: list, adapte
     return adapter_images, adapter_masks, adapter_scales, adapter_crops, adapter_starts, adapter_ends
 
 
-def apply(pipe, p: processing.StableDiffusionProcessing, adapter_names=[], adapter_scales=[1.0], adapter_crops=[False], adapter_starts=[0.0], adapter_ends=[1.0], adapter_images=[]):
+def apply(pipe, p: processing.StableDiffusionProcessing, adapter_names=None, adapter_scales=None, adapter_crops=None, adapter_starts=None, adapter_ends=None, adapter_images=None):
+    if adapter_images is None:
+        adapter_images = []
+    if adapter_ends is None:
+        adapter_ends = [1.0]
+    if adapter_starts is None:
+        adapter_starts = [0.0]
+    if adapter_crops is None:
+        adapter_crops = [False]
+    if adapter_scales is None:
+        adapter_scales = [1.0]
+    if adapter_names is None:
+        adapter_names = []
     global adapters_loaded # pylint: disable=global-statement
     # overrides
     if hasattr(p, 'ip_adapter_names'):
@@ -301,7 +325,7 @@ def apply(pipe, p: processing.StableDiffusionProcessing, adapter_names=[], adapt
             del p.ip_adapter_images
         return False
     if shared.sd_model_type not in ['sd', 'sdxl', 'sd3', 'f1']:
-        shared.log.error(f'IP adapter: model={shared.sd_model_type} class={pipe.__class__.__name__} not supported')
+        log.error(f'IP adapter: model={shared.sd_model_type} class={pipe.__class__.__name__} not supported')
         return False
 
     adapter_images, adapter_masks, adapter_scales, adapter_crops, adapter_starts, adapter_ends = parse_params(p, adapters, adapter_scales, adapter_crops, adapter_starts, adapter_ends, adapter_images)
@@ -310,7 +334,7 @@ def apply(pipe, p: processing.StableDiffusionProcessing, adapter_names=[], adapt
     if pipe is None:
         return False
     if len(adapter_images) == 0:
-        shared.log.error('IP adapter: no image provided')
+        log.error('IP adapter: no image provided')
         adapters = [] # unload adapter if previously loaded as it will cause runtime errors
     if len(adapters) == 0:
         unapply(pipe, getattr(p, 'ip_adapter_unload', False))
@@ -318,7 +342,7 @@ def apply(pipe, p: processing.StableDiffusionProcessing, adapter_names=[], adapt
             del p.ip_adapter_images
         return False
     if not hasattr(pipe, 'load_ip_adapter'):
-        shared.log.error(f'IP adapter: pipeline not supported: {pipe.__class__.__name__}')
+        log.error(f'IP adapter: pipeline not supported: {pipe.__class__.__name__}')
         return False
 
     if not load_image_encoder(pipe, adapter_names):
@@ -343,6 +367,8 @@ def apply(pipe, p: processing.StableDiffusionProcessing, adapter_names=[], adapt
             kwargs['weight_name'] = names if len(names) > 1 else names[0]
         if len(revisions) > 0:
             kwargs['revision'] = revisions[0]
+        if shared.opts.offline_mode:
+            kwargs["local_files_only"] = True
         pipe.load_ip_adapter(repos, **kwargs)
         adapters_loaded = names
         if hasattr(p, 'ip_adapter_layers'):
@@ -353,7 +379,7 @@ def apply(pipe, p: processing.StableDiffusionProcessing, adapter_names=[], adapt
                 if adapter_starts[i] > 0:
                     adapter_scales[i] = 0.00
             pipe.set_ip_adapter_scale(adapter_scales if len(adapter_scales) > 1 else adapter_scales[0])
-            ip_str =  [f'{os.path.splitext(adapter)[0]}:{scale}:{start}:{end}:{crop}' for adapter, scale, start, end, crop in zip(adapter_names, adapter_scales, adapter_starts, adapter_ends, adapter_crops)]
+            ip_str =  [f'{os.path.splitext(adapter)[0]}:{scale}:{start}:{end}:{crop}' for adapter, scale, start, end, crop in zip(adapter_names, adapter_scales, adapter_starts, adapter_ends, adapter_crops, strict=False)]
         if hasattr(pipe, 'transformer') and 'Nunchaku' in pipe.transformer.__class__.__name__:
             if isinstance(repos, str):
                 sd_models.clear_caches(full=True)
@@ -363,16 +389,16 @@ def apply(pipe, p: processing.StableDiffusionProcessing, adapter_names=[], adapt
                 from nunchaku.models.ip_adapter.diffusers_adapters import apply_IPA_on_pipe
                 apply_IPA_on_pipe(pipe, ip_adapter_scale=adapter_scales[0], repo_id=repos)
                 pipe = sd_models.apply_balanced_offload(pipe)
-                shared.log.debug(f'IP adapter load: engine=nunchaku scale={adapter_scales[0]} repo="{repos}"')
+                log.debug(f'IP adapter load: engine=nunchaku scale={adapter_scales[0]} repo="{repos}"')
             else:
-                shared.log.error('IP adapter: Nunchaku only supports single adapter')
+                log.error('IP adapter: Nunchaku only supports single adapter')
         p.task_args['ip_adapter_image'] = crop_images(adapter_images, adapter_crops)
         if len(adapter_masks) > 0:
             p.cross_attention_kwargs = { 'ip_adapter_masks': adapter_masks }
         p.extra_generation_params["IP Adapter"] = ';'.join(ip_str)
         t1 = time.time()
-        shared.log.info(f'IP adapter: {ip_str} image={adapter_images} mask={adapter_masks is not None} time={t1-t0:.2f}')
+        log.info(f'IP adapter: {ip_str} image={adapter_images} mask={adapter_masks is not None} time={t1-t0:.2f}')
     except Exception as e:
-        shared.log.error(f'IP adapter load: adapters={adapter_names} repo={repos} folders={subfolders} names={names} {e}')
+        log.error(f'IP adapter load: adapters={adapter_names} repo={repos} folders={subfolders} names={names} {e}')
         errors.display(e, 'IP adapter: type=adapter')
     return True

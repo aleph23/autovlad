@@ -1,5 +1,5 @@
 from pydantic.dataclasses import dataclass
-from ..config import BaseConfig
+from lbm.config import BaseConfig
 
 
 @dataclass

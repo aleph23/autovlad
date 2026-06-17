@@ -1,7 +1,5 @@
 # pylint: disable=relative-beyond-top-level,redefined-builtin,protected-access
 
-from typing import Optional
-
 import torch
 
 
@@ -32,7 +30,7 @@ def process_conv_input(conv_type, input, reversed_padding_repeated_twice, paddin
         L_out = (L_in + 2 * padding[1] - dilation[1] * (K_l - 1) - 1) // stride[1] + 1
         mm_output_shape = (batch_size, L_out, C_out)
         kernel_size = (1, K_l)
-    if conv_type == 2:
+    elif conv_type == 2:
         batch_size, _, H_in, W_in = input.shape
         C_out, _, K_h, K_w = result_shape
         H_out = (H_in + 2 * padding[0] - dilation[0] * (K_h - 1) - 1) // stride[0] + 1
@@ -78,16 +76,16 @@ def quantized_conv_forward(self, input) -> torch.FloatTensor:
     return self._conv_forward(input, self.sdnq_dequantizer(self.weight, self.scale, self.zero_point, self.svd_up, self.svd_down), self.bias)
 
 
-def quantized_conv_transpose_1d_forward(self, input: torch.FloatTensor, output_size: Optional[list[int]] = None) -> torch.FloatTensor:
+def quantized_conv_transpose_1d_forward(self, input: torch.FloatTensor, output_size: list[int] | None = None) -> torch.FloatTensor:
     output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size, 1, self.dilation)
     return torch.nn.functional.conv_transpose1d(input, self.sdnq_dequantizer(self.weight, self.scale, self.zero_point, self.svd_up, self.svd_down), self.bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
 
 
-def quantized_conv_transpose_2d_forward(self, input: torch.FloatTensor, output_size: Optional[list[int]] = None) -> torch.FloatTensor:
+def quantized_conv_transpose_2d_forward(self, input: torch.FloatTensor, output_size: list[int] | None = None) -> torch.FloatTensor:
     output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size, 2, self.dilation)
     return torch.nn.functional.conv_transpose2d(input, self.sdnq_dequantizer(self.weight, self.scale, self.zero_point, self.svd_up, self.svd_down), self.bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
 
 
-def quantized_conv_transpose_3d_forward(self, input: torch.FloatTensor, output_size: Optional[list[int]] = None) -> torch.FloatTensor:
+def quantized_conv_transpose_3d_forward(self, input: torch.FloatTensor, output_size: list[int] | None = None) -> torch.FloatTensor:
     output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size, 3, self.dilation)
     return torch.nn.functional.conv_transpose3d(input, self.sdnq_dequantizer(self.weight, self.scale, self.zero_point, self.svd_up, self.svd_down), self.bias, self.stride, self.padding, output_padding, self.groups, self.dilation)

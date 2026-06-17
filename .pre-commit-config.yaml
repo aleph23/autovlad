@@ -1,15 +1,6 @@
-# To use:
-#
-#     pre-commit run -a
-#
-# Or:
-#
-#     pre-commit install  # (runs every time you commit in git)
-#
-# To update this file:
-#
-#     pre-commit autoupdate
-#
+# To use: pre-commit run -a
+# Or: pre-commit install  # (runs every time you commit in git)
+# To update this file: pre-commit autoupdate
 # See https://github.com/pre-commit/pre-commit
 
 ci:
@@ -19,24 +10,26 @@ ci:
 repos:
 # Standard hooks
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v5.0.0
+  rev: v6.0.0
   hooks:
   - id: check-added-large-files
-  - id: check-case-conflict
-  - id: check-merge-conflict
-  - id: check-symlinks
-  - id: check-illegal-windows-names
-  - id: check-merge-conflict
-  - id: detect-private-key
   - id: check-builtin-literals
   - id: check-case-conflict
+  - id: check-illegal-windows-names
+  - id: check-merge-conflict
   - id: check-symlinks
-  - id: check-yaml
   - id: check-json
   - id: check-toml
   - id: check-xml
+  - id: check-yaml
+  - id: debug-statements
+  - id: detect-private-key
   - id: end-of-file-fixer
   - id: mixed-line-ending
+  - id: fix-byte-order-marker
+  - id: check-ast
+  - id: check-added-large-files
+    args: ['--maxkb=500']
   - id: check-executables-have-shebangs
     exclude: |
             (?x)^(
@@ -49,3 +42,13 @@ repos:
                 .*\.md|
                 .github/ISSUE_TEMPLATE/.*\.yml
             )$
+- repo: https://github.com/oliv5/pre-commit-indents-to-spaces
+  rev: v0.0.3
+  hooks:
+  - id: indents-to-spaces
+    args: ["--spaces=4"]
+    types: [python]
+  - id: indents-to-spaces
+    args: ["--spaces=2"]
+    types: [file]
+    files: \.(json|js|css|html|md|yaml|toml|sh)$

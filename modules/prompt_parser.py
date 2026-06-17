@@ -10,7 +10,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import os
 import re
 from collections import namedtuple
-from typing import List
 import lark
 import torch
 from compel import Compel
@@ -81,7 +80,6 @@ re_attention_v1 = re.compile(r"""
 
 debug_output = os.environ.get('SD_PROMPT_DEBUG', None)
 debug = log.trace if debug_output is not None else lambda *args, **kwargs: None
-debug('Trace: PROMPT')
 
 
 def get_learned_conditioning_prompt_schedules(prompts, steps):
@@ -150,7 +148,7 @@ def get_learned_conditioning_prompt_schedules(prompts, steps):
                 return ''.join(flatten(args))
             def plain(self, args):
                 yield args[0].value
-            def __default__(self, data, children, meta):
+            def __default__(self, data, children, meta): # pylint: disable=unused-argument
                 yield from children
         return AtStep().transform(tree)
 
@@ -181,7 +179,7 @@ def get_learned_conditioning(model, prompts, steps):
     res = []
     prompt_schedules = get_learned_conditioning_prompt_schedules(prompts, steps)
     cache = {}
-    for prompt, prompt_schedule in zip(prompts, prompt_schedules):
+    for prompt, prompt_schedule in zip(prompts, prompt_schedules, strict=False):
         debug(f'Prompt schedule: {prompt_schedule}')
         cached = cache.get(prompt, None)
         if cached is not None:
@@ -220,14 +218,14 @@ def get_multicond_prompt_list(prompts):
 
 class ComposableScheduledPromptConditioning:
     def __init__(self, schedules, weight=1.0):
-        self.schedules: List[ScheduledPromptConditioning] = schedules
+        self.schedules: list[ScheduledPromptConditioning] = schedules
         self.weight: float = weight
 
 
 class MulticondLearnedConditioning:
     def __init__(self, shape, batch):
         self.shape: tuple = shape  # the shape field is needed to send this object to DDIM/PLMS
-        self.batch: List[List[ComposableScheduledPromptConditioning]] = batch
+        self.batch: list[list[ComposableScheduledPromptConditioning]] = batch
 
 
 def get_multicond_learned_conditioning(model, prompts, steps) -> MulticondLearnedConditioning:
@@ -243,7 +241,7 @@ def get_multicond_learned_conditioning(model, prompts, steps) -> MulticondLearne
     return MulticondLearnedConditioning(shape=(len(prompts),), batch=res)
 
 
-def reconstruct_cond_batch(c: List[List[ScheduledPromptConditioning]], current_step):
+def reconstruct_cond_batch(c: list[list[ScheduledPromptConditioning]], current_step):
     param = c[0][0].cond
     res = torch.zeros((len(c),) + param.shape, device=param.device, dtype=param.dtype)
     for i, cond_schedule in enumerate(c):
@@ -271,7 +269,9 @@ def reconstruct_multicond_batch(c: MulticondLearnedConditioning, current_step):
             conds_for_batch.append((len(tensors), composable_prompt.weight))
             tensors.append(composable_prompt.schedules[target_index].cond)
         conds_list.append(conds_for_batch)
-    # if prompts have wildly different lengths above the limit we'll get tensors fo different shapes and won't be able to torch.stack them. So this fixes that.
+    # if prompts have wildly different lengths above the limit we'll get tensors of different shapes and won't be able to torch.stack them. So this fixes that.
+    if not tensors:
+        return conds_list, torch.zeros([0], device=param.device, dtype=param.dtype)
     token_count = max([x.shape[0] for x in tensors])
     for i in range(len(tensors)):
         if tensors[i].shape[0] != token_count:
@@ -324,7 +324,7 @@ def parse_prompt_attention(text):
         return res
     elif opts.prompt_attention == 'compel':
         conjunction = Compel.parse_prompt_string(text)
-        if conjunction is None or conjunction.prompts is None or conjunction.prompts is None or len(conjunction.prompts[0].children) == 0:
+        if conjunction is None or conjunction.prompts is None or len(conjunction.prompts) == 0 or len(conjunction.prompts[0].children) == 0:
             return [["", 1.0]]
         res = []
         for frag in conjunction.prompts[0].children:

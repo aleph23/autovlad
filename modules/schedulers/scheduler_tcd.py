@@ -497,7 +497,7 @@ class TCDScheduler(SchedulerMixin, ConfigMixin):
         model_output: torch.FloatTensor,
         timestep: int,
         sample: torch.FloatTensor,
-        eta: float,
+        eta: float = 0.0,
         generator: Optional[torch.Generator] = None,
         return_dict: bool = True,
     ) -> Union[TCDSchedulerOutput, Tuple]:
@@ -593,6 +593,26 @@ class TCDScheduler(SchedulerMixin, ConfigMixin):
             return (prev_sample, pred_noised_sample)
 
         return TCDSchedulerOutput(prev_sample=prev_sample, pred_noised_sample=pred_noised_sample)
+
+    def scale_noise(
+        self,
+        sample: torch.FloatTensor,
+        timestep: Union[float, torch.FloatTensor],
+        noise: Optional[torch.FloatTensor] = None,
+    ) -> torch.FloatTensor:
+        if noise is None:
+            noise = torch.randn_like(sample)
+        if not isinstance(timestep, torch.Tensor):
+            timestep = torch.tensor([timestep], device=sample.device)
+        else:
+            timestep = timestep.to(sample.device)
+            if timestep.ndim == 0:
+                timestep = timestep.unsqueeze(0)
+        if timestep.shape[0] != sample.shape[0]:
+            timestep = timestep.repeat(sample.shape[0])
+        if torch.is_floating_point(timestep):
+            timestep = timestep.round().to(dtype=torch.long)
+        return self.add_noise(sample, noise, timestep)
 
     # Copied from diffusers.schedulers.scheduling_ddpm.DDPMScheduler.add_noise
     def add_noise(

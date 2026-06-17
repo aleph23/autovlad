@@ -14,15 +14,16 @@ from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import normalize, resize
 
 import insightface
-from basicsr.utils import img2tensor, tensor2img
 from facexlib.parsing import init_parsing_model
 from facexlib.utils.face_restoration_helper import FaceRestoreHelper
 from insightface.app import FaceAnalysis
 
+from .pulid_utils import img2tensor, tensor2img
+
 from eva_clip import create_model_and_transforms
 from eva_clip.constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from encoders_transformer import IDFormer, IDEncoder
-from modules.errors import log
+from modules.logger import log
 
 
 debug = log.trace if os.environ.get('SD_PULID_DEBUG', None) is not None else lambda *args, **kwargs: None
@@ -33,7 +34,7 @@ class StableDiffusionXLPuLIDPipeline:
                  pipe: Union[StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline, StableDiffusionXLInpaintPipeline],
                  device: torch.device,
                  dtype: torch.dtype=None,
-                 providers: list=None,
+                 providers: list | None=None,
                  offload: bool=True,
                  sampler=None,
                  cache_dir=None,
@@ -123,7 +124,7 @@ class StableDiffusionXLPuLIDPipeline:
         if sampler is not None:
             self.sampler = sampler
         else:
-            from scripts.pulid import sampling
+            from scripts.pulid import sampling # pylint: disable=no-name-in-module
             self.sampler = sampling.sample_dpmpp_sde
 
     @property
@@ -228,7 +229,7 @@ class StableDiffusionXLPuLIDPipeline:
             if len(self.face_helper.cropped_faces) == 0:
                 raise RuntimeError('facexlib align face fail')
             align_face = self.face_helper.cropped_faces[0]
-            # incase insightface didn't detect face
+            # in case insightface didn't detect face
             if id_ante_embedding is None:
                 id_ante_embedding = self.handler_ante.get_feat(align_face)
 
@@ -283,7 +284,7 @@ class StableDiffusionXLPuLIDPipeline:
         debug(f'PulID embedding: cond={id_embedding.shape} uncond={uncond_id_embedding.shape}')
         return uncond_id_embedding, id_embedding
 
-    def set_progress_bar_config(self, bar_format: str = None, ncols: int = 80, colour: str = None):
+    def set_progress_bar_config(self, bar_format: str | None = None, ncols: int = 80, colour: str | None = None):
         import functools
         from tqdm.auto import trange as trange_orig
         import pulid_sampling

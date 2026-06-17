@@ -55,11 +55,15 @@ class AxisOption:
         self.cost = cost
         self.choices = choices
 
+    def __repr__(self):
+        return f'AxisOption(label="{self.label}" type={self.type.__name__} cost={self.cost} choices={self.choices is not None})'
+
 
 class AxisOptionImg2Img(AxisOption):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.is_img2img = True
+
 
 class AxisOptionTxt2Img(AxisOption):
     def __init__(self, *args, **kwargs):
@@ -85,6 +89,8 @@ class SharedSettingsStackHelper():
     schedulers_beta_end = None
     schedulers_shift = None
     schedulers_sigma = None
+    schedulers_base_shift = None
+    schedulers_max_shift = None
     schedulers_timestep_spacing = None
     schedulers_timesteps_range = None
     schedulers_beta_schedule = None
@@ -114,6 +120,8 @@ class SharedSettingsStackHelper():
         self.schedulers_beta_end = shared.opts.schedulers_beta_end
         self.schedulers_shift = shared.opts.schedulers_shift
         self.scheduler_eta = shared.opts.scheduler_eta
+        self.schedulers_base_shift = shared.opts.schedulers_base_shift
+        self.schedulers_max_shift = shared.opts.schedulers_max_shift
         self.eta_noise_seed_delta = shared.opts.eta_noise_seed_delta
         self.tome_ratio = shared.opts.tome_ratio
         self.todo_ratio = shared.opts.todo_ratio
@@ -132,12 +140,11 @@ class SharedSettingsStackHelper():
         self.disable_apply_metadata = shared.opts.disable_apply_metadata
         self.disable_apply_params = shared.opts.disable_apply_params
         self.sdnq_quant_mode = shared.opts.sdnq_quantize_weights_mode
-
         shared.opts.data["disable_apply_metadata"] = []
         shared.opts.data["disable_apply_params"] = ''
 
     def __exit__(self, exc_type, exc_value, tb):
-        # Restore overriden settings after plot generation
+        # Restore overridden settings after plot generation
         shared.opts.data["disable_apply_metadata"] = self.disable_apply_metadata
         shared.opts.data["disable_apply_params"] = self.disable_apply_params
         shared.opts.data["extra_networks_default_multiplier"] = self.extra_networks_default_multiplier
@@ -150,6 +157,8 @@ class SharedSettingsStackHelper():
         shared.opts.data["schedulers_beta_start"] = self.schedulers_beta_start
         shared.opts.data["schedulers_beta_end"] = self.schedulers_beta_end
         shared.opts.data["schedulers_shift"] = self.schedulers_shift
+        shared.opts.data["schedulers_base_shift"] = self.schedulers_base_shift
+        shared.opts.data["schedulers_max_shift"] = self.schedulers_max_shift
         shared.opts.data["scheduler_eta"] = self.scheduler_eta
         shared.opts.data["eta_noise_seed_delta"] = self.eta_noise_seed_delta
         shared.opts.data["cfgzero_enabled"] = self.cfgzero_enabled
@@ -203,42 +212,44 @@ axis_options = [
     AxisOption("[Param] Steps", int, apply_field("steps")),
     AxisOption("[Param] Variation seed", int, apply_field("subseed")),
     AxisOption("[Param] Variation strength", float, apply_field("subseed_strength")),
-    AxisOption("[Param] Clip skip", float, apply_clip_skip),
+    AxisOption("[Param] CLiP-skip", float, apply_clip_skip),
     AxisOption("[Param] Denoising strength", float, apply_field("denoising_strength")),
     AxisOptionImg2Img("[Param] Mask weight", float, apply_field("inpainting_mask_weight")),
     AxisOption("[Process] Model args", str, apply_task_args),
     AxisOption("[Process] Processing args", str, apply_processing),
     AxisOption("[Process] Server options", str, apply_options),
-    AxisOptionTxt2Img("[Sampler] Name", str, apply_sampler, fmt=format_value_add_label, confirm=confirm_samplers, choices=lambda: [x.name for x in sd_samplers.samplers]),
-    AxisOptionImg2Img("[Sampler] Name", str, apply_sampler, fmt=format_value_add_label, confirm=confirm_samplers, choices=lambda: [x.name for x in sd_samplers.samplers_for_img2img]),
-    AxisOption("[Sampler] Sigma method", str, apply_setting("schedulers_sigma"), choices=lambda: ['default', 'karras', 'betas', 'exponential', 'lambdas']),
+    AxisOptionTxt2Img("[Sampler] Name", str, apply_sampler, fmt=format_value_add_label, confirm=confirm_samplers, choices=lambda: [x.name for x in sd_samplers.visible_samplers()]),
+    AxisOptionImg2Img("[Sampler] Name", str, apply_sampler, fmt=format_value_add_label, confirm=confirm_samplers, choices=lambda: [x.name for x in sd_samplers.visible_samplers(img=True)]),
+    AxisOption("[Sampler] Sigma method", str, apply_setting("schedulers_sigma"), choices=lambda: ['default', 'karras', 'betas', 'exponential', 'lambdas', 'flowmatch']),
     AxisOption("[Sampler] Sigma adjust", float, apply_setting("schedulers_sigma_adjust")),
     AxisOption("[Sampler] Timestep spacing", str, apply_setting("schedulers_timestep_spacing"), choices=lambda: ['default', 'linspace', 'leading', 'trailing']),
     AxisOption("[Sampler] Timestep range", int, apply_setting("schedulers_timesteps_range")),
     AxisOption("[Sampler] Solver order", int, apply_setting("schedulers_solver_order")),
-    AxisOption("[Sampler] Beta schedule", str, apply_setting("schedulers_beta_schedule"), choices=lambda: ['default', 'linear', 'scaled', 'cosine']),
+    AxisOption("[Sampler] Beta schedule", str, apply_setting("schedulers_beta_schedule"), choices=lambda: ['default', 'linear', 'scaled', 'cosine', 'sigmoid']),
     AxisOption("[Sampler] Beta start", float, apply_setting("schedulers_beta_start")),
     AxisOption("[Sampler] Beta end", float, apply_setting("schedulers_beta_end")),
-    AxisOption("[Sampler] Shift", float, apply_setting("schedulers_shift")),
-    AxisOption("[Sampler] eta delta", float, apply_setting("eta_noise_seed_delta")),
-    AxisOption("[Sampler] eta multiplier", float, apply_setting("scheduler_eta")),
-    AxisOption("[Guidance] scale", float, apply_field("cfg_scale")),
-    AxisOption("[Guidance] end", float, apply_field("cfg_end")),
-    AxisOption("[Guidance] image scale", float, apply_field("image_cfg_scale")),
-    AxisOption("[Guidance] rescale", float, apply_field("diffusers_guidance_rescale")),
-    AxisOption("[Guidance] modular name", str, apply_guidance, choices=lambda: ['Default', 'CFG', 'Auto', 'Zero', 'PAG', 'APG', 'SLG', 'SEG', 'TCFG', 'FDG']),
+    AxisOption("[Sampler] Flow shift", float, apply_setting("schedulers_shift")),
+    AxisOption("[Sampler] Base shift", float, apply_setting("schedulers_base_shift")),
+    AxisOption("[Sampler] Max shift", float, apply_setting("schedulers_max_shift")),
+    AxisOption("[Sampler] ETA delta", float, apply_setting("eta_noise_seed_delta")),
+    AxisOption("[Sampler] ETA multiplier", float, apply_setting("scheduler_eta")),
+    AxisOption("[Guidance] Scale", float, apply_field("cfg_scale")),
+    AxisOption("[Guidance] End", float, apply_field("cfg_end")),
+    AxisOption("[Guidance] Image scale", float, apply_field("cfg_image")),
+    AxisOption("[Guidance] Rescale", float, apply_field("cfg_rescale")),
+    AxisOption("[Guidance] Modular name", str, apply_guidance, choices=lambda: ['Default', 'CFG', 'Auto', 'Zero', 'PAG', 'APG', 'SLG', 'SEG', 'TCFG', 'FDG']),
     AxisOption("[Refine] Upscaler", str, apply_field("hr_upscaler"), cost=0.3, choices=lambda: [x.name for x in shared.sd_upscalers]),
-    AxisOption("[Refine] Sampler", str, apply_hr_sampler_name, fmt=format_value_add_label, confirm=confirm_samplers, choices=lambda: [x.name for x in sd_samplers.samplers]),
+    AxisOption("[Refine] Sampler", str, apply_hr_sampler_name, fmt=format_value_add_label, confirm=confirm_samplers, choices=lambda: [x.name for x in sd_samplers.visible_samplers()]),
     AxisOption("[Refine] Denoising strength", float, apply_field("denoising_strength")),
     AxisOption("[Refine] Hires steps", int, apply_field("hr_second_pass_steps")),
     AxisOption("[Refine] Refiner start", float, apply_field("refiner_start")),
     AxisOption("[Refine] Refiner steps", float, apply_field("refiner_steps")),
     AxisOption("[Postprocess] Upscaler", str, apply_upscaler, cost=0.4, choices=lambda: [x.name for x in shared.sd_upscalers]),
     AxisOption("[Postprocess] Context", str, apply_context, choices=lambda: ["Add with forward", "Remove with forward", "Add with backward", "Remove with backward"]),
-    AxisOption("[Postprocess] Detailer", str, apply_detailer, fmt=format_value_add_label),
+    AxisOption("[Postprocess] Detailer", bool, apply_detailer, fmt=format_bool, choices=lambda: [False, True]),
     AxisOption("[Postprocess] Detailer strength", str, apply_field("detailer_strength")),
-    AxisOption("[Quant] SDNQ quant mode", str, apply_sdnq_quant, cost=0.9, fmt=format_value_add_label, choices=lambda: ['none'] + sorted(shared.sdnq_quant_modes)),
-    AxisOption("[Quant] SDNQ quant mode TE", str, apply_sdnq_quant_te, cost=0.9, fmt=format_value_add_label, choices=lambda: ['none'] + sorted(shared.sdnq_quant_modes)),
+    AxisOption("[Quant] SDNQ quant mode", str, apply_sdnq_quant, cost=0.9, fmt=format_value_add_label, choices=lambda: ['none'] + sorted(shared_items.sdnq_quant_modes)),
+    AxisOption("[Quant] SDNQ quant mode TE", str, apply_sdnq_quant_te, cost=0.9, fmt=format_value_add_label, choices=lambda: ['none'] + sorted(shared_items.sdnq_quant_modes)),
     AxisOption("[HDR] Mode", int, apply_field("hdr_mode")),
     AxisOption("[HDR] Brightness", float, apply_field("hdr_brightness")),
     AxisOption("[HDR] Color", float, apply_field("hdr_color")),
@@ -267,9 +278,9 @@ axis_options = [
     AxisOption("[Control] End", float, apply_control('control_end')),
     AxisOption("[HiDiffusion] T1", float, apply_override('hidiffusion_t1')),
     AxisOption("[HiDiffusion] T2", float, apply_override('hidiffusion_t2')),
-    AxisOption("[HiDiffusion] Agression step", float, apply_field('hidiffusion_steps')),
-    AxisOption("[PAG] Attention scale", float, apply_field('pag_scale')),
-    AxisOption("[PAG] Adaptive scaling", float, apply_field('pag_adaptive')),
+    AxisOption("[HiDiffusion] Aggression step", float, apply_field('hidiffusion_steps')),
+    AxisOption("[PAG] Attention scale", float, apply_field('cfg_true')),
+    AxisOption("[PAG] Adaptive scaling", float, apply_field('cfg_adaptive')),
     AxisOption("[PAG] Applied layers", str, apply_setting('pag_apply_layers')),
     AxisOption("[IY] Scale", float, apply_task_arg('infusenet_conditioning_scale')),
     AxisOption("[IY] Start", float, apply_task_arg('infusenet_guidance_start')),

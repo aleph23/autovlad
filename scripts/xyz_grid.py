@@ -1,33 +1,39 @@
 # xyz grid that shows as selectable script
 import os
-import csv
 import time
 import random
 from collections import namedtuple
 from copy import copy
-from itertools import permutations, chain
-from io import StringIO
+from itertools import permutations
 from PIL import Image
 import numpy as np
 import gradio as gr
-from scripts.xyz.xyz_grid_shared import str_permutations, list_to_csv_string, re_range # pylint: disable=no-name-in-module
+from scripts.xyz.xyz_grid_shared import str_permutations, list_to_csv_string, restore_comma, re_range, re_plain_comma # pylint: disable=no-name-in-module
 from scripts.xyz.xyz_grid_classes import axis_options, AxisOption, SharedSettingsStackHelper # pylint: disable=no-name-in-module
 from scripts.xyz.xyz_grid_draw import draw_xyz_grid # pylint: disable=no-name-in-module
 from scripts.xyz.xyz_grid_shared import apply_field, apply_task_args, apply_setting, apply_prompt, apply_order, apply_sampler, apply_hr_sampler_name, confirm_samplers, apply_checkpoint, apply_refiner, apply_unet, apply_clip_skip, apply_vae, list_lora, apply_lora, apply_lora_strength, apply_te, apply_styles, apply_upscaler, apply_context, apply_detailer, apply_override, apply_processing, apply_options, apply_seed, format_value_add_label, format_value, format_value_join_list, do_nothing, format_nothing # pylint: disable=no-name-in-module, unused-import
-from modules import shared, errors, scripts_manager, images, processing
+from modules import shared, errors, scripts_manager, images, video, processing
 from modules.ui_components import ToolButton
 from modules.ui_sections import create_video_inputs
 import modules.ui_symbols as symbols
+from modules.logger import log
 
 
-debug = shared.log.trace if os.environ.get('SD_XYZ_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.trace if os.environ.get('SD_XYZ_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
-class Script(scripts_manager.Script):
+class XYZGridScript(scripts_manager.Script):
     current_axis_options = []
 
+    def __init__(self):
+        super().__init__()
+        self.infotext_fields = ()
+
     def title(self):
-        return "XYZ Grid"
+        return "XYZ Grid Script"
+
+    def show(self, is_img2img): # pylint: disable=unused-argument
+        return True
 
     def ui(self, is_img2img):
         self.current_axis_options = [x for x in axis_options if type(x) == AxisOption or x.is_img2img == is_img2img]
@@ -112,7 +118,7 @@ class Script(scripts_manager.Script):
                     current_dropdown_values = list(filter(lambda x: x in choices, current_dropdown_values))
                     current_values = list_to_csv_string(current_dropdown_values)
                 else:
-                    current_dropdown_values = [x.strip() for x in chain.from_iterable(csv.reader(StringIO(axis_values)))]
+                    current_dropdown_values = [restore_comma(x.strip()) for x in re_plain_comma.split(axis_values) if x]
                     current_dropdown_values = list(filter(lambda x: x in choices, current_dropdown_values))
 
             return (gr.Button.update(visible=has_choices), gr.Textbox.update(visible=not has_choices or csv_mode, value=current_values),
@@ -133,18 +139,18 @@ class Script(scripts_manager.Script):
         def get_dropdown_update_from_params(axis,params):
             val_key = f"{axis} Values"
             vals = params.get(val_key,"")
-            valslist = [x.strip() for x in chain.from_iterable(csv.reader(StringIO(vals))) if x]
+            valslist = [restore_comma(x.strip()) for x in re_plain_comma.split(vals) if x]
             return gr.update(value = valslist)
 
         self.infotext_fields = (
-            (x_type, "X Type"),
-            (x_values, "X Values"),
+            (x_type, "X Script Type"),
+            (x_values, "X Script Values"),
             (x_values_dropdown, lambda params:get_dropdown_update_from_params("X",params)),
-            (y_type, "Y Type"),
-            (y_values, "Y Values"),
+            (y_type, "Y Script Type"),
+            (y_values, "Y Script Values"),
             (y_values_dropdown, lambda params:get_dropdown_update_from_params("Y",params)),
-            (z_type, "Z Type"),
-            (z_values, "Z Values"),
+            (z_type, "Z Script Type"),
+            (z_values, "Z Script Values"),
             (z_values_dropdown, lambda params:get_dropdown_update_from_params("Z",params)),
         )
 
@@ -177,7 +183,7 @@ class Script(scripts_manager.Script):
             if opt.choices is not None and not csv_mode:
                 valslist = vals_dropdown
             else:
-                valslist = [x.strip() for x in chain.from_iterable(csv.reader(StringIO(vals))) if x]
+                valslist = [restore_comma(x.strip()) for x in re_plain_comma.split(vals) if x]
             if opt.type == int:
                 valslist_ext = []
                 for val in valslist:
@@ -188,11 +194,11 @@ class Script(scripts_manager.Script):
                             end_val = int(m.group(2)) if m.group(2) is not None else val
                             num = int(m.group(3)) if m.group(3) is not None else int(end_val-start_val)
                             valslist_ext += [int(x) for x in np.linspace(start=start_val, stop=end_val, num=max(2, num)).tolist()]
-                            shared.log.debug(f'XYZ grid range: start={start_val} end={end_val} num={max(2, num)} list={valslist}')
+                            log.debug(f'XYZ grid range: start={start_val} end={end_val} num={max(2, num)} list={valslist}')
                         else:
                             valslist_ext.append(int(val))
                     except Exception as e:
-                        shared.log.error(f"XYZ grid: value={val} {e}")
+                        log.error(f"XYZ grid: value={val} {e}")
                 valslist.clear()
                 valslist = [x for x in valslist_ext if x not in valslist]
             elif opt.type == float:
@@ -205,11 +211,11 @@ class Script(scripts_manager.Script):
                             end_val = float(m.group(2)) if m.group(2) is not None else val
                             num = int(m.group(3)) if m.group(3) is not None else int(end_val-start_val)
                             valslist_ext += [round(float(x), 2) for x in np.linspace(start=start_val, stop=end_val, num=max(2, num)).tolist()]
-                            shared.log.debug(f'XYZ grid range: start={start_val} end={end_val} num={max(2, num)} list={valslist}')
+                            log.debug(f'XYZ grid range: start={start_val} end={end_val} num={max(2, num)} list={valslist}')
                         else:
                             valslist_ext.append(float(val))
                     except Exception as e:
-                        shared.log.error(f"XYZ grid: value={val} {e}")
+                        log.error(f"XYZ grid: value={val} {e}")
                 valslist.clear()
                 valslist = [x for x in valslist_ext if x not in valslist]
             elif opt.type == str_permutations: # pylint: disable=comparison-with-callable
@@ -220,21 +226,32 @@ class Script(scripts_manager.Script):
                 opt.confirm(p, valslist)
             return valslist
 
+        def parse_axis(x_type, x_values, x_values_dropdown):
+            x_opt = None
+            if isinstance(x_type, str):
+                x_opt = [o for o in self.current_axis_options if o.label.lower() == x_type.lower()]
+                if len(x_opt) == 0:
+                    x_opt = [o for o in self.current_axis_options if x_type.lower() in o.label.lower()]
+                if len(x_opt) > 0:
+                    x_opt = x_opt[0]
+            else:
+                x_opt = self.current_axis_options[x_type]
+            if x_opt:
+                if x_opt.choices is not None and not csv_mode:
+                    x_values = list_to_csv_string(x_values_dropdown)
+                xs = process_axis(x_opt, x_values, x_values_dropdown)
+            else:
+                xs = []
+            return x_opt, xs
+
         try:
-            x_opt = self.current_axis_options[x_type]
-            if x_opt.choices is not None and not csv_mode:
-                x_values = list_to_csv_string(x_values_dropdown)
-            xs = process_axis(x_opt, x_values, x_values_dropdown)
-            y_opt = self.current_axis_options[y_type]
-            if y_opt.choices is not None and not csv_mode:
-                y_values = list_to_csv_string(y_values_dropdown)
-            ys = process_axis(y_opt, y_values, y_values_dropdown)
-            z_opt = self.current_axis_options[z_type]
-            if z_opt.choices is not None and not csv_mode:
-                z_values = list_to_csv_string(z_values_dropdown)
-            zs = process_axis(z_opt, z_values, z_values_dropdown)
+            x_opt, xs = parse_axis(x_type, x_values, x_values_dropdown)
+            y_opt, ys = parse_axis(y_type, y_values, y_values_dropdown)
+            z_opt, zs = parse_axis(z_type, z_values, z_values_dropdown)
         except Exception as e:
-            shared.log.error(f"XYZ grid: invalid axis values {e}")
+            log.error(f"XYZ grid: invalid axis values {e}")
+            errors.display(e, 'xyz')
+            shared.state.end(jobid)
             return None
 
         Image.MAX_IMAGE_PIXELS = None # disable check in Pillow and rely on check below to allow large custom image sizes
@@ -276,7 +293,7 @@ class Script(scripts_manager.Script):
         shared.state.update('Grid', total_steps, total_jobs * p.n_iter)
 
         image_cell_count = p.n_iter * p.batch_size
-        shared.log.info(f"XYZ grid: images={len(xs)*len(ys)*len(zs)*image_cell_count} grid={len(zs)} shape={len(xs)}x{len(ys)} cells={len(zs)} steps={total_steps}")
+        log.info(f"XYZ grid start: images={len(xs)*len(ys)*len(zs)*image_cell_count} grid={len(zs)} shape={len(xs)}x{len(ys)} cells={len(zs)} steps={total_steps} csv={csv_mode} legend={draw_legend} grid={include_grid} subgrid={include_subgrids} images={include_images} time={include_time} text={include_text}")
         AxisInfo = namedtuple('AxisInfo', ['axis', 'values'])
         shared.state.xyz_plot_x = AxisInfo(x_opt, xs)
         shared.state.xyz_plot_y = AxisInfo(y_opt, ys)
@@ -318,7 +335,7 @@ class Script(scripts_manager.Script):
             try:
                 processed = processing.process_images(pc)
             except Exception as e:
-                shared.log.error(f"XYZ grid: Failed to process image: {e}")
+                log.error(f"XYZ grid: Failed to process image: {e}")
                 errors.display(e, 'XYZ grid')
                 processed = None
             subgrid_index = 1 + iz # Sets subgrid infotexts
@@ -326,21 +343,21 @@ class Script(scripts_manager.Script):
                 pc.extra_generation_params = copy(pc.extra_generation_params)
                 pc.extra_generation_params['Script'] = self.title()
                 if x_opt.label != 'Nothing':
-                    pc.extra_generation_params["X Type"] = x_opt.label
-                    pc.extra_generation_params["X Values"] = x_values
+                    pc.extra_generation_params["X Script Type"] = x_opt.label
+                    pc.extra_generation_params["X Script Values"] = x_values
                     if x_opt.label in ["[Param] Seed", "[Param] Variation seed"] and not no_fixed_seeds:
-                        pc.extra_generation_params["Fixed X Values"] = ", ".join([str(x) for x in xs])
+                        pc.extra_generation_params["Fixed X Script Values"] = ", ".join([str(x) for x in xs])
                 if y_opt.label != 'Nothing':
-                    pc.extra_generation_params["Y Type"] = y_opt.label
-                    pc.extra_generation_params["Y Values"] = y_values
+                    pc.extra_generation_params["Y Script Type"] = y_opt.label
+                    pc.extra_generation_params["Y Script Values"] = y_values
                     if y_opt.label in ["[Param] Seed", "[Param] Variation seed"] and not no_fixed_seeds:
-                        pc.extra_generation_params["Fixed Y Values"] = ", ".join([str(y) for y in ys])
+                        pc.extra_generation_params["Fixed Y Script Values"] = ", ".join([str(y) for y in ys])
                 grid_infotext[subgrid_index] = processing.create_infotext(pc, pc.all_prompts, pc.all_seeds, pc.all_subseeds, grid=f'{len(xs)}x{len(ys)}')
             if grid_infotext[0] is None and ix == 0 and iy == 0 and iz == 0: # Sets main grid infotext
                 pc.extra_generation_params = copy(pc.extra_generation_params)
                 if z_opt.label != 'Nothing':
-                    pc.extra_generation_params["Z Type"] = z_opt.label
-                    pc.extra_generation_params["Z Values"] = z_values
+                    pc.extra_generation_params["Z Script Type"] = z_opt.label
+                    pc.extra_generation_params["Z Script Values"] = z_values
                     if z_opt.label in ["[Param] Seed", "[Param] Variation seed"] and not no_fixed_seeds:
                         pc.extra_generation_params["Fixed Z Values"] = ", ".join([str(z) for z in zs])
                 grid_text = f'{len(zs)}x{len(xs)}x{len(ys)}' if len(zs) > 0 else f'{len(xs)}x{len(ys)}'
@@ -376,10 +393,10 @@ class Script(scripts_manager.Script):
             return processed # something broke, no further handling needed.
 
         have_grid = 1 if include_grid else 0
-        have_subgrids = len(zs) if len(zs) > 1 and include_subgrids else 0
+        have_subgrids = len(zs) if len(zs) > 1 and (include_grid or include_subgrids) else 0 # sub-grids are created whenever the main grid is, see draw_xyz_grid
         have_images = processed.images[have_grid+have_subgrids:]
         processed.infotexts[:have_grid+have_subgrids] = grid_infotext[:have_grid+have_subgrids] # update infotexts with grid and subgrid info
-        shared.log.debug(f'XYZ grid: grid={have_grid} subgrids={have_subgrids} images={len(have_images)} total={len(processed.images)}')
+        log.debug(f'XYZ grid: grid={have_grid} subgrids={have_subgrids} images={len(have_images)} total={len(processed.images)}')
 
         if not include_images: # dont need images anymore, drop from list:
             processed.images = processed.images[:have_grid+have_subgrids]
@@ -403,7 +420,7 @@ class Script(scripts_manager.Script):
             debug(f'XYZ grid remove subgrids: total={processed.images}')
 
         if create_video and video_type != 'None' and not shared.state.interrupted:
-            images.save_video(p, filename=None, images=have_images, video_type=video_type, duration=video_duration, loop=video_loop, pad=video_pad, interpolate=video_interpolate)
+            video.save_video(p, filename=None, images=have_images, video_type=video_type, duration=video_duration, loop=video_loop, pad=video_pad, interpolate=video_interpolate)
 
         shared.state.end(jobid)
         return processed

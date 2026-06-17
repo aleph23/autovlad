@@ -675,7 +675,7 @@ class StableDiffusionXLFreeScaleImg2Img(DiffusionPipeline, FromSingleFileMixin, 
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -902,7 +902,7 @@ class StableDiffusionXLFreeScaleImg2Img(DiffusionPipeline, FromSingleFileMixin, 
             latents,
         )
 
-        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        # 6. Prepare extra step kwargs.
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 7. Prepare added time ids & embeddings
@@ -1174,7 +1174,7 @@ class StableDiffusionXLFreeScaleImg2Img(DiffusionPipeline, FromSingleFileMixin, 
         """
         return StableDiffusionXLPipelineOutput(images=results_list)
 
-    # Overrride to properly handle the loading and unloading of the additional text encoder.
+    # Override to properly handle the loading and unloading of the additional text encoder.
     def load_lora_weights(self, pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]], **kwargs):
         # We could have accessed the unet config from `lora_state_dict()` too. We pass
         # it here explicitly to be able to tell that it's coming from an SDXL
@@ -1210,12 +1210,12 @@ class StableDiffusionXLFreeScaleImg2Img(DiffusionPipeline, FromSingleFileMixin, 
     def save_lora_weights(
         self,
         save_directory: Union[str, os.PathLike],
-        unet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
-        text_encoder_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
-        text_encoder_2_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        unet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] | None = None,
+        text_encoder_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] | None = None,
+        text_encoder_2_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] | None = None,
         is_main_process: bool = True,
-        weight_name: str = None,
-        save_function: Callable = None,
+        weight_name: str | None = None,
+        save_function: Callable | None = None,
         safe_serialization: bool = True,
     ):
         state_dict = {}

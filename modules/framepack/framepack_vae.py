@@ -1,6 +1,7 @@
 import torch
 import einops
 from modules import shared, devices
+from modules.logger import log
 
 
 latent_rgb_factors = [ # from comfyui
@@ -43,9 +44,9 @@ def vae_decode_simple(latents):
 def vae_decode_tiny(latents):
     global taesd # pylint: disable=global-statement
     if taesd is None:
-        from modules import sd_vae_taesd
-        taesd, _variant = sd_vae_taesd.get_model(variant='TAE HunyuanVideo')
-        shared.log.debug(f'Video VAE: type=Tiny cls={taesd.__class__.__name__} latents={latents.shape}')
+        from modules.vae import sd_vae_taesd
+        taesd, _variant = sd_vae_taesd.load_model(variant='TAE HunyuanVideo')
+        log.debug(f'Video VAE: type=Tiny cls={taesd.__class__.__name__} latents={latents.shape}')
     with devices.inference_context():
         taesd = taesd.to(device=devices.device, dtype=devices.dtype)
         latents = latents.transpose(1, 2) # pipe produces NCTHW and tae wants NTCHW
@@ -56,7 +57,7 @@ def vae_decode_tiny(latents):
 
 
 def vae_decode_remote(latents):
-    # from modules.sd_vae_remote import remote_decode
+    # from modules.vae.sd_vae_remote import remote_decode
     # images = remote_decode(latents, model_type='hunyuanvideo')
     from diffusers.utils.remote_utils import remote_decode
     images = remote_decode(

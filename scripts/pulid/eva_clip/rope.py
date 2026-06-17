@@ -4,9 +4,9 @@ from torch import nn
 from einops import rearrange, repeat
 import logging
 
-def broadcat(tensors, dim = -1):
+def broadcast(tensors, dim = -1):
     num_tensors = len(tensors)
-    shape_lens = set(list(map(lambda t: len(t.shape), tensors)))
+    shape_lens = set(map(lambda t: len(t.shape), tensors))
     assert len(shape_lens) == 1, 'tensors must all have the same number of dimensions'
     shape_len = list(shape_lens)[0]
     dim = (dim + shape_len) if dim < 0 else dim
@@ -51,7 +51,7 @@ class VisionRotaryEmbedding(nn.Module):
         else:
             raise ValueError(f'unknown modality {freqs_for}')
 
-        if ft_seq_len is None: ft_seq_len = pt_seq_len
+        if ft_seq_len is None: ft_seq_len = pt_seq_len  # noqa: E701
         t = torch.arange(ft_seq_len) / ft_seq_len * pt_seq_len
 
         freqs_h = torch.einsum('..., f -> ... f', t, freqs)
@@ -60,7 +60,7 @@ class VisionRotaryEmbedding(nn.Module):
         freqs_w = torch.einsum('..., f -> ... f', t, freqs)
         freqs_w = repeat(freqs_w, '... n -> ... (n r)', r = 2)
 
-        freqs = broadcat((freqs_h[:, None, :], freqs_w[None, :, :]), dim = -1)
+        freqs = broadcast((freqs_h[:, None, :], freqs_w[None, :, :]), dim = -1)
 
         self.register_buffer("freqs_cos", freqs.cos())
         self.register_buffer("freqs_sin", freqs.sin())
@@ -101,12 +101,12 @@ class VisionRotaryEmbeddingFast(nn.Module):
         else:
             raise ValueError(f'unknown modality {freqs_for}')
 
-        if ft_seq_len is None: ft_seq_len = pt_seq_len
+        if ft_seq_len is None: ft_seq_len = pt_seq_len  # noqa: E701
         t = torch.arange(ft_seq_len) / ft_seq_len * pt_seq_len
 
         freqs = torch.einsum('..., f -> ... f', t, freqs)
         freqs = repeat(freqs, '... n -> ... (n r)', r = 2)
-        freqs = broadcat((freqs[:, None, :], freqs[None, :, :]), dim = -1)
+        freqs = broadcast((freqs[:, None, :], freqs[None, :, :]), dim = -1)
 
         freqs_cos = freqs.cos().view(-1, freqs.shape[-1])
         freqs_sin = freqs.sin().view(-1, freqs.shape[-1])

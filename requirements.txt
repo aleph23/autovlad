@@ -1,70 +1,47 @@
-# required for python 3.12
+# required for `python>=3.12`
 setuptools==69.5.1
 wheel
 
 # standard
-patch-ng
 anyio
-addict
-astunparse
 filetype
 future
 GitPython
-httpcore
-inflection
-jsonmerge
-kornia
 lark
-omegaconf
-optimum
 piexif
+mpmath
 psutil
 pyyaml
-resize-right
 toml
 voluptuous
-yapf
 fasteners
+limits
 orjson
-sqlalchemy
-invisible-watermark
-pi-heif
+websockets
+ftfy
 
 # versioned
-rich==14.1.0
-safetensors==0.6.2
-tensordict==0.8.3
-peft==0.17.1
+fastapi==0.124.4
+rich==15.0.0
+safetensors==0.8.0
+peft==0.19.1
 httpx==0.28.1
-compel==2.2.1
-torchsde==0.2.6
-antlr4-python3-runtime==4.9.3
-requests==2.32.4
-tqdm==4.67.1
-accelerate==1.10.1
-opencv-contrib-python-headless==4.11.0.86
-einops==0.8.1
-huggingface_hub==0.35.3
-numexpr==2.11.0
+requests==2.34.2
+tqdm==4.68.2
+accelerate==1.14.0
+einops==0.8.2
+huggingface_hub==1.19.0
+hf_xet==1.5.1
 numpy==2.1.2
 pandas==2.3.1
-numba==0.61.2
-protobuf==4.25.3
-pytorch_lightning==2.5.5
-PyWavelets==1.9.0
+protobuf==7.35.1
+pytorch_lightning==2.6.5
 urllib3==1.26.19
-Pillow==10.4.0
-timm==1.0.16
-pyparsing==3.2.3
-typing-extensions==4.14.1
+Pillow==12.2.0
+timm==1.0.27
+pyparsing==3.3.2
+typing-extensions==4.15.0
 sentencepiece==0.2.1
-
-# additional
-blendmodes
-scipy==1.14.1
-torchdiffeq
-scikit-image
-seam-carving
 
 # lint
 ruff

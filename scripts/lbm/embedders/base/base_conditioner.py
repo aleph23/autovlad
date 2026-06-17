@@ -1,5 +1,5 @@
 from typing import Any, Dict
-from ...base.base_model import BaseModel
+from lbm.base.base_model import BaseModel
 from .base_conditioner_config import BaseConditionerConfig
 
 

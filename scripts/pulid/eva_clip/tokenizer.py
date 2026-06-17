@@ -8,12 +8,10 @@ import os
 from functools import lru_cache
 from typing import Union, List
 
-import ftfy
 import regex as re
 import torch
 
 # https://stackoverflow.com/q/62691279
-import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
@@ -29,7 +27,7 @@ def bytes_to_unicode():
     The reversible bpe codes work on unicode strings.
     This means you need a large # of unicode characters in your vocab if you want to avoid UNKs.
     When you're at something like a 10B token dataset you end up needing around 5K for decent coverage.
-    This is a signficant percentage of your normal, say, 32K bpe vocab.
+    This is a significant percentage of your normal, say, 32K bpe vocab.
     To avoid that, we want lookup tables between utf-8 bytes and unicode strings.
     And avoids mapping to whitespace/control characters the bpe code barfs on.
     """
@@ -58,6 +56,9 @@ def get_pairs(word):
 
 
 def basic_clean(text):
+    from installer import install
+    install('ftfy')
+    import ftfy
     text = ftfy.fix_text(text)
     text = html.unescape(html.unescape(text))
     return text.strip()

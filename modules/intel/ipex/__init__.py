@@ -16,6 +16,28 @@ torch_version[0], torch_version[1] = int(torch_version[0]), int(torch_version[1]
 
 # pylint: disable=protected-access, missing-function-docstring, line-too-long
 
+def return_true(*args, **kwargs):
+    return True
+
+def return_false(*args, **kwargs):
+    return False
+
+def return_none(*args, **kwargs):
+    return None
+
+def return_zero(*args, **kwargs):
+    return 0
+
+def return_cuda_version(*args, **kwargs):
+    return (12,1)
+
+def return_xpu_string(*args, **kwargs):
+    return "xpu"
+
+def return_arch_list(*args, **kwargs):
+    return ["pvc", "dg2", "ats-m150"]
+
+
 def ipex_init(): # pylint: disable=too-many-statements
     try:
         if hasattr(torch, "cuda") and hasattr(torch.cuda, "is_xpu_hijacked") and torch.cuda.is_xpu_hijacked:
@@ -26,9 +48,9 @@ def ipex_init(): # pylint: disable=too-many-statements
                 # import inductor utils to get around lazy import
                 from torch._inductor import utils as torch_inductor_utils # pylint: disable=import-error, unused-import # noqa: F401,RUF100
                 torch._inductor.utils.GPU_TYPES = ["xpu"]
-                torch._inductor.utils.get_gpu_type = lambda *args, **kwargs: "xpu"
+                torch._inductor.utils.get_gpu_type = return_xpu_string
                 from triton import backends as triton_backends # pylint: disable=import-error
-                triton_backends.backends["nvidia"].driver.is_active = lambda *args, **kwargs: False
+                triton_backends.backends["nvidia"].driver.is_active = return_false
             except Exception:
                 pass
             # Replace cuda with xpu:
@@ -42,48 +64,46 @@ def ipex_init(): # pylint: disable=too-many-statements
             torch.cuda.init = torch.xpu.init
             torch.cuda.is_available = torch.xpu.is_available
             torch.cuda.is_initialized = torch.xpu.is_initialized
-            torch.cuda.is_current_stream_capturing = lambda: False
             torch.cuda.stream = torch.xpu.stream
             torch.cuda.Event = torch.xpu.Event
             torch.cuda.Stream = torch.xpu.Stream
+            torch.cuda.streams = torch.xpu.streams
+            torch.cuda.Any = torch.xpu.Any
+            torch.cuda.default_generators = torch.xpu.default_generators
+            torch.cuda.set_stream = torch.xpu.set_stream
+            torch.cuda.torch = torch.xpu.torch
+            torch.cuda.StreamContext = torch.xpu.StreamContext
+            torch.cuda.random = torch.xpu.random
+            torch.cuda._get_device_index = torch.xpu._get_device_index
+            torch.cuda._lazy_init = torch.xpu._lazy_init
+            torch.cuda._lazy_call = torch.xpu._lazy_call
+            torch.cuda.is_current_stream_capturing = return_false
+
+            torch.cuda.__annotations__ = torch.xpu.__annotations__
+            torch.cuda.__builtins__ = torch.xpu.__builtins__
+            torch.cuda.__name__ = torch.xpu.__name__
+            torch.cuda.__spec__ = torch.xpu.__spec__
+            torch.cuda.__file__ = torch.xpu.__file__
+            torch.cuda.__path__ = torch.xpu.__path__
+            torch.cuda.__doc__ = torch.xpu.__doc__
+            torch.cuda.__package__ = getattr(torch.xpu, "__package__", None)
+            torch.cuda.__cached__ = getattr(torch.xpu, "__cached__", None)
+            torch.cuda.__loader__ = getattr(torch.xpu, "__loader__", None)
+
             torch.Tensor.cuda = torch.Tensor.xpu
             torch.Tensor.is_cuda = torch.Tensor.is_xpu
             torch.nn.Module.cuda = torch.nn.Module.xpu
-            torch.cuda.Optional = torch.xpu.Optional
-            torch.cuda.__cached__ = torch.xpu.__cached__
-            torch.cuda.__loader__ = torch.xpu.__loader__
-            torch.cuda.streams = torch.xpu.streams
-            torch.cuda.Any = torch.xpu.Any
-            torch.cuda.__doc__ = torch.xpu.__doc__
-            torch.cuda.default_generators = torch.xpu.default_generators
-            torch.cuda._get_device_index = torch.xpu._get_device_index
-            torch.cuda.__path__ = torch.xpu.__path__
-            torch.cuda.set_stream = torch.xpu.set_stream
-            torch.cuda.torch = torch.xpu.torch
-            torch.cuda.Union = torch.xpu.Union
-            torch.cuda.__annotations__ = torch.xpu.__annotations__
-            torch.cuda.__package__ = torch.xpu.__package__
-            torch.cuda.__builtins__ = torch.xpu.__builtins__
-            torch.cuda._lazy_init = torch.xpu._lazy_init
-            torch.cuda.StreamContext = torch.xpu.StreamContext
-            torch.cuda._lazy_call = torch.xpu._lazy_call
-            torch.cuda.random = torch.xpu.random
-            torch.cuda._device = torch.xpu._device
-            torch.cuda.__name__ = torch.xpu.__name__
-            torch.cuda._device_t = torch.xpu._device_t
-            torch.cuda.__spec__ = torch.xpu.__spec__
-            torch.cuda.__file__ = torch.xpu.__file__
-            # torch.cuda.is_current_stream_capturing = torch.xpu.is_current_stream_capturing
 
             if torch_version[0] < 2 or (torch_version[0] == 2 and torch_version[1] < 3):
+                torch.cuda.threading = torch.xpu.lazy_init.threading
+                torch.cuda.traceback = torch.xpu.lazy_init.traceback
+
                 torch.cuda._initialization_lock = torch.xpu.lazy_init._initialization_lock
                 torch.cuda._initialized = torch.xpu.lazy_init._initialized
                 torch.cuda._is_in_bad_fork = torch.xpu.lazy_init._is_in_bad_fork
                 torch.cuda._lazy_seed_tracker = torch.xpu.lazy_init._lazy_seed_tracker
                 torch.cuda._queued_calls = torch.xpu.lazy_init._queued_calls
                 torch.cuda._tls = torch.xpu.lazy_init._tls
-                torch.cuda.threading = torch.xpu.lazy_init.threading
-                torch.cuda.traceback = torch.xpu.lazy_init.traceback
                 torch.cuda._lazy_new = torch.xpu._lazy_new
 
                 torch.cuda.FloatTensor = torch.xpu.FloatTensor
@@ -108,27 +128,20 @@ def ipex_init(): # pylint: disable=too-many-statements
                 torch.cuda.BoolStorage = torch.xpu.BoolStorage
                 torch.cuda.ComplexFloatStorage = torch.xpu.ComplexFloatStorage
                 torch.cuda.ComplexDoubleStorage = torch.xpu.ComplexDoubleStorage
-
-                torch._C._cuda_getCurrentRawStream = ipex._C._getCurrentRawStream
-                ipex._C._DeviceProperties.multi_processor_count = ipex._C._DeviceProperties.gpu_subslice_count
-                ipex._C._DeviceProperties.major = 12
-                ipex._C._DeviceProperties.minor = 1
-                ipex._C._DeviceProperties.L2_cache_size = 16*1024*1024 # A770 and A750
+                if has_ipex:
+                    torch._C._cuda_getCurrentRawStream = ipex._C._getCurrentRawStream
             else:
+                torch.cuda.threading = torch.xpu.threading
+                torch.cuda.traceback = torch.xpu.traceback
+
                 torch.cuda._initialization_lock = torch.xpu._initialization_lock
                 torch.cuda._initialized = torch.xpu._initialized
                 torch.cuda._is_in_bad_fork = torch.xpu._is_in_bad_fork
                 torch.cuda._lazy_seed_tracker = torch.xpu._lazy_seed_tracker
                 torch.cuda._queued_calls = torch.xpu._queued_calls
                 torch.cuda._tls = torch.xpu._tls
-                torch.cuda.threading = torch.xpu.threading
-                torch.cuda.traceback = torch.xpu.traceback
 
                 torch._C._cuda_getCurrentRawStream = torch._C._xpu_getCurrentRawStream
-                torch._C._XpuDeviceProperties.multi_processor_count = torch._C._XpuDeviceProperties.gpu_subslice_count
-                torch._C._XpuDeviceProperties.major = 12
-                torch._C._XpuDeviceProperties.minor = 1
-                torch._C._XpuDeviceProperties.L2_cache_size = 16*1024*1024 # A770 and A750
 
             if torch_version[0] < 2 or (torch_version[0] == 2 and torch_version[1] < 5):
                 torch.cuda.os = torch.xpu.os
@@ -146,30 +159,26 @@ def ipex_init(): # pylint: disable=too-many-statements
                     torch.cuda.memory_summary = torch.xpu.memory_summary
                     torch.cuda.memory_snapshot = torch.xpu.memory_snapshot
 
-            if torch_version[0] < 2 or (torch_version[0] == 2 and torch_version[1] < 9):
-                # torch._int_mm via onednn quantized matmul is supported with torch 2.9
-                # ipex 2.7+ has the same torch._int_mm support as torch 2.9 but doesn't support torch.compile
-                # torch._int_mm directly uses onednn quantized matmul
-                # onednn qlinear is a wrapper around onednn quantized matmul
-                if hasattr(torch.ops, "onednn") and hasattr(torch.ops.onednn, "qlinear_pointwise"):
-                    def onednn_mm(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-                        # supports int8, fp32, fp16, and bf16 matmul with accumulation using a different dtype
-                        # int8 matmul with onednn is slower than 16 bit with dim_size < 4096
-                        return torch.ops.onednn.qlinear_pointwise.default(x, 1.0, 0, y, torch.ones(1, device=y.device), torch.zeros(1, device=y.device), None, 1.0, 0, torch.float32, "none", [], "none")
-                    torch._int_mm = onednn_mm
-                    try:
-                        # torch.compile fix
-                        from .int_mm import qlinear_unary
-                        torch._inductor.mkldnn_lowerings.register_onednn_fusion_ops.qlinear_unary = qlinear_unary
-                    except Exception:
-                        pass
+            if torch_version[0] < 2 or (torch_version[0] == 2 and torch_version[1] < 11):
+                torch.cuda.Union = torch.xpu.Union
+                torch.cuda._device = torch.xpu._device
+                torch.cuda._device_t = torch.xpu._device_t
+
+            if torch_version[0] < 2 or (torch_version[0] == 2 and torch_version[1] < 12):
+                torch.cuda.Optional = torch.xpu.Optional
 
             # Memory:
             if "linux" in sys.platform and "WSL2" in os.popen("uname -a").read():
-                torch.xpu.empty_cache = lambda: None
+                torch.xpu.empty_cache = return_none
             torch.cuda.empty_cache = torch.xpu.empty_cache
 
-            torch.cuda.memory = torch.xpu.memory
+            if torch_version[0] >= 2 and torch_version[1] >= 8:
+                old_cpa = torch.cuda.memory.CUDAPluggableAllocator
+                torch.cuda.memory = torch.xpu.memory
+                torch.xpu.memory.CUDAPluggableAllocator = old_cpa
+            else:
+                torch.cuda.memory = torch.xpu.memory
+
             torch.cuda.memory_stats = torch.xpu.memory_stats
             torch.cuda.memory_allocated = torch.xpu.memory_allocated
             torch.cuda.max_memory_allocated = torch.xpu.max_memory_allocated
@@ -195,23 +204,24 @@ def ipex_init(): # pylint: disable=too-many-statements
             torch.cuda.initial_seed = torch.xpu.initial_seed
 
             # Fix functions with ipex:
-            # torch.xpu.mem_get_info always returns the total memory as free memory
-            torch.xpu.mem_get_info = lambda device=None: [(torch.xpu.get_device_properties(device).total_memory - torch.xpu.memory_reserved(device)), torch.xpu.get_device_properties(device).total_memory]
-            torch.cuda.mem_get_info = torch.xpu.mem_get_info
-            torch._utils._get_available_device_type = lambda: "xpu"
             torch.has_cuda = True
-            torch.cuda.has_half = True
-            torch.cuda.is_bf16_supported = getattr(torch.xpu, "is_bf16_supported", lambda *args, **kwargs: True)
-            torch.cuda.is_fp16_supported = lambda *args, **kwargs: True
-            torch.backends.cuda.is_built = lambda *args, **kwargs: True
             torch.version.cuda = "12.1"
-            torch.cuda.get_arch_list = getattr(torch.xpu, "get_arch_list", lambda: ["pvc", "dg2", "ats-m150"])
-            torch.cuda.get_device_capability = lambda *args, **kwargs: (12,1)
-            torch.cuda.get_device_properties.major = 12
-            torch.cuda.get_device_properties.minor = 1
-            torch.cuda.get_device_properties.L2_cache_size = 16*1024*1024 # A770 and A750
-            torch.cuda.ipc_collect = lambda *args, **kwargs: None
-            torch.cuda.utilization = lambda *args, **kwargs: 0
+            torch.backends.cuda.is_built = return_false
+            torch._utils._get_available_device_type = return_xpu_string
+
+            # torch.xpu.mem_get_info always returns the total memory as free memory
+            def mem_get_info(device=None):
+                return [(torch.xpu.get_device_properties(device).total_memory - torch.xpu.memory_reserved(device)), torch.xpu.get_device_properties(device).total_memory]
+            torch.xpu.mem_get_info = mem_get_info
+            torch.cuda.mem_get_info = torch.xpu.mem_get_info
+
+            torch.cuda.has_half = True
+            torch.cuda.is_bf16_supported = getattr(torch.xpu, "is_bf16_supported", return_true)
+            torch.cuda.is_fp16_supported = getattr(torch.xpu, "is_fp16_supported", return_true)
+            torch.cuda.get_arch_list = getattr(torch.xpu, "get_arch_list", return_arch_list)
+            torch.cuda.get_device_capability = return_cuda_version
+            torch.cuda.ipc_collect = return_none
+            torch.cuda.utilization = return_zero
 
             device_supports_fp64 = ipex_hijacks()
             try:

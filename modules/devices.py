@@ -1,14 +1,13 @@
-from typing import Optional
-
 import os
 import sys
 import time
 import contextlib
-from functools import wraps
+import importlib.metadata
 import torch
-from modules import rocm
-from modules.errors import log, display, install as install_traceback
-from installer import install, installed
+from installer import torch_info
+from modules.logger import log
+from modules import rocm, attention
+from modules.errors import display, install as install_traceback
 
 
 debug = os.environ.get('SD_DEVICE_DEBUG', None) is not None
@@ -21,6 +20,7 @@ cpu = torch.device("cpu")
 
 fp16_ok = None # set once by test_fp16
 bf16_ok = None # set once by test_bf16
+triton_ok = None # set once by test_triton
 
 backend = None # set by get_backend
 device = None # set by get_optimal_device
@@ -64,12 +64,14 @@ def has_zluda() -> bool:
         return False
 
 
-def has_triton() -> bool:
-    try:
-        from torch.utils._triton import has_triton as torch_has_triton
-        return torch_has_triton()
-    except Exception:
-        return False
+def has_triton(early:bool=False) -> bool:
+    if triton_ok is not None:
+        return triton_ok
+    return test_triton(early=early)
+
+
+def get_hip_agent() -> rocm.Agent:
+    return rocm.Agent(device)
 
 
 def get_backend(shared_cmd_opts):
@@ -96,7 +98,6 @@ def get_backend(shared_cmd_opts):
 
 def get_gpu_info():
     def get_driver():
-        import subprocess
         if torch.xpu.is_available():
             try:
                 return torch.xpu.get_device_properties(torch.xpu.current_device()).driver_version
@@ -104,8 +105,9 @@ def get_gpu_info():
                 return ''
         elif torch.cuda.is_available() and torch.version.cuda:
             try:
-                result = subprocess.run('nvidia-smi --query-gpu=driver_version --format=csv,noheader', shell=True, check=False, env=os.environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                version = result.stdout.decode(encoding="utf8", errors="ignore").strip()
+                import subprocess
+                result = subprocess.run('nvidia-smi --query-gpu=driver_version --format=csv,noheader', shell=True, check=False, env=os.environ, capture_output=True, text=True)
+                version = result.stdout.strip()
                 return version
             except Exception:
                 return ''
@@ -113,17 +115,20 @@ def get_gpu_info():
             return ''
 
     def get_package_version(pkg: str):
-        import pkg_resources
-        spec = pkg_resources.working_set.by_key.get(pkg, None) # more reliable than importlib
-        version = pkg_resources.get_distribution(pkg).version if spec is not None else ''
-        return version
+        try:
+            return importlib.metadata.version(pkg)
+        except Exception:
+            return None
 
     if not torch.cuda.is_available():
         try:
             if backend == 'openvino':
-                from modules.intel.openvino import get_openvino_device
+                from modules.intel.openvino import get_openvino_device, get_device_list, get_device, get_openvino_capabilities
+                devices = [{ device: f'{get_openvino_device(device)}' } for device in get_device_list()]
                 return {
-                    'device': get_openvino_device(), # pylint: disable=used-before-assignment
+                    'active': f'"{get_device()}"',
+                    'capabilities': get_openvino_capabilities(),
+                    'devices': devices,
                     'openvino': get_package_version("openvino"),
                 }
             elif backend == 'directml':
@@ -195,7 +200,7 @@ def get_optimal_device():
     return torch.device(get_optimal_device_name())
 
 
-def torch_gc(force:bool=False, fast:bool=False, reason:str=None):
+def torch_gc(force: bool = False, fast: bool = False, reason: str | None = None):
     def get_stats():
         mem_dict = memstats.memory_stats()
         gpu_dict = mem_dict.get('gpu', {})
@@ -243,8 +248,8 @@ def torch_gc(force:bool=False, fast:bool=False, reason:str=None):
                     torch.cuda.synchronize()
                     torch.cuda.empty_cache() # cuda gc
                     torch.cuda.ipc_collect()
-            except Exception:
-                pass
+            except Exception as e:
+                log.error(f'GC: {e}')
     else:
         return gpu, ram
     t1 = time.time()
@@ -307,7 +312,7 @@ def set_cuda_tunable():
             lines={0}
             try:
                 if os.path.exists(fn):
-                    with open(fn, 'r', encoding='utf8') as f:
+                    with open(fn, encoding='utf8') as f:
                         lines = sum(1 for _line in f)
             except Exception:
                 pass
@@ -323,15 +328,19 @@ def test_fp16():
     if fp16_ok is not None:
         return fp16_ok
     if opts.cuda_dtype != 'FP16': # don't override if the user sets it
-        if sys.platform == "darwin" or backend in {'openvino', 'cpu'}: # override
+        if sys.platform == "darwin" or backend == 'cpu': # override
             fp16_ok = False
+            return fp16_ok
+        elif backend == 'openvino':
+            from modules.intel.openvino import test_openvino_fp16
+            fp16_ok = test_openvino_fp16(opts)
             return fp16_ok
         elif backend == 'rocm':
             # gfx1102 (RX 7600, 7500, 7650 and 7700S) causes segfaults with fp16
-            # agent can be overriden to gfx1100 to get gfx1102 working with ROCm so check the gpu name as well
-            agent = getattr(torch.cuda.get_device_properties(device), "gcnArchName", "gfx0000")
+            # agent can be overridden to gfx1100 to get gfx1102 working with ROCm so check the gpu name as well
+            agent = get_hip_agent()
             agent_name = getattr(torch.cuda.get_device_properties(device), "name", "AMD Radeon RX 0000")
-            if agent == "gfx1102" or (agent == "gfx1100" and any(i in agent_name for i in ("7600", "7500", "7650", "7700S"))):
+            if agent.gfx_version == 0x1102 or (agent.gfx_version == 0x1100 and any(i in agent_name for i in ("7600", "7500", "7650", "7700S"))):
                 fp16_ok = False
                 return fp16_ok
     try:
@@ -354,13 +363,17 @@ def test_bf16():
     if bf16_ok is not None:
         return bf16_ok
     if opts.cuda_dtype != 'BF16': # don't override if the user sets it
-        if sys.platform == "darwin" or backend in {'openvino', 'directml', 'cpu'}: # override
+        if sys.platform == "darwin" or backend in {'directml', 'cpu'}: # override
             bf16_ok = False
+            return bf16_ok
+        elif backend == 'openvino':
+            from modules.intel.openvino import test_openvino_bf16
+            bf16_ok = test_openvino_bf16(opts)
             return bf16_ok
         elif backend == 'rocm' or backend == 'zluda':
             agent = None
             if backend == 'rocm':
-                agent = rocm.Agent(getattr(torch.cuda.get_device_properties(device), "gcnArchName", "gfx0000"))
+                agent = get_hip_agent()
             else:
                 from modules.zluda_installer import default_agent
                 agent = default_agent
@@ -382,6 +395,56 @@ def test_bf16():
     return bf16_ok
 
 
+def test_triton(early: bool = False):
+    global triton_ok # pylint: disable=global-statement
+    if triton_ok is not None and early:
+        return triton_ok
+    t0 = time.time()
+    try:
+        from torch.utils._triton import has_triton as torch_has_triton
+        if torch_has_triton():
+            if early:
+                return True
+            def test_triton_func(a,b,c):
+                return a * b + c
+            test_triton_func = torch.compile(test_triton_func, fullgraph=True)
+            test_triton_func(torch.randn(16, device=device), torch.randn(16, device=device), torch.randn(16, device=device))
+            triton_ok = True
+        else:
+            torch_info.set(triton=False)
+            triton_ok = False
+    except Exception as e:
+        torch_info.set(triton=False)
+        triton_ok = False
+        line = str(e).splitlines()[0]
+        log.warning(f"Triton test fail: {line}")
+        if debug:
+            from modules import errors
+            errors.display(e, 'Triton')
+    triton_version = None
+    if triton_ok:
+        if triton_version is None:
+            try:
+                import torch._inductor.triton as torch_triton
+
+                triton_version = torch_triton.__version__
+            except Exception:
+                pass
+        if triton_version is None:
+            try:
+                import triton
+                triton_version = triton.__version__
+            except Exception:
+                pass
+        torch_info.set(triton=triton_version)
+    t1 = time.time()
+    fn = f'{sys._getframe(2).f_code.co_name}:{sys._getframe(1).f_code.co_name}' # pylint: disable=protected-access
+    log.debug(f'Triton: pass={triton_ok} version={triton_version} fn={fn} time={t1-t0:.2f}')
+    if not triton_ok and opts is not None:
+        opts.sdnq_dequantize_compile = False
+    return triton_ok
+
+
 def set_cudnn_params():
     if not cuda_ok:
         return
@@ -393,18 +456,21 @@ def set_cudnn_params():
         log.warning(f'Torch matmul: {e}')
     if torch.backends.cudnn.is_available():
         try:
+            if opts.cudnn_enabled != 'default':
+                torch.backends.cudnn.enabled = opts.cudnn_enabled == 'true'
+                log.debug(f'Torch cuDNN: enabled={torch.backends.cudnn.enabled}')
             torch.backends.cudnn.deterministic = opts.cudnn_deterministic
             torch.use_deterministic_algorithms(opts.cudnn_deterministic)
             if opts.cudnn_deterministic:
                 os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
-                log.debug('Torch cuDNN: deterministic=True')
+                log.debug(f'Torch cuDNN: deterministic={opts.cudnn_deterministic}')
             torch.backends.cudnn.benchmark = opts.cudnn_benchmark
             if opts.cudnn_benchmark:
-                log.debug('Torch cuDNN: benchmark=True')
+                log.debug(f'Torch cuDNN: benchmark={opts.cudnn_benchmark}')
             torch.backends.cudnn.benchmark_limit = opts.cudnn_benchmark_limit
             torch.backends.cudnn.allow_tf32 = True
         except Exception as e:
-            log.warning(f'Torch cudnn: {e}')
+            log.warning(f'Torch cuDNN: {e}')
 
 
 def override_ipex_math():
@@ -429,118 +495,34 @@ def set_sdpa_params():
             log.warning(f'Torch attention: type="sdpa" {err}')
 
         try:
-            torch.backends.cuda.enable_flash_sdp('Flash attention' in opts.sdp_options)
-            torch.backends.cuda.enable_mem_efficient_sdp('Memory attention' in opts.sdp_options)
-            torch.backends.cuda.enable_math_sdp('Math attention' in opts.sdp_options)
+            torch.backends.cuda.enable_flash_sdp('Flash' in opts.sdp_options or 'Flash attention' in opts.sdp_options)
+            torch.backends.cuda.enable_mem_efficient_sdp('Memory' in opts.sdp_options or 'Memory attention' in opts.sdp_options)
+            torch.backends.cuda.enable_math_sdp('Math' in opts.sdp_options or 'Math attention' in opts.sdp_options)
             if hasattr(torch.backends.cuda, "allow_fp16_bf16_reduction_math_sdp"): # only valid for torch >= 2.5
                 torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(True)
-            log.debug(f'Torch attention: type="sdpa" opts={opts.sdp_options}')
+            torch_info.set(attention="sdpa")
+            log.debug(f'Torch attention: type="sdpa" kernels={opts.sdp_options} overrides={opts.sdp_overrides}')
         except Exception as err:
             log.warning(f'Torch attention: type="sdpa" {err}')
 
         # Stack hijcaks in reverse order. This gives priority to the last added hijack.
         # If the last hijack is not compatible, it will use the one before it and so on.
 
-        if 'Dynamic attention' in opts.sdp_options:
-            try:
-                global sdpa_pre_dyanmic_atten # pylint: disable=global-statement
-                sdpa_pre_dyanmic_atten = torch.nn.functional.scaled_dot_product_attention
-                from modules.sd_hijack_dynamic_atten import dynamic_scaled_dot_product_attention
-                torch.nn.functional.scaled_dot_product_attention = dynamic_scaled_dot_product_attention
-            except Exception as err:
-                log.error(f'Torch attention: type="dynamic attention" {err}')
+        if 'Dynamic attention' in opts.sdp_overrides:
+            global sdpa_pre_dyanmic_atten # pylint: disable=global-statement
+            sdpa_pre_dyanmic_atten = attention.set_dynamic_attention()
 
-        if 'Triton Flash attention' in opts.sdp_options:
-            try:
-                if backend in {"zluda", "rocm"}:
-                    from modules.flash_attn_triton_amd import interface_fa
-                    sdpa_pre_triton_flash_atten = torch.nn.functional.scaled_dot_product_attention
-                    @wraps(sdpa_pre_triton_flash_atten)
-                    def sdpa_triton_flash_atten(query: torch.FloatTensor, key: torch.FloatTensor, value: torch.FloatTensor, attn_mask: Optional[torch.FloatTensor] = None, dropout_p: float = 0.0, is_causal: bool = False, scale: Optional[float] = None, enable_gqa: bool = False, **kwargs) -> torch.FloatTensor:
-                        if query.shape[-1] <= 128 and attn_mask is None and query.dtype != torch.float32:
-                            if scale is None:
-                                scale = query.shape[-1] ** (-0.5)
-                            head_size_og = query.size(3)
-                            if head_size_og % 8 != 0:
-                                query = torch.nn.functional.pad(query, [0, 8 - head_size_og % 8])
-                                key = torch.nn.functional.pad(key, [0, 8 - head_size_og % 8])
-                                value = torch.nn.functional.pad(value, [0, 8 - head_size_og % 8])
-                            query = query.transpose(1, 2)
-                            key = key.transpose(1, 2)
-                            value = value.transpose(1, 2)
-                            out_padded = torch.zeros_like(query)
-                            interface_fa.fwd(query, key, value, out_padded, dropout_p, scale, is_causal)
-                            return out_padded[..., :head_size_og].transpose(1, 2)
-                        else:
-                            if enable_gqa:
-                                kwargs["enable_gqa"] = enable_gqa
-                            return sdpa_pre_triton_flash_atten(query=query, key=key, value=value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, scale=scale, **kwargs)
-                    torch.nn.functional.scaled_dot_product_attention = sdpa_triton_flash_atten
-                    log.debug('Torch attention: type="triton flash attention"')
-            except Exception as err:
-                log.error(f'Torch attention: type="triton flash attention" {err}')
+        if 'Flex attention' in opts.sdp_overrides:
+            attention.set_flex_attention()
 
-        if 'CK Flash attention' in opts.sdp_options:
-            try:
-                if backend == "rocm":
-                    if not installed('flash-attn'):
-                        log.info('Building CK Flash attention...')
-                        agent = rocm.Agent(getattr(torch.cuda.get_device_properties(device), "gcnArchName", "gfx0000"))
-                        install(rocm.get_flash_attention_command(agent), reinstall=True)
-                else:
-                    install('flash-attn')
-                from flash_attn import flash_attn_func
-                sdpa_pre_flash_atten = torch.nn.functional.scaled_dot_product_attention
-                @wraps(sdpa_pre_flash_atten)
-                def sdpa_flash_atten(query: torch.FloatTensor, key: torch.FloatTensor, value: torch.FloatTensor, attn_mask: Optional[torch.FloatTensor] = None, dropout_p: float = 0.0, is_causal: bool = False, scale: Optional[float] = None, enable_gqa: bool = False, **kwargs) -> torch.FloatTensor:
-                    if query.shape[-1] <= 128 and attn_mask is None and query.dtype != torch.float32:
-                        is_unsqueezed = False
-                        if query.dim() == 3:
-                            query = query.unsqueeze(0)
-                            is_unsqueezed = True
-                            if key.dim() == 3:
-                                key = key.unsqueeze(0)
-                            if value.dim() == 3:
-                                value = value.unsqueeze(0)
-                        if enable_gqa:
-                            key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
-                            value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
-                        query = query.transpose(1, 2)
-                        key = key.transpose(1, 2)
-                        value = value.transpose(1, 2)
-                        attn_output = flash_attn_func(q=query, k=key, v=value, dropout_p=dropout_p, causal=is_causal, softmax_scale=scale).transpose(1, 2)
-                        if is_unsqueezed:
-                            attn_output = attn_output.squeeze(0)
-                        return attn_output
-                    else:
-                        if enable_gqa:
-                            kwargs["enable_gqa"] = enable_gqa
-                        return sdpa_pre_flash_atten(query=query, key=key, value=value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, scale=scale, **kwargs)
-                torch.nn.functional.scaled_dot_product_attention = sdpa_flash_atten
-                log.debug('Torch attention: type="ck flash attention"')
-            except Exception as err:
-                log.error(f'Torch attention: type="ck flash attention" {err}')
+        if 'Triton Flash attention' in opts.sdp_overrides:
+            attention.set_triton_flash_attention(backend)
 
-        if 'Sage attention' in opts.sdp_options:
-            try:
-                install('sageattention')
-                from sageattention import sageattn
-                sdpa_pre_sage_atten = torch.nn.functional.scaled_dot_product_attention
-                @wraps(sdpa_pre_sage_atten)
-                def sdpa_sage_atten(query: torch.FloatTensor, key: torch.FloatTensor, value: torch.FloatTensor, attn_mask: Optional[torch.FloatTensor] = None, dropout_p: float = 0.0, is_causal: bool = False, scale: Optional[float] = None, enable_gqa: bool = False, **kwargs) -> torch.FloatTensor:
-                    if (query.shape[-1] in {128, 96, 64}) and (attn_mask is None) and (query.dtype != torch.float32):
-                        if enable_gqa:
-                            key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
-                            value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
-                        return sageattn(q=query, k=key, v=value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, scale=scale)
-                    else:
-                        if enable_gqa:
-                            kwargs["enable_gqa"] = enable_gqa
-                        return sdpa_pre_sage_atten(query=query, key=key, value=value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, scale=scale, **kwargs)
-                torch.nn.functional.scaled_dot_product_attention = sdpa_sage_atten
-                log.debug('Torch attention: type="sage attention"')
-            except Exception as err:
-                log.error(f'Torch attention: type="sage attention" {err}')
+        if 'Flash attention' in opts.sdp_overrides:
+            attention.set_ck_flash_attention(backend, device)
+
+        if 'Sage attention' in opts.sdp_overrides:
+            attention.set_sage_attention(backend, device)
 
         from importlib.metadata import version
         try:
@@ -551,7 +533,11 @@ def set_sdpa_params():
             sage = version('sageattention')
         except Exception:
             sage = False
-        log.info(f'Torch attention: flashattn={flash} sageattention={sage}')
+        log.debug(f'Torch attention installed: flashattn={flash} sageattention={sage}')
+
+        from diffusers.models import attention_dispatch as a
+        log.debug(f'Torch attention status: flash={a._CAN_USE_FLASH_ATTN} flash3={a._CAN_USE_FLASH_ATTN_3} aiter={a._CAN_USE_AITER_ATTN} sage={a._CAN_USE_SAGE_ATTN} flex={a._CAN_USE_FLEX_ATTN} npu={a._CAN_USE_NPU_ATTN} xla={a._CAN_USE_XLA_ATTN} xformers={a._CAN_USE_XFORMERS_ATTN} kernels={a.is_kernels_available()}') # pylint: disable=protected-access
+
     except Exception as e:
         log.warning(f'Torch SDPA: {e}')
 
@@ -605,6 +591,10 @@ def set_dtype():
         inference_context = contextlib.nullcontext
     else:
         inference_context = torch.no_grad
+    if dtype == dtype_vae:
+        torch_info.set(dtype=str(dtype))
+    else:
+        torch_info.set(dtype=str(dtype), vae=str(dtype_vae))
 
 
 def set_cuda_params():
@@ -614,6 +604,7 @@ def set_cuda_params():
     set_cudnn_params()
     set_sdpa_params()
     set_dtype()
+    test_triton()
     if backend == 'openvino':
         from modules.intel.openvino import get_device as get_raw_openvino_device
         device_name = get_raw_openvino_device()
@@ -624,7 +615,8 @@ def set_cuda_params():
         tunable = [torch.cuda.tunable.is_enabled(), torch.cuda.tunable.tuning_is_enabled()]
     except Exception:
         tunable = [False, False]
-    log.info(f'Torch parameters: backend={backend} device={device_name} config={opts.cuda_dtype} dtype={dtype} context={inference_context.__name__} nohalf={opts.no_half} nohalfvae={opts.no_half_vae} upcast={opts.upcast_sampling} deterministic={opts.cudnn_deterministic} tunable={tunable} fp16={"pass" if fp16_ok else "fail"} bf16={"pass" if bf16_ok else "fail"} optimization="{opts.cross_attention_optimization}"')
+    log.info(f'Torch parameters: backend={backend} device={device_name} config={opts.cuda_dtype} dtype={dtype} fp16={"pass" if fp16_ok else "fail"} bf16={"pass" if bf16_ok else "fail"} triton={"pass" if triton_ok else "fail"} optimization="{opts.cross_attention_optimization}"')
+    log.info(f'Torch compute: context={inference_context.__name__} nohalf={opts.no_half} nohalfvae={opts.no_half_vae} upcast={opts.upcast_sampling} deterministic={opts.cudnn_deterministic} tunable={tunable}')
 
 
 def randn(seed, shape=None):
@@ -693,6 +685,8 @@ def test_for_nans(x, where):
 
 
 def normalize_device(dev):
+    if dev is None:
+        return None
     if torch.device(dev).type in {"cpu", "mps", "meta"}:
         return torch.device(dev)
     if torch.device(dev).index is None:
@@ -701,6 +695,35 @@ def normalize_device(dev):
 
 
 def same_device(d1, d2):
+    if d1 is None or d2 is None:
+        return False
     if torch.device(d1).type != torch.device(d2).type:
         return False
     return normalize_device(d1) == normalize_device(d2)
+
+
+@contextlib.contextmanager
+def bypass_sdpa_hijacks():
+    """
+    Context manager to temporarily restore the original SDPA during code execution.
+    Use when a model is incompatible with SageAttention or other SDPA hijacks.
+    """
+    if sdpa_original is None:
+        # No hijacks applied, nothing to bypass
+        yield
+        return
+
+    # Save current (hijacked) SDPA
+    current_sdpa = torch.nn.functional.scaled_dot_product_attention
+
+    try:
+        # Restore original SDPA
+        torch.nn.functional.scaled_dot_product_attention = sdpa_original
+        if debug:
+            log.debug('SDPA bypass: restored original attention')
+        yield
+    finally:
+        # Restore hijacked SDPA
+        torch.nn.functional.scaled_dot_product_attention = current_sdpa
+        if debug:
+            log.debug('SDPA bypass: restored hijacked attention')

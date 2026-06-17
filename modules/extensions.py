@@ -1,16 +1,47 @@
+from __future__ import annotations
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import git
 from modules import shared, errors
+from modules.logger import log
 from modules.paths import extensions_dir, extensions_builtin_dir
 
 
-extensions = []
+extensions: list[Extension] = []
 if not os.path.exists(extensions_dir):
     os.makedirs(extensions_dir)
 
 
-def active():
+def parse_isotime(time_string: str) -> datetime:
+    # If Python minimum version is 3.11+, this function can be replaced with datetime.fromisoformat()
+    trimmed = time_string.rstrip("Z")
+    if "." in trimmed:
+        trimmed = trimmed.split(".")[0]
+    match len(trimmed):
+        case 16:
+            return datetime.strptime(trimmed, "%Y-%m-%dT%H:%M").replace(tzinfo=timezone.utc)
+        case 19:
+            return datetime.strptime(trimmed, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        case _:
+            raise ValueError(f"Unexpected time string format: '{time_string}'")
+
+
+def format_dt(d: datetime, seconds = False) -> str:
+    if d.tzinfo is None:
+        return d.strftime('%Y-%m-%d %H:%M')
+    if seconds:
+        return d.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    return d.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M')
+
+
+def ts2utc(timestamp: int) -> datetime:
+    try:
+        return datetime.fromtimestamp(timestamp, timezone.utc)
+    except Exception:
+        return datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+
+def active() -> list[Extension]:
     if shared.opts.disable_all_extensions == "all":
         return []
     elif shared.opts.disable_all_extensions == "user":
@@ -33,6 +64,13 @@ def temp_disable_extensions():
         'multidiffusion-upscaler-for-automatic1111',
         'a1111-sd-webui-lycoris',
         'sd-webui-animatediff',
+    ]
+    disable_obsolete = [
+        'Lora',
+        'stable-diffusion-webui-rembg',
+        'sd-extension-framepack',
+        'sd-extension-nudenet',
+        'sd-extension-promptgen',
     ]
     disable_themes = [
         'sd-webui-lobe-theme',
@@ -69,7 +107,7 @@ def temp_disable_extensions():
         shared.opts.data['theme_type'] = 'None'
         shared.opts.data['gradio_theme'] = theme_name
     else:
-        shared.log.error(f'UI theme invalid: theme="{theme_name}" available={["standard/*", "modern/*", "none/*"]} fallback="standard/black-teal"')
+        log.error(f'UI theme invalid: theme="{theme_name}" available={["standard/*", "modern/*", "none/*"]} fallback="standard/black-teal"')
         shared.opts.data['theme_type'] = 'Standard'
         shared.opts.data['gradio_theme'] = 'black-teal'
 
@@ -83,7 +121,9 @@ def temp_disable_extensions():
     for ext in disable_diffusers:
         if ext.lower() not in shared.opts.disabled_extensions:
             disabled.append(ext)
-    disabled.append('Lora')
+    for ext in disable_obsolete:
+        if ext.lower() not in shared.opts.disabled_extensions:
+            disabled.append(ext)
 
     shared.cmd_opts.controlnet_loglevel = 'WARNING'
     return disabled
@@ -105,8 +145,8 @@ class Extension:
         self.branch = None
         self.remote = None
         self.have_info_from_repo = False
-        self.mtime = 0
-        self.ctime = 0
+        self.mtime = "2000-01-01T00:00Z"
+        self.ctime = "2000-01-01T00:00Z"
 
     def read_info(self, force=False):
         if self.have_info_from_repo and not force:
@@ -126,7 +166,7 @@ class Extension:
             try:
                 self.status = 'unknown'
                 if len(repo.remotes) == 0:
-                    shared.log.debug(f"Extension: no remotes info repo={self.name}")
+                    log.debug(f"Extension: no remotes info repo={self.name}")
                     return
                 self.git_name = repo.remotes.origin.url.split('.git')[0].split('/')[-1]
                 self.description = repo.description
@@ -141,27 +181,27 @@ class Extension:
                 except Exception:
                     self.branch = 'unknown'
                 self.commit_hash = head.hexsha
-                self.version = f"<p>{self.commit_hash[:8]}</p><p>{datetime.fromtimestamp(self.commit_date).strftime('%a %b%d %Y %H:%M')}</p>"
+                self.version = f"<p>{self.commit_hash[:8]}</p><p>{format_dt(ts2utc(self.commit_date))}</p>"
             except Exception as ex:
-                shared.log.error(f"Extension: failed reading data from git repo={self.name}: {ex}")
+                log.error(f"Extension: failed reading data from git repo={self.name}: {ex}")
                 self.remote = None
 
-    def list_files(self, subdir, extension):
-        from modules import scripts_manager
+    def list_files(self, subdir: str, extension: str):
+        from modules.scripts_manager import ScriptFile
         dirpath = os.path.join(self.path, subdir)
+        res: list[ScriptFile] = []
         if not os.path.isdir(dirpath):
-            return []
-        res = []
+            return res
         for filename in sorted(os.listdir(dirpath)):
             if not filename.endswith(".py") and not filename.endswith(".js") and not filename.endswith(".mjs"):
                 continue
             priority = '50'
             if os.path.isfile(os.path.join(dirpath, "..", ".priority")):
-                with open(os.path.join(dirpath, "..", ".priority"), "r", encoding="utf-8") as f:
+                with open(os.path.join(dirpath, "..", ".priority"), encoding="utf-8") as f:
                     priority = str(f.read().strip())
-            res.append(scripts_manager.ScriptFile(self.path, filename, os.path.join(dirpath, filename), priority))
+            res.append(ScriptFile(self.path, filename, os.path.join(dirpath, filename), priority))
             if priority != '50':
-                shared.log.debug(f'Extension priority override: {os.path.dirname(dirpath)}:{priority}')
+                log.debug(f'Extension priority override: {os.path.dirname(dirpath)}:{priority}')
         res = [x for x in res if os.path.splitext(x.path)[1].lower() == extension and os.path.isfile(x.path)]
         return res
 
@@ -204,7 +244,7 @@ def list_extensions():
     if not os.path.isdir(extensions_dir):
         return
     if shared.opts.disable_all_extensions == "all" or shared.opts.disable_all_extensions == "user":
-        shared.log.warning(f"Option set: Disable extensions: {shared.opts.disable_all_extensions}")
+        log.warning(f"Option set: Disable extensions: {shared.opts.disable_all_extensions}")
     extension_paths = []
     extension_names = []
     extension_folders = [extensions_builtin_dir] if shared.cmd_opts.safe else [extensions_builtin_dir, extensions_dir]
@@ -216,7 +256,7 @@ def list_extensions():
             if not os.path.isdir(path):
                 continue
             if extension_dirname in extension_names:
-                shared.log.info(f'Skipping conflicting extension: {path}')
+                log.info(f'Skipping conflicting extension: {path}')
                 continue
             extension_names.append(extension_dirname)
             extension_paths.append((extension_dirname, path, dirname == extensions_builtin_dir))
@@ -227,4 +267,4 @@ def list_extensions():
         enabled = dirname.lower() not in disabled_extensions
         extension = Extension(name=dirname, path=path, enabled=enabled, is_builtin=is_builtin)
         extensions.append(extension)
-    shared.log.debug(f'Extensions: disabled={[e.name for e in extensions if not e.enabled]}')
+    log.debug(f'Extensions: disabled={[e.name for e in extensions if not e.enabled]}')

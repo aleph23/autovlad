@@ -1,6 +1,7 @@
 import math
 from PIL import Image, ImageChops, ImageDraw
 from modules import shared, errors, images
+from modules.logger import log
 
 
 FONT_SIZE=48
@@ -9,17 +10,17 @@ FONT_SIZE=48
 def test_processors(image):
     from modules.control import processors
     if image is None:
-        shared.log.error('Image not loaded')
+        log.error('Image not loaded')
         return None, None, None
     res = []
     for processor_id in processors.list_models():
         if shared.state.interrupted:
             continue
-        shared.log.info(f'Testing processor: {processor_id}')
+        log.info(f'Testing processor: {processor_id}')
         processor = processors.Processor(processor_id)
         output = image
         if processor is None:
-            shared.log.error(f'Processor load failed: id="{processor_id}"')
+            log.error(f'Processor load failed: id="{processor_id}"')
             processor_id = f'{processor_id} error'
         else:
             output = processor(image)
@@ -29,7 +30,7 @@ def test_processors(image):
             output = output.resize(image.size, Image.Resampling.LANCZOS)
         if output.mode != image.mode:
             output = output.convert(image.mode)
-        shared.log.debug(f'Testing processor: input={image} mode={image.mode} output={output} mode={output.mode}')
+        log.debug(f'Testing processor: input={image} mode={image.mode} output={output} mode={output.mode}')
         diff = ImageChops.difference(image, output)
         if not diff.getbbox():
             processor_id = f'{processor_id} null'
@@ -38,28 +39,27 @@ def test_processors(image):
         draw.text((10, 10), processor_id, (0,0,0), font=font)
         draw.text((8, 8), processor_id, (255,255,255), font=font)
         res.append(output)
-        yield output, None, None, res
+        yield output, None, res
     rows = round(math.sqrt(len(res)))
     cols = math.ceil(len(res) / rows)
     w, h = 256, 256
     size = (cols * w + cols, rows * h + rows)
     grid = Image.new('RGB', size=size, color='black')
-    shared.log.info(f'Test processors: images={len(res)} grid={grid}')
+    log.info(f'Test processors: images={len(res)} grid={grid}')
     for i, image in enumerate(res):
         x = (i % cols * w) + (i % cols)
         y = (i // cols * h) + (i // cols)
         thumb = image.copy().convert('RGB')
         thumb.thumbnail((w, h), Image.Resampling.HAMMING)
         grid.paste(thumb, box=(x, y))
-    yield None, grid, None, res
-    return None, grid, None, res # preview_process, output_image, output_video, output_gallery
+    yield None, grid, res
 
 
 def test_controlnets(prompt, negative, image):
     from modules import devices, sd_models
     from modules.control.units import controlnet
     if image is None:
-        shared.log.error('Image not loaded')
+        log.error('Image not loaded')
         return None, None, None
     res = []
     for model_id in controlnet.list_models():
@@ -71,9 +71,9 @@ def test_controlnets(prompt, negative, image):
         if model_id != 'None':
             controlnet = controlnet.ControlNet(model_id=model_id, device=devices.device, dtype=devices.dtype)
             if controlnet is None:
-                shared.log.error(f'ControlNet load failed: id="{model_id}"')
+                log.error(f'ControlNet load failed: id="{model_id}"')
                 continue
-            shared.log.info(f'Testing ControlNet: {model_id}')
+            log.info(f'Testing ControlNet: {model_id}')
             pipe = controlnet.ControlNetPipeline(controlnet=controlnet.model, pipeline=shared.sd_model)
             pipe.pipeline.to(device=devices.device, dtype=devices.dtype)
             sd_models.set_diffuser_options(pipe)
@@ -89,28 +89,27 @@ def test_controlnets(prompt, negative, image):
         draw.text((10, 10), model_id, (0,0,0), font=font)
         draw.text((8, 8), model_id, (255,255,255), font=font)
         res.append(output)
-        yield output, None, None, res
+        yield output, None, res
     rows = round(math.sqrt(len(res)))
     cols = math.ceil(len(res) / rows)
     w, h = 256, 256
     size = (cols * w + cols, rows * h + rows)
     grid = Image.new('RGB', size=size, color='black')
-    shared.log.info(f'Test ControlNets: images={len(res)} grid={grid}')
+    log.info(f'Test ControlNets: images={len(res)} grid={grid}')
     for i, image in enumerate(res):
         x = (i % cols * w) + (i % cols)
         y = (i // cols * h) + (i // cols)
         thumb = image.copy().convert('RGB')
         thumb.thumbnail((w, h), Image.Resampling.HAMMING)
         grid.paste(thumb, box=(x, y))
-    yield None, grid, None, res
-    return None, grid, None, res # preview_process, output_image, output_video, output_gallery
+    yield grid, None, res
 
 
 def test_adapters(prompt, negative, image):
     from modules import devices, sd_models
     from modules.control.units import t2iadapter
     if image is None:
-        shared.log.error('Image not loaded')
+        log.error('Image not loaded')
         return None, None, None
     res = []
     for model_id in t2iadapter.list_models():
@@ -122,9 +121,9 @@ def test_adapters(prompt, negative, image):
         if model_id != 'None':
             adapter = t2iadapter.Adapter(model_id=model_id, device=devices.device, dtype=devices.dtype)
             if adapter is None:
-                shared.log.error(f'Adapter load failed: id="{model_id}"')
+                log.error(f'Adapter load failed: id="{model_id}"')
                 continue
-            shared.log.info(f'Testing Adapter: {model_id}')
+            log.info(f'Testing Adapter: {model_id}')
             pipe = t2iadapter.AdapterPipeline(adapter=adapter.model, pipeline=shared.sd_model)
             pipe.pipeline.to(device=devices.device, dtype=devices.dtype)
             sd_models.set_diffuser_options(pipe)
@@ -141,28 +140,27 @@ def test_adapters(prompt, negative, image):
         draw.text((10, 10), model_id, (0,0,0), font=font)
         draw.text((8, 8), model_id, (255,255,255), font=font)
         res.append(output)
-        yield output, None, None, res
+        yield output, None, res
     rows = round(math.sqrt(len(res)))
     cols = math.ceil(len(res) / rows)
     w, h = 256, 256
     size = (cols * w + cols, rows * h + rows)
     grid = Image.new('RGB', size=size, color='black')
-    shared.log.info(f'Test Adapters: images={len(res)} grid={grid}')
+    log.info(f'Test Adapters: images={len(res)} grid={grid}')
     for i, image in enumerate(res):
         x = (i % cols * w) + (i % cols)
         y = (i // cols * h) + (i // cols)
         thumb = image.copy().convert('RGB')
         thumb.thumbnail((w, h), Image.Resampling.HAMMING)
         grid.paste(thumb, box=(x, y))
-    yield None, grid, None, res
-    return None, grid, None, res # preview_process, output_image, output_video, output_gallery
+    yield grid, None, res
 
 
 def test_xs(prompt, negative, image):
     from modules import devices, sd_models
     from modules.control.units import xs
     if image is None:
-        shared.log.error('Image not loaded')
+        log.error('Image not loaded')
         return None, None, None
     res = []
     for model_id in xs.list_models():
@@ -174,9 +172,9 @@ def test_xs(prompt, negative, image):
         if model_id != 'None':
             xs = xs.ControlNetXS(model_id=model_id, device=devices.device, dtype=devices.dtype)
             if xs is None:
-                shared.log.error(f'ControlNet-XS load failed: id="{model_id}"')
+                log.error(f'ControlNet-XS load failed: id="{model_id}"')
                 continue
-            shared.log.info(f'Testing ControlNet-XS: {model_id}')
+            log.info(f'Testing ControlNet-XS: {model_id}')
             pipe = xs.ControlNetXSPipeline(controlnet=xs.model, pipeline=shared.sd_model)
             pipe.pipeline.to(device=devices.device, dtype=devices.dtype)
             sd_models.set_diffuser_options(pipe)
@@ -192,28 +190,27 @@ def test_xs(prompt, negative, image):
         draw.text((10, 10), model_id, (0,0,0), font=font)
         draw.text((8, 8), model_id, (255,255,255), font=font)
         res.append(output)
-        yield output, None, None, res
+        yield output, None, res
     rows = round(math.sqrt(len(res)))
     cols = math.ceil(len(res) / rows)
     w, h = 256, 256
     size = (cols * w + cols, rows * h + rows)
     grid = Image.new('RGB', size=size, color='black')
-    shared.log.info(f'Test ControlNet-XS: images={len(res)} grid={grid}')
+    log.info(f'Test ControlNet-XS: images={len(res)} grid={grid}')
     for i, image in enumerate(res):
         x = (i % cols * w) + (i % cols)
         y = (i // cols * h) + (i // cols)
         thumb = image.copy().convert('RGB')
         thumb.thumbnail((w, h), Image.Resampling.HAMMING)
         grid.paste(thumb, box=(x, y))
-    yield None, grid, None, res
-    return None, grid, None, res # preview_process, output_image, output_video, output_gallery
+    yield grid, None, res
 
 
 def test_lite(prompt, negative, image):
     from modules import devices, sd_models
     from modules.control.units import lite
     if image is None:
-        shared.log.error('Image not loaded')
+        log.error('Image not loaded')
         return None, None, None
     res = []
     for model_id in lite.list_models():
@@ -225,9 +222,9 @@ def test_lite(prompt, negative, image):
         if model_id != 'None':
             lite = lite.ControlLLLite(model_id=model_id, device=devices.device, dtype=devices.dtype)
             if lite is None:
-                shared.log.error(f'Control-LLite load failed: id="{model_id}"')
+                log.error(f'Control-LLite load failed: id="{model_id}"')
                 continue
-            shared.log.info(f'Testing ControlNet-XS: {model_id}')
+            log.info(f'Testing ControlNet-XS: {model_id}')
             pipe = lite.ControlLLitePipeline(pipeline=shared.sd_model)
             pipe.apply(controlnet=lite.model, image=image, conditioning=1.0)
             pipe.pipeline.to(device=devices.device, dtype=devices.dtype)
@@ -244,18 +241,18 @@ def test_lite(prompt, negative, image):
         draw.text((10, 10), model_id, (0,0,0), font=font)
         draw.text((8, 8), model_id, (255,255,255), font=font)
         res.append(output)
-        yield output, None, None, res
+        yield output, None, res
     rows = round(math.sqrt(len(res)))
     cols = math.ceil(len(res) / rows)
     w, h = 256, 256
     size = (cols * w + cols, rows * h + rows)
     grid = Image.new('RGB', size=size, color='black')
-    shared.log.info(f'Test ControlNet-XS: images={len(res)} grid={grid}')
+    log.info(f'Test ControlNet-XS: images={len(res)} grid={grid}')
     for i, image in enumerate(res):
         x = (i % cols * w) + (i % cols)
         y = (i // cols * h) + (i // cols)
         thumb = image.copy().convert('RGB')
         thumb.thumbnail((w, h), Image.Resampling.HAMMING)
         grid.paste(thumb, box=(x, y))
-    yield None, grid, None, res
-    return None, grid, None, res # preview_process, output_image, output_video, output_gallery
+    yield grid, None, res
+    return grid, None, res # preview_process, output_image, output_video, output_gallery

@@ -1,6 +1,6 @@
 from typing import Tuple
 from pydantic.dataclasses import dataclass
-from ..base import ModelConfig
+from lbm.base import ModelConfig
 
 
 @dataclass

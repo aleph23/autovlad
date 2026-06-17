@@ -192,14 +192,14 @@ class OmniGen2ImageProcessor(VaeImageProcessor):
             warnings.warn(
                 "Passing `image` as a list of 4d np.ndarray is deprecated."
                 "Please concatenate the list along the batch dimension and pass it as a single 4d np.ndarray",
-                FutureWarning,
+                FutureWarning, stacklevel=2,
             )
             image = np.concatenate(image, axis=0)
         if isinstance(image, list) and isinstance(image[0], torch.Tensor) and image[0].ndim == 4:
             warnings.warn(
                 "Passing `image` as a list of 4d torch.Tensor is deprecated."
                 "Please concatenate the list along the batch dimension and pass it as a single 4d torch.Tensor",
-                FutureWarning,
+                FutureWarning, stacklevel=2,
             )
             image = torch.cat(image, axis=0)
 
@@ -253,7 +253,7 @@ class OmniGen2ImageProcessor(VaeImageProcessor):
             warnings.warn(
                 "Passing `image` as torch tensor with value range in [-1,1] is deprecated. The expected value range for image tensor is [0,1] "
                 f"when passing as pytorch tensor or numpy Array. You passed `image` with value range [{image.min()},{image.max()}]",
-                FutureWarning,
+                FutureWarning, stacklevel=2,
             )
             do_normalize = False
         if do_normalize:

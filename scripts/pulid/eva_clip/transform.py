@@ -18,7 +18,7 @@ class ResizeMaxSize(nn.Module):
             raise TypeError(f"Size should be int. Got {type(max_size)}")
         self.max_size = max_size
         self.interpolation = interpolation
-        self.fn = min if fn == 'min' else min
+        self.fn = min
         self.fill = fill
 
     def forward(self, img):

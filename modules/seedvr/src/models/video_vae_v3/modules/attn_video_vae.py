@@ -616,7 +616,7 @@ class UNetMidBlock3D(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
     def forward(self, hidden_states, temb=None, memory_state: MemoryState = MemoryState.DISABLED):
-        video_length, frame_height, frame_width = hidden_states.size()[-3:]
+        video_length, _frame_height, _frame_width = hidden_states.size()[-3:]
         hidden_states = self.resnets[0](hidden_states, temb, memory_state=memory_state)
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             if attn is not None:
@@ -672,7 +672,7 @@ class Encoder3D(nn.Module):
         mid_block_add_attention=True,
         # [Override] add extra_cond_dim, temporal down num
         temporal_down_num: int = 2,
-        extra_cond_dim: int = None,
+        extra_cond_dim: int | None = None,
         gradient_checkpoint: bool = False,
         inflation_mode: _inflation_mode_t = "tail",
         time_receptive_field: _receptive_field_t = "half",

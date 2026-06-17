@@ -1,8 +1,10 @@
 import io
 import os
+import re
 import contextlib
 import importlib.util
 import modules.errors as errors
+from modules.logger import log
 from installer import setup_logging
 
 
@@ -26,10 +28,8 @@ def load_module(path):
             setup_logging() # reset since scripts can hijaack logging
             for line in stdout.getvalue().splitlines():
                 if len(line) > 0:
-                    if '2;36m' in line: # color escape sequence
-                        print(line.strip())
-                    else:
-                        errors.log.info(f"Extension: script='{os.path.relpath(path)}' {line.strip()}")
+                    clean = re.sub(r'\x1b\[[0-9;]*m', '', line)
+                    log.info(f"Extension: script='{os.path.relpath(path)}' {clean.strip()}")
     except Exception as e:
         errors.display(e, f'Module load: {path}')
     return module

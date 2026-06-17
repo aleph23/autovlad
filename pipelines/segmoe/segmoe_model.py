@@ -110,6 +110,7 @@ class SegMoEPipeline:
         self.use_safetensors = kwargs.pop("use_safetensors", True)
         self.variant = kwargs.pop("variant", "fp16")
         self.device = kwargs.pop("device", "cuda")
+        self.cache_dir = kwargs.pop("cache_dir", None)
         if os.path.isfile(config_or_path):
             self.load_from_scratch(config_or_path, **kwargs)
         else:
@@ -128,6 +129,7 @@ class SegMoEPipeline:
                 unet=unet,
                 torch_dtype=self.torch_dtype,
                 use_safetensors=self.use_safetensors,
+                cache_dir=self.cache_dir,
             )
             self.pipe.to(self.device)
             self.pipe.unet.to(
@@ -140,6 +142,7 @@ class SegMoEPipeline:
         self.pipe.to(*args, **kwargs)
 
     def load_from_scratch(self, config: str, **kwargs) -> None:
+        cache_dir = kwargs.pop("cache_dir", self.cache_dir)
         # Load Config
         with open(config, "r", encoding='utf8') as f:
             config = yaml.load(f, Loader=yaml.SafeLoader)
@@ -166,13 +169,13 @@ class SegMoEPipeline:
             if not os.path.isfile("base/model.safetensors"):
                 os.system(
                     "wget -O "
-                    + "base/model.safetensors"
+                     "base/model.safetensors"
                     + self.config["base_model"]
                     + " --content-disposition"
                 )
             self.config["base_model"] = "base/model.safetensors"
             self.pipe = DiffusionPipeline.from_single_file(
-                self.config["base_model"], torch_dtype=self.torch_dtype
+                self.config["base_model"], torch_dtype=self.torch_dtype, cache_dir=cache_dir
             )
         else:
             try:
@@ -181,11 +184,12 @@ class SegMoEPipeline:
                     torch_dtype=self.torch_dtype,
                     use_safetensors=self.use_safetensors,
                     variant=self.variant,
+                    cache_dir=cache_dir,
                     **kwargs,
                 )
             except Exception:
                 self.pipe = DiffusionPipeline.from_pretrained(
-                    self.config["base_model"], torch_dtype=self.torch_dtype, **kwargs
+                    self.config["base_model"], torch_dtype=self.torch_dtype, cache_dir=cache_dir, **kwargs
                 )
         if self.pipe.__class__ == StableDiffusionPipeline:
             self.up_idx_start = 1
@@ -221,12 +225,13 @@ class SegMoEPipeline:
                             if not os.path.isfile(f"expert_{i}/model.safetensors"):
                                 os.system(
                                     f"wget {exp['source_model']} -O "
-                                    + f"expert_{i}/model.safetensors"
-                                    + " --content-disposition"
+                                     f"expert_{i}/model.safetensors"
+                                     " --content-disposition"
                                 )
                         exp["source_model"] = f"expert_{i}/model.safetensors"
                         expert = DiffusionPipeline.from_single_file(
                             exp["source_model"],
+                            cache_dir=cache_dir,
                         ).to(self.device, self.torch_dtype)
                     except Exception as e:
                         print(f"Expert {i} {exp['source_model']} failed to load")
@@ -238,6 +243,7 @@ class SegMoEPipeline:
                             torch_dtype=self.torch_dtype,
                             use_safetensors=self.use_safetensors,
                             variant=self.variant,
+                            cache_dir=cache_dir,
                             **kwargs,
                         )
 
@@ -246,7 +252,7 @@ class SegMoEPipeline:
                         )
                     except Exception:
                         expert = DiffusionPipeline.from_pretrained(
-                            exp["source_model"], torch_dtype=self.torch_dtype, **kwargs
+                            exp["source_model"], torch_dtype=self.torch_dtype, cache_dir=cache_dir, **kwargs
                         )
                         expert.scheduler = DDPMScheduler.from_config(
                             expert.scheduler.config
@@ -267,8 +273,8 @@ class SegMoEPipeline:
                                 ):
                                     os.system(
                                         f"wget {lora['source_model']} -O "
-                                        + f"expert_{i}/lora_{j}/pytorch_lora_weights.safetensors"
-                                        + " --content-disposition"
+                                         f"expert_{i}/lora_{j}/pytorch_lora_weights.safetensors"
+                                         " --content-disposition"
                                     )
                                 lora["source_model"] = f"expert_{j}/lora_{j}"
                                 expert.load_lora_weights(lora["source_model"])
@@ -299,8 +305,8 @@ class SegMoEPipeline:
                             ):
                                 os.system(
                                     f"wget {lora['source_model']} -O "
-                                    + f"lora_{i}/pytorch_lora_weights.safetensors"
-                                    + " --content-disposition"
+                                     f"lora_{i}/pytorch_lora_weights.safetensors"
+                                     " --content-disposition"
                                 )
                             lora["source_model"] = f"lora_{i}"
                             self.pipe.load_lora_weights(lora["source_model"])
@@ -338,8 +344,8 @@ class SegMoEPipeline:
                             ):
                                 os.system(
                                     f"wget {lora['source_model']} -O "
-                                    + f"lora_{i}/pytorch_lora_weights.safetensors"
-                                    + " --content-disposition"
+                                     f"lora_{i}/pytorch_lora_weights.safetensors"
+                                     " --content-disposition"
                                 )
                             lora["source_model"] = f"lora_{i}"
                             experts[j[i]].load_lora_weights(lora["source_model"])

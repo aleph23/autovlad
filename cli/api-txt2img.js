@@ -2,8 +2,7 @@
 
 // simple nodejs script to test sdnext api
 
-const fs = require('fs'); // eslint-disable-line no-undef
-const process = require('process'); // eslint-disable-line no-undef
+const fs = require('node:fs');
 
 const sd_url = process.env.SDAPI_URL || 'http://127.0.0.1:7860';
 const sd_username = process.env.SDAPI_USR;
@@ -30,14 +29,19 @@ async function main() {
   const headers = new Headers();
   const body = JSON.stringify(sd_options);
   headers.set('Content-Type', 'application/json');
-  if (sd_username && sd_password) headers.set({ Authorization: `Basic ${btoa('sd_username:sd_password')}` });
+  if (sd_username && sd_password) {
+    // const credentials = btoa(`${sd_username}:${sd_password}`);
+    const credentials = Buffer.from(`${sd_username}:${sd_password}`).toString('base64');
+    headers.set('Authorization', `Basic ${credentials}`);
+  }
   const res = await fetch(`${sd_url}/sdapi/v1/txt2img`, { method, headers, body });
   if (res.status !== 200) {
-    console.log('Error', res.status);
+    const err = await res.text();
+    console.log('Error', res.status, res.statusText, err);
   } else {
     const json = await res.json();
     console.log('result:', json.info);
-    for (const i in json.images) { // eslint-disable-line guard-for-in
+    for (const i in json.images) {
       const f = `/tmp/test-${i}.jpg`;
       fs.writeFileSync(f, atob(json.images[i]), 'binary');
       console.log('image saved:', f);

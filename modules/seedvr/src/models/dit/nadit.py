@@ -68,7 +68,7 @@ class NaDiT(nn.Module):
         mlp_type: str = "normal",
         window: Optional[Tuple] = None,
         window_method: Optional[Tuple[str]] = None,
-        temporal_window_size: int = None,
+        temporal_window_size: int | None = None,
         temporal_shifted: bool = False,
         **kwargs,
     ):
@@ -172,7 +172,7 @@ class NaDiT(nn.Module):
 
         # Body
         cache = Cache(disable=disable_cache)
-        for i, block in enumerate(self.blocks):
+        for _i, block in enumerate(self.blocks):
             vid, txt, vid_shape, txt_shape = gradient_checkpointing(
                 enabled=(self.gradient_checkpointing and self.training),
                 module=block,
@@ -220,7 +220,7 @@ class NaDiTUpscaler(nn.Module):
         mlp_type: str = "normal",
         window: Optional[Tuple] = None,
         window_method: Optional[Tuple[str]] = None,
-        temporal_window_size: int = None,
+        temporal_window_size: int | None = None,
         temporal_shifted: bool = False,
         **kwargs,
     ):
@@ -334,7 +334,7 @@ class NaDiTUpscaler(nn.Module):
 
         # Body
         cache = Cache(disable=disable_cache)
-        for i, block in enumerate(self.blocks):
+        for _i, block in enumerate(self.blocks):
             vid, txt, vid_shape, txt_shape = gradient_checkpointing(
                 enabled=(self.gradient_checkpointing and self.training),
                 module=block,

@@ -11,10 +11,6 @@
       "env": { "USED_VSCODE_COMMAND_PICKARGS": "1" },
       "args": [
         "--uv",
-        "--quick",
-        "--debug",
-        "--docs",
-        "--api-log",
         "--log", "vscode.log",
         "${command:pickArgs}"]
     }

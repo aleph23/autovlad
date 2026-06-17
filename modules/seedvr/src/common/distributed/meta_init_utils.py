@@ -14,7 +14,7 @@
 
 import torch
 from torch import nn
-from ....rotary_embedding import RotaryEmbedding
+from modules.seedvr.rotary_embedding import RotaryEmbedding
 
 __all__ = ["meta_non_persistent_buffer_init_fn"]
 

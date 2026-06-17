@@ -99,10 +99,10 @@ class AttentionStore:
 
         torch.cuda.empty_cache()
 
-    def aggregate_last_steps_attention(self) -> torch.Tensor:
+    def aggregate_last_steps_attention(self):
         """Aggregates the attention across the different layers and heads at the specified resolution."""
         attention_maps = torch.cat([torch.stack(x[-20:]) for x in self.step_store.values()]).mean(dim=0)
-        bsz, wh, _ = attention_maps.shape
+        bsz, _wh, _ = attention_maps.shape
 
         # Create attention maps for each concept token, for each batch item
         agg_attn_maps = []
@@ -118,7 +118,7 @@ class AttentionStore:
         # Upsample the attention maps to the target resolution
         # and create the attention masks, unifying masks across the different concepts
         for tgt_size in self.ALL_RES:
-            pixels = tgt_size ** 2
+            tgt_size ** 2
             tgt_agg_attn_maps = [F.interpolate(x.unsqueeze(1), size=tgt_size, mode='bilinear').squeeze(1) for x in agg_attn_maps]
 
             attn_masks = []
@@ -189,6 +189,5 @@ class AttentionStore:
                         output_attn_mask[j*n_patches:(j+1)*n_patches] = attn_mask[j].unsqueeze(0) #.expand(n_patches, -1)
                     else:
                         raise NotImplementedError('mask_background_query is not supported anymore')
-                        output_attn_mask[0, attn_mask[i], k*n_patches:(k+1)*n_patches] = attn_mask[j].unsqueeze(0).expand(attn_mask[i].sum(), -1)
 
         return output_attn_mask

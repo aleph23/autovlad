@@ -87,7 +87,7 @@ def scale_forward(
     encoder_hidden_states: Optional[torch.FloatTensor] = None,
     encoder_attention_mask: Optional[torch.FloatTensor] = None,
     timestep: Optional[torch.LongTensor] = None,
-    cross_attention_kwargs: Dict[str, Any] = None,
+    cross_attention_kwargs: Dict[str, Any] | None = None,
     class_labels: Optional[torch.LongTensor] = None,
 ):
     # Notice that normalization is always applied before the real computation in the following blocks.
@@ -136,7 +136,7 @@ def scale_forward(
         norm_hidden_states_ = F.pad(norm_hidden_states_, (0, 0, w_jitter_range, w_jitter_range, h_jitter_range, h_jitter_range), 'constant', 0)
         value = torch.zeros_like(norm_hidden_states_)
         count = torch.zeros_like(norm_hidden_states_)
-        for index, view in enumerate(views):
+        for _index, view in enumerate(views):
             h_start, h_end, w_start, w_end = view
             local_states = norm_hidden_states_[:, h_start:h_end, w_start:w_end, :]
             local_states = rearrange(local_states, 'bh h w d -> bh (h w) d')
@@ -175,7 +175,7 @@ def scale_forward(
         norm_hidden_states_ = F.pad(norm_hidden_states, (0, 0, w_jitter_range, w_jitter_range, h_jitter_range, h_jitter_range), 'constant', 0)
         value = torch.zeros_like(norm_hidden_states_)
         count = torch.zeros_like(norm_hidden_states_)
-        for index, view in enumerate(views):
+        for _index, view in enumerate(views):
             h_start, h_end, w_start, w_end = view
             local_states = norm_hidden_states_[:, h_start:h_end, w_start:w_end, :]
             local_states = rearrange(local_states, 'bh h w d -> bh (h w) d')
@@ -198,7 +198,7 @@ def scale_forward(
 
         value = torch.zeros_like(norm_hidden_states)
         count = torch.zeros_like(norm_hidden_states)
-        for index, global_view in enumerate(global_views):
+        for _index, global_view in enumerate(global_views):
             h, w = global_view
             global_states = norm_hidden_states[:, h::current_scale_num_h, w::current_scale_num_w, :]
             global_states = rearrange(global_states, 'bh h w d -> bh (h w) d')
@@ -288,7 +288,7 @@ def ori_forward(
     encoder_hidden_states: Optional[torch.FloatTensor] = None,
     encoder_attention_mask: Optional[torch.FloatTensor] = None,
     timestep: Optional[torch.LongTensor] = None,
-    cross_attention_kwargs: Dict[str, Any] = None,
+    cross_attention_kwargs: Dict[str, Any] | None = None,
     class_labels: Optional[torch.LongTensor] = None,
 ):
     # Notice that normalization is always applied before the real computation in the following blocks.

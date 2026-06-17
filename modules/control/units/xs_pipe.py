@@ -518,23 +518,23 @@ class StableDiffusionXLControlNetXSPipeline(
         )
         if (
             isinstance(self.controlnet, ControlNetXSModel)
-            or is_compiled
-            and isinstance(self.controlnet._orig_mod, ControlNetXSModel)
+            or (is_compiled
+            and isinstance(self.controlnet._orig_mod, ControlNetXSModel))
         ):
             self.check_image(image, prompt, prompt_embeds)
         else:
-            assert False
+            raise AssertionError
 
         # Check `controlnet_conditioning_scale`
         if (
             isinstance(self.controlnet, ControlNetXSModel)
-            or is_compiled
-            and isinstance(self.controlnet._orig_mod, ControlNetXSModel)
+            or (is_compiled
+            and isinstance(self.controlnet._orig_mod, ControlNetXSModel))
         ):
             if not isinstance(controlnet_conditioning_scale, float):
                 raise TypeError("For single controlnet: `controlnet_conditioning_scale` must be type `float`.")
         else:
-            assert False
+            raise AssertionError
 
         start, end = control_guidance_start, control_guidance_end
         if start >= end:
@@ -700,7 +700,7 @@ class StableDiffusionXLControlNetXSPipeline(
     @torch.no_grad()
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         image: PipelineImageInput = None,
         height: Optional[int] = None,
@@ -725,9 +725,9 @@ class StableDiffusionXLControlNetXSPipeline(
         controlnet_conditioning_scale: Union[float, List[float]] = 1.0,
         control_guidance_start: float = 0.0,
         control_guidance_end: float = 1.0,
-        original_size: Tuple[int, int] = None,
+        original_size: Tuple[int, int] | None = None,
         crops_coords_top_left: Tuple[int, int] = (0, 0),
-        target_size: Tuple[int, int] = None,
+        target_size: Tuple[int, int] | None = None,
         negative_original_size: Optional[Tuple[int, int]] = None,
         negative_crops_coords_top_left: Tuple[int, int] = (0, 0),
         negative_target_size: Optional[Tuple[int, int]] = None,
@@ -928,7 +928,7 @@ class StableDiffusionXLControlNetXSPipeline(
             )
             height, width = image.shape[-2:]
         else:
-            assert False
+            raise AssertionError
 
         # 5. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
@@ -1521,23 +1521,23 @@ class StableDiffusionControlNetXSPipeline(
         )
         if (
             isinstance(self.controlnet, ControlNetXSModel)
-            or is_compiled
-            and isinstance(self.controlnet._orig_mod, ControlNetXSModel)
+            or (is_compiled
+            and isinstance(self.controlnet._orig_mod, ControlNetXSModel))
         ):
             self.check_image(image, prompt, prompt_embeds)
         else:
-            assert False
+            raise AssertionError
 
         # Check `controlnet_conditioning_scale`
         if (
             isinstance(self.controlnet, ControlNetXSModel)
-            or is_compiled
-            and isinstance(self.controlnet._orig_mod, ControlNetXSModel)
+            or (is_compiled
+            and isinstance(self.controlnet._orig_mod, ControlNetXSModel))
         ):
             if not isinstance(controlnet_conditioning_scale, float):
                 raise TypeError("For single controlnet: `controlnet_conditioning_scale` must be type `float`.")
         else:
-            assert False
+            raise AssertionError
 
         start, end = control_guidance_start, control_guidance_end
         if start >= end:
@@ -1664,7 +1664,7 @@ class StableDiffusionControlNetXSPipeline(
     @torch.no_grad()
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         image: PipelineImageInput = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -1831,7 +1831,7 @@ class StableDiffusionControlNetXSPipeline(
             )
             height, width = image.shape[-2:]
         else:
-            assert False
+            raise AssertionError
 
         # 5. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)

@@ -53,9 +53,6 @@ class TDDScheduler(DPMSolverSinglestepScheduler):
         elif beta_schedule == "scaled_linear":
             # this schedule is very specific to the latent diffusion model.
             self.betas = torch.linspace(beta_start**0.5, beta_end**0.5, num_train_timesteps, dtype=torch.float32) ** 2
-        elif beta_schedule == "squaredcos_cap_v2":
-            # Glide cosine schedule
-            self.betas = betas_for_alpha_bar(num_train_timesteps)
         else:
             raise NotImplementedError(f"{beta_schedule} does is not implemented for {self.__class__}")
 
@@ -84,7 +81,7 @@ class TDDScheduler(DPMSolverSinglestepScheduler):
 
         if algorithm_type != "dpmsolver++" and final_sigmas_type == "zero":
             raise ValueError(
-                f"`final_sigmas_type` {final_sigmas_type} is not supported for `algorithm_type` {algorithm_type}. Please chooose `sigma_min` instead."
+                f"`final_sigmas_type` {final_sigmas_type} is not supported for `algorithm_type` {algorithm_type}. Please choose `sigma_min` instead."
             )
 
         # setable values
@@ -224,7 +221,7 @@ class TDDScheduler(DPMSolverSinglestepScheduler):
         model_output: torch.FloatTensor,
         timestep: int,
         sample: torch.FloatTensor,
-        eta: float,
+        eta: float = 0.0,
         generator: Optional[torch.Generator] = None,
         return_dict: bool = True,
     ) -> Union[SchedulerOutput, Tuple]:
@@ -291,7 +288,7 @@ class TDDScheduler(DPMSolverSinglestepScheduler):
             if len(args) > 2:
                 sample = args[2]
             else:
-                raise ValueError(" missing `sample` as a required keyward argument")
+                raise ValueError(" missing `sample` as a required keyword argument")
         if timestep is not None:
             deprecate(
                 "timesteps",
@@ -330,7 +327,7 @@ class TDDScheduler(DPMSolverSinglestepScheduler):
             if len(args) > 2:
                 sample = args[2]
             else:
-                raise ValueError(" missing `sample` as a required keyward argument")
+                raise ValueError(" missing `sample` as a required keyword argument")
         if timestep_list is not None:
             deprecate(
                 "timestep_list",
@@ -398,7 +395,7 @@ class TDDScheduler(DPMSolverSinglestepScheduler):
         model_output_list: List[torch.FloatTensor],
         *args,
         sample: torch.FloatTensor = None,
-        order: int = None,
+        order: int | None = None,
         **kwargs,
     ) -> torch.FloatTensor:
         timestep_list = args[0] if len(args) > 0 else kwargs.pop("timestep_list", None)
@@ -407,12 +404,12 @@ class TDDScheduler(DPMSolverSinglestepScheduler):
             if len(args) > 2:
                 sample = args[2]
             else:
-                raise ValueError(" missing`sample` as a required keyward argument")
+                raise ValueError(" missing`sample` as a required keyword argument")
         if order is None:
             if len(args) > 3:
                 order = args[3]
             else:
-                raise ValueError(" missing `order` as a required keyward argument")
+                raise ValueError(" missing `order` as a required keyword argument")
         if timestep_list is not None:
             deprecate(
                 "timestep_list",
@@ -468,7 +465,7 @@ class TDDScheduler(DPMSolverSinglestepScheduler):
             if len(args) > 1:
                 sample = args[1]
             else:
-                raise ValueError("missing `sample` as a required keyward argument")
+                raise ValueError("missing `sample` as a required keyword argument")
         if timestep is not None:
             deprecate(
                 "timesteps",

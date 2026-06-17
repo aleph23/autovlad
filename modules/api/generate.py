@@ -3,12 +3,13 @@ from fastapi.responses import JSONResponse
 from modules import errors, shared, scripts_manager, ui
 from modules.api import models, script, helpers
 from modules.processing import StableDiffusionProcessingTxt2Img, StableDiffusionProcessingImg2Img, process_images
+from modules.paths import resolve_output_path
 
 
 errors.install()
 
 
-class APIGenerate():
+class APIGenerate:
     def __init__(self, queue_lock: Lock):
         self.queue_lock = queue_lock
         self.default_script_arg_txt2img = []
@@ -69,6 +70,7 @@ class APIGenerate():
             p.ip_adapter_starts = []
             p.ip_adapter_ends = []
             p.ip_adapter_images = []
+            p.ip_adapter_masks = []
             for ipadapter in request.ip_adapter:
                 if not ipadapter.images or len(ipadapter.images) == 0:
                     continue
@@ -78,12 +80,12 @@ class APIGenerate():
                 p.ip_adapter_starts.append(ipadapter.start)
                 p.ip_adapter_ends.append(ipadapter.end)
                 p.ip_adapter_images.append([helpers.decode_base64_to_image(x) for x in ipadapter.images])
-                p.ip_adapter_masks = []
                 if ipadapter.masks:
                     p.ip_adapter_masks.append([helpers.decode_base64_to_image(x) for x in ipadapter.masks])
             del request.ip_adapter
 
     def post_text2img(self, txt2imgreq: models.ReqTxt2Img):
+        """Generate images from a text prompt. Supports IP-Adapter, FaceID, and script overrides."""
         self.prepare_face_module(txt2imgreq)
         script_runner = scripts_manager.scripts_txt2img
         if not script_runner.scripts:
@@ -105,8 +107,8 @@ class APIGenerate():
             p = StableDiffusionProcessingTxt2Img(sd_model=shared.sd_model, **args)
             self.prepare_ip_adapter(txt2imgreq, p)
             p.scripts = script_runner
-            p.outpath_grids = shared.opts.outdir_grids or shared.opts.outdir_txt2img_grids
-            p.outpath_samples = shared.opts.outdir_samples or shared.opts.outdir_txt2img_samples
+            p.outpath_grids = resolve_output_path(shared.opts.outdir_grids, shared.opts.outdir_txt2img_grids)
+            p.outpath_samples = resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_txt2img_samples)
             for key, value in getattr(txt2imgreq, "extra", {}).items():
                 setattr(p, key, value)
             jobid = shared.state.begin('API-TXT', api=True)
@@ -118,7 +120,7 @@ class APIGenerate():
                 processed = process_images(p)
             processed = scripts_manager.scripts_txt2img.after(p, processed, *script_args)
             p.close()
-            shared.state.end(jobid)
+            shared.state.end(jobid, api=False)
         if processed is None or processed.images is None or len(processed.images) == 0:
             b64images = []
         else:
@@ -128,6 +130,7 @@ class APIGenerate():
         return models.ResTxt2Img(images=b64images, parameters=vars(txt2imgreq), info=info)
 
     def post_img2img(self, img2imgreq: models.ReqImg2Img):
+        """Generate images from input images with optional inpainting mask. Supports IP-Adapter, FaceID, and script overrides."""
         self.prepare_face_module(img2imgreq)
         init_images = img2imgreq.init_images
         if init_images is None:
@@ -157,8 +160,8 @@ class APIGenerate():
             self.prepare_ip_adapter(img2imgreq, p)
             p.init_images = [helpers.decode_base64_to_image(x) for x in init_images]
             p.scripts = script_runner
-            p.outpath_grids = shared.opts.outdir_img2img_grids
-            p.outpath_samples = shared.opts.outdir_img2img_samples
+            p.outpath_grids = resolve_output_path(shared.opts.outdir_grids, shared.opts.outdir_img2img_grids)
+            p.outpath_samples = resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_img2img_samples)
             for key, value in getattr(img2imgreq, "extra", {}).items():
                 setattr(p, key, value)
             jobid = shared.state.begin('API-IMG', api=True)
@@ -170,7 +173,7 @@ class APIGenerate():
                 processed = process_images(p)
             processed = scripts_manager.scripts_img2img.after(p, processed, *script_args)
             p.close()
-            shared.state.end(jobid)
+            shared.state.end(jobid, api=False)
         if processed is None or processed.images is None or len(processed.images) == 0:
             b64images = []
         else:

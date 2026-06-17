@@ -35,15 +35,15 @@ def exec_with_return(code, module):
     return None
 
 
-class Script(scripts_manager.Script):
+class CustomCodeScript(scripts_manager.Script):
 
     def title(self):
         return "Custom code"
 
-    def show(self, is_img2img):
+    def show(self, _is_img2img):
         return cmd_opts.allow_code
 
-    def ui(self, is_img2img):
+    def ui(self, _is_img2img):
         example = """from modules.processing import process_images
 
 p.width = 768

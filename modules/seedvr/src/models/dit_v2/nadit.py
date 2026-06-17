@@ -216,7 +216,7 @@ class NaDiT(nn.Module):
         emb = self.emb_in(timestep, device=vid.device, dtype=vid.dtype)
 
         # Body
-        for i, block in enumerate(self.blocks):
+        for _i, block in enumerate(self.blocks):
             vid, txt, vid_shape, txt_shape = gradient_checkpointing(
                 enabled=(self.gradient_checkpointing and self.training),
                 module=block,

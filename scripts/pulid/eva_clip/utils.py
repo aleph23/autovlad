@@ -76,7 +76,7 @@ def resize_visual_pos_embed(state_dict, model, interpolation: str = 'bicubic', s
     state_dict['positional_embedding'] = new_pos_embed
 
 def resize_evaclip_pos_embed(state_dict, model, interpolation: str = 'bicubic', seq_dim=1):
-    all_keys = list(state_dict.keys())
+    list(state_dict.keys())
     # interpolate position embedding
     if 'visual.pos_embed' in state_dict:
         pos_embed_checkpoint = state_dict['visual.pos_embed']
@@ -107,7 +107,7 @@ def resize_evaclip_pos_embed(state_dict, model, interpolation: str = 'bicubic', 
 
 
 def resize_eva_pos_embed(state_dict, model, interpolation: str = 'bicubic', seq_dim=1):
-    all_keys = list(state_dict.keys())
+    list(state_dict.keys())
     # interpolate position embedding
     if 'pos_embed' in state_dict:
         pos_embed_checkpoint = state_dict['pos_embed']
@@ -149,7 +149,7 @@ def resize_rel_pos_embed(state_dict, model, interpolation: str = 'bicubic', seq_
             dst_num_pos, _ = model.visual.state_dict()[key].size()
             dst_patch_shape = model.visual.patch_embed.patch_shape
             if dst_patch_shape[0] != dst_patch_shape[1]:
-                raise NotImplementedError()
+                raise NotImplementedError
             num_extra_tokens = dst_num_pos - (dst_patch_shape[0] * 2 - 1) * (dst_patch_shape[1] * 2 - 1)
             src_size = int((src_num_pos - num_extra_tokens) ** 0.5)
             dst_size = int((dst_num_pos - num_extra_tokens) ** 0.5)
@@ -234,7 +234,7 @@ def resize_rel_pos_embed(state_dict, model, interpolation: str = 'bicubic', seq_
                 patch_embed_proj.float(), size=patch_size, mode='bicubic', align_corners=False)
 
 
-def freeze_batch_norm_2d(module, module_match={}, name=''):
+def freeze_batch_norm_2d(module, module_match=None, name=''):
     """
     Converts all `BatchNorm2d` and `SyncBatchNorm` layers of provided module into `FrozenBatchNorm2d`. If `module` is
     itself an instance of either `BatchNorm2d` or `SyncBatchNorm`, it is converted into `FrozenBatchNorm2d` and
@@ -250,6 +250,8 @@ def freeze_batch_norm_2d(module, module_match={}, name=''):
 
     Inspired by https://github.com/pytorch/pytorch/blob/a5895f85be0f10212791145bfedc0261d364f103/torch/nn/modules/batchnorm.py#L762
     """
+    if module_match is None:
+        module_match = {}
     res = module
     is_match = True
     if module_match:

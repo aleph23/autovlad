@@ -71,7 +71,7 @@ class Mlp(nn.Module):
         x = self.fc1(x)
         x = self.act(x)
         # x = self.drop(x)
-        # commit this for the orignal BERT implement
+        # commit this for the original BERT implement
         x = self.ffn_ln(x)
 
         x = self.fc2(x)
@@ -171,7 +171,7 @@ class Attention(nn.Module):
         self.rope = rope
 
     def forward(self, x, rel_pos_bias=None, attn_mask=None):
-        B, N, C = x.shape
+        B, N, _C = x.shape
         if self.subln:
             q = F.linear(input=x, weight=self.q_proj.weight, bias=self.q_bias)
             k = F.linear(input=x, weight=self.k_proj.weight, bias=None)
@@ -318,7 +318,7 @@ class PatchEmbed(nn.Module):
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x, **kwargs):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         # FIXME look at relaxing size constraints
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
@@ -493,7 +493,7 @@ class EVAVisionTransformer(nn.Module):
     def forward_features(self, x, return_all_features=False, return_hidden=False, shuffle=False):
 
         x = self.patch_embed(x)
-        batch_size, seq_len, _ = x.size()
+        batch_size, _seq_len, _ = x.size()
 
         if shuffle:
             idx = torch.randperm(x.shape[1]) + 1

@@ -2,28 +2,30 @@
 import os
 import sys
 import json
-import shlex
 import argparse
-from installer import log
+import tempfile
+from modules.logger import log
 
 
 # parse args, parse again after we have the data-dir and early-read the config file
-argv = shlex.split(" ".join(sys.argv[1:])) if "USED_VSCODE_COMMAND_PICKARGS" in os.environ else sys.argv[1:]
+from modules.cmd_args import get_argv, add_core_args, add_config_arg
+argv = get_argv()
 parser = argparse.ArgumentParser(add_help=False)
-parser.add_argument("--ckpt", type=str, default=os.environ.get("SD_MODEL", None), help="Path to model checkpoint to load immediately, default: %(default)s")
-parser.add_argument("--data-dir", type=str, default=os.environ.get("SD_DATADIR", ''), help="Base path where all user data is stored, default: %(default)s")
-parser.add_argument("--models-dir", type=str, default=os.environ.get("SD_MODELSDIR", None), help="Base path where all models are stored, default: %(default)s",)
-parser.add_argument("--extensions-dir", type=str, default=os.environ.get("SD_EXTENSIONSDIR", None), help="Base path where all extensions are stored, default: %(default)s",)
+add_core_args(parser)
 cli = parser.parse_known_args(argv)[0]
-parser.add_argument("--config", type=str, default=os.environ.get("SD_CONFIG", os.path.join(cli.data_dir, 'config.json')), help="Use specific server configuration file, default: %(default)s") # twice because we want data_dir
+add_config_arg(parser, cli.data_dir)
 cli = parser.parse_known_args(argv)[0]
 config_path = cli.config if os.path.isabs(cli.config) else os.path.join(cli.data_dir, cli.config)
+
 try:
-    with open(config_path, 'r', encoding='utf8') as f:
+    with open(config_path, encoding='utf8') as f:
         config = json.load(f)
 except Exception:
     config = {}
 
+temp_dir = config.get('temp_dir', '')
+if len(temp_dir) == 0:
+    temp_dir = tempfile.gettempdir()
 reference_path = os.path.join('models', 'Reference')
 modules_path = os.path.dirname(os.path.realpath(__file__))
 script_path = os.path.dirname(modules_path)
@@ -57,6 +59,23 @@ def create_path(folder):
         log.error(f'Create failed: folder="{folder}" {e}')
 
 
+def resolve_output_path(base_path: str, specific_path: str) -> str:
+    """
+    Resolve output path by combining base and specific paths.
+
+    - If specific_path is absolute, return it directly (base is ignored)
+    - If base_path is set and specific_path is relative, join them
+    - If base_path is empty/None, return specific_path as-is
+    """
+    if not specific_path:
+        return base_path or ''
+    if os.path.isabs(specific_path):
+        return specific_path
+    if base_path:
+        return os.path.normpath(os.path.join(base_path, specific_path))
+    return specific_path
+
+
 def create_paths(opts):
     def fix_path(folder):
         tgt = None
@@ -88,6 +107,7 @@ def create_paths(opts):
     create_path(fix_path('ckpt_dir'))
     create_path(fix_path('diffusers_dir'))
     create_path(fix_path('hfcache_dir'))
+    create_path(fix_path('xetcache_dir'))
     create_path(fix_path('vae_dir'))
     create_path(fix_path('unet_dir'))
     create_path(fix_path('te_dir'))
@@ -96,20 +116,42 @@ def create_paths(opts):
     create_path(fix_path('embeddings_dir'))
     create_path(fix_path('onnx_temp_dir'))
     create_path(fix_path('outdir_samples'))
-    create_path(fix_path('outdir_txt2img_samples'))
-    create_path(fix_path('outdir_img2img_samples'))
-    create_path(fix_path('outdir_control_samples'))
-    create_path(fix_path('outdir_extras_samples'))
-    create_path(fix_path('outdir_init_images'))
     create_path(fix_path('outdir_grids'))
-    create_path(fix_path('outdir_txt2img_grids'))
-    create_path(fix_path('outdir_img2img_grids'))
-    create_path(fix_path('outdir_control_grids'))
-    create_path(fix_path('outdir_save'))
-    create_path(fix_path('outdir_video'))
+    # per-type output dirs resolve against data_path via fix_path(), so create them bare
+    # only when no base folder is set; with a base configured, the resolved base+specific
+    # paths below are the real targets and the bare versions would just litter data_path
+    base_samples = opts.data.get('outdir_samples', '')
+    base_grids = opts.data.get('outdir_grids', '')
+    if not base_samples:
+        create_path(fix_path('outdir_txt2img_samples'))
+        create_path(fix_path('outdir_img2img_samples'))
+        create_path(fix_path('outdir_control_samples'))
+        create_path(fix_path('outdir_extras_samples'))
+        create_path(fix_path('outdir_init_images'))
+        create_path(fix_path('outdir_save'))
+        create_path(fix_path('outdir_video'))
+    if not base_grids:
+        create_path(fix_path('outdir_txt2img_grids'))
+        create_path(fix_path('outdir_img2img_grids'))
+        create_path(fix_path('outdir_control_grids'))
     create_path(fix_path('styles_dir'))
     create_path(fix_path('yolo_dir'))
     create_path(fix_path('wildcards_dir'))
+    create_path(fix_path('autocomplete_dir'))
+
+    # Create resolved output paths (base + specific)
+    if base_samples:
+        create_path(resolve_output_path(base_samples, opts.data.get('outdir_txt2img_samples', '')))
+        create_path(resolve_output_path(base_samples, opts.data.get('outdir_img2img_samples', '')))
+        create_path(resolve_output_path(base_samples, opts.data.get('outdir_control_samples', '')))
+        create_path(resolve_output_path(base_samples, opts.data.get('outdir_extras_samples', '')))
+        create_path(resolve_output_path(base_samples, opts.data.get('outdir_save', '')))
+        create_path(resolve_output_path(base_samples, opts.data.get('outdir_video', '')))
+        create_path(resolve_output_path(base_samples, opts.data.get('outdir_init_images', '')))
+    if base_grids:
+        create_path(resolve_output_path(base_grids, opts.data.get('outdir_txt2img_grids', '')))
+        create_path(resolve_output_path(base_grids, opts.data.get('outdir_img2img_grids', '')))
+        create_path(resolve_output_path(base_grids, opts.data.get('outdir_control_grids', '')))
 
 
 class Prioritize:

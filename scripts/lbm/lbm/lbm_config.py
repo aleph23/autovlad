@@ -1,6 +1,6 @@
 from typing import List, Literal, Optional
 from pydantic.dataclasses import dataclass
-from ..base import ModelConfig
+from lbm.base import ModelConfig
 
 
 @dataclass

@@ -6,8 +6,8 @@ Extracted from: seedvr2.py (lines 373-405, 607-626, 1016-1044)
 """
 
 import torch
-from ..common.cache import Cache
-from ..models.dit_v2.rope import RotaryEmbeddingBase
+from modules.seedvr.src.common.cache import Cache
+from modules.seedvr.src.models.dit_v2.rope import RotaryEmbeddingBase
 
 
 def preinitialize_rope_cache(runner) -> None:
@@ -86,10 +86,10 @@ def clear_rope_cache(runner) -> None:
     """
     if hasattr(runner, 'cache') and hasattr(runner.cache, 'cache'):
         # Count entries before cleanup
-        cache_size = len(runner.cache.cache)
+        len(runner.cache.cache)
 
         # Free all tensors from cache
-        for key, value in runner.cache.cache.items():
+        for _key, value in runner.cache.cache.items():
             if isinstance(value, (tuple, list)):
                 for item in value:
                     if hasattr(item, 'cpu'):

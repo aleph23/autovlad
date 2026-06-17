@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import diffusers
 from modules import scripts_manager, processing, shared, devices
+from modules.logger import log
 
 
 handler = None
@@ -11,18 +12,18 @@ supported_model_list = ['sdxl']
 orig_prompt_attention = None
 
 
-class Script(scripts_manager.Script):
+class StyleAlignedScript(scripts_manager.Script):
     def title(self):
         return 'Style Aligned Image Generation'
 
-    def show(self, is_img2img):
+    def show(self, _is_img2img):
         return True
 
     def reset(self):
         global handler, zts # pylint: disable=global-statement
         handler = None
         zts = None
-        shared.log.info('SA: image upload')
+        log.info('SA: image upload')
 
     def preset(self, preset):
         if preset == 'text':
@@ -34,7 +35,7 @@ class Script(scripts_manager.Script):
 
     def ui(self, _is_img2img): # ui elements
         with gr.Row():
-            gr.HTML('<a href="https://github.com/google/style-aligned">&nbsp Style Aligned Image Generation</a><br><br>')
+            gr.HTML('<a href="https://github.com/google/style-aligned">&nbsp Style Aligned Image Generation</a><br>')
         with gr.Row():
             preset = gr.Dropdown(label="Preset", choices=['text', 'image', 'all'], value='text')
             scheduler = gr.Checkbox(label="Override scheduler", value=False)
@@ -61,7 +62,7 @@ class Script(scripts_manager.Script):
     def run(self, p: processing.StableDiffusionProcessing, image, prompt, scheduler, shared_opts, shared_score_scale, shared_score_shift, only_self_level): # pylint: disable=arguments-differ
         global handler, zts, orig_prompt_attention # pylint: disable=global-statement
         if shared.sd_model_type not in supported_model_list:
-            shared.log.warning(f'SA: class={shared.sd_model.__class__.__name__} model={shared.sd_model_type} required={supported_model_list}')
+            log.warning(f'SA: class={shared.sd_model.__class__.__name__} model={shared.sd_model_type} required={supported_model_list}')
             return None
 
         from scripts.style_aligned import sa_handler, inversion # pylint: disable=no-name-in-module
@@ -86,7 +87,7 @@ class Script(scripts_manager.Script):
             p.sampler_name = 'None'
 
         if image is not None and zts is None:
-            shared.log.info(f'SA: inversion image={image} prompt="{prompt}"')
+            log.info(f'SA: inversion image={image} prompt="{prompt}"')
             image = image.resize((1024, 1024))
             x0 = np.array(image).astype(np.float32) / 255.0
             shared.sd_model.scheduler = diffusers.DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
@@ -107,7 +108,7 @@ class Script(scripts_manager.Script):
             p.task_args['latents'] = latents
             p.task_args['callback_on_step_end'] = inversion_callback
 
-        shared.log.info(f'SA: batch={p.batch_size} type={"image" if zts is not None else "text"} config={sa_args.__dict__}')
+        log.info(f'SA: batch={p.batch_size} type={"image" if zts is not None else "text"} config={sa_args.__dict__}')
         return None
 
     def after(self, p: processing.StableDiffusionProcessing, *args): # pylint: disable=unused-argument

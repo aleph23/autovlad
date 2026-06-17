@@ -22,7 +22,7 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
-from ..cache import Cache
+from modules.seedvr.src.common.cache import Cache
 from .advanced import (
     get_sequence_parallel_group,
     get_sequence_parallel_rank,
@@ -144,8 +144,8 @@ class Slice(torch.autograd.Function):
         dim_size = list(grad_output.size())
         split_size = dim_size[0]
         dim_size[0] = dim_size[0] * ctx.seq_world_size
-        output = torch.empty(dim_size, dtype=grad_output.dtype, device=torch.cuda.current_device())
-        dist._all_gather_base(output, grad_output, group=ctx.group)
+        output = torch.empty(dim_size, dtype=grad_output.dtype, device=grad_output.device)
+        dist.all_gather_into_tensor(output, grad_output, group=ctx.group)
         return (None, torch.cat(output.split(split_size), dim=ctx.dim), None)
 
 
@@ -168,8 +168,8 @@ class Gather(torch.autograd.Function):
         split_size = dim_size[0]
         ctx.part_size = dim_size[dim]
         dim_size[0] = dim_size[0] * seq_world_size
-        output = torch.empty(dim_size, dtype=local_input.dtype, device=torch.cuda.current_device())
-        dist._all_gather_base(output, local_input.contiguous(), group=ctx.group)
+        output = torch.empty(dim_size, dtype=local_input.dtype, device=local_input.device)
+        dist.all_gather_into_tensor(output, local_input.contiguous(), group=ctx.group)
         return torch.cat(output.split(split_size), dim=dim)
 
     @staticmethod
@@ -193,10 +193,10 @@ def gather_seq_scatter_heads_qkv(
     restore_shape: bool = True,
 ):
     """
-    A func to sync splited qkv tensor
+    A func to sync split qkv tensor
     qkv_tensor: the tensor we want to do alltoall with. The last dim must
         be the projection_idx, which we will split into 3 part. After
-        spliting, the gather idx will be projecttion_idx + 1
+        splitting, the gather idx will be projecttion_idx + 1
     seq_dim: gather_dim for all2all comm
     restore_shape: if True, output will has the same shape length as input
     """

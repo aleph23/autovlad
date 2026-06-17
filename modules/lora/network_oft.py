@@ -55,7 +55,7 @@ class NetworkModuleOFT(network.NetworkModule): # pylint: disable=abstract-method
     def calc_updown(self, target):
         oft_blocks = self.oft_blocks.to(target.device, dtype=target.dtype)
         eye = torch.eye(self.block_size, device=target.device)
-        constraint = self.constraint.to(target.device)
+        constraint = self.constraint.to(target.device) if self.constraint is not None else None
 
         if self.is_kohya:
             block_Q = oft_blocks - oft_blocks.transpose(1, 2) # ensure skew-symmetric orthogonal matrix

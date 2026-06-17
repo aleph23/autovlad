@@ -87,7 +87,7 @@ class AggregateHooker(ObjectHooker[ModuleListType]):
 
 
 class UNetCrossAttentionLocator(ModuleLocator[Attention]):
-    def __init__(self, restrict: bool = None, locate_middle_block: bool = False):
+    def __init__(self, restrict: bool | None = None, locate_middle_block: bool = False):
         self.restrict = restrict
         self.layer_names = []
         self.locate_middle_block = locate_middle_block

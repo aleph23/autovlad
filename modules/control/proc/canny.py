@@ -7,7 +7,7 @@ from modules.control.util import HWC3, resize_image
 class CannyDetector:
     def __call__(self, input_image=None, low_threshold=100, high_threshold=200, detect_resolution=512, image_resolution=512, output_type=None, **kwargs):
         if "img" in kwargs:
-            warnings.warn("img is deprecated, please use `input_image=...` instead.", DeprecationWarning)
+            warnings.warn("img is deprecated, please use `input_image=...` instead.", DeprecationWarning, stacklevel=2)
             input_image = kwargs.pop("img")
         if input_image is None:
             raise ValueError("input_image must be defined.")

@@ -17,7 +17,7 @@ class DiffusersUNet2DWrapper(UNet2DModel):
         self,
         sample: torch.Tensor,
         timestep: Union[torch.Tensor, float, int],
-        conditioning: Dict[str, torch.Tensor] = None,
+        conditioning: Dict[str, torch.Tensor] | None = None,
         *args,
         **kwargs,
     ):
@@ -111,7 +111,7 @@ class DiffusersUNet2DCondWrapper(UNet2DConditionModel):
             down_intrablock_additional_residuals_clone = None
 
         # Check diffusers.models.embeddings.py > MultiIPAdapterImageProjectionLayer > forward() for implementation
-        # Exepected format : List[torch.Tensor] of shape (batch_size, num_image_embeds, embed_dim)
+        # Expected format : List[torch.Tensor] of shape (batch_size, num_image_embeds, embed_dim)
         # with length = number of ip_adapters loaded in the ip_adapter_wrapper
         if ip_adapter_cond_embedding is not None:
             added_cond_kwargs = {

@@ -1,450 +1,555 @@
 # pylint: disable=redefined-builtin,no-member,protected-access
 
-from typing import Dict, List, Tuple, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
 
-import re
 import torch
+
 from transformers.quantizers import HfQuantizer
 from diffusers.quantizers.base import DiffusersQuantizer
 from diffusers.quantizers.quantization_config import QuantizationConfigMixin
-from diffusers.utils import get_module_from_name
-from modules import devices, shared
 
-from .common import dtype_dict, module_skip_keys_dict, accepted_weights, use_tensorwise_fp8_matmul, allowed_types, conv_types, conv_transpose_types, use_contiguous_mm
-from .dequantizer import dequantizer_dict, dequantize_sdnq_model
+from diffusers.utils import get_module_from_name
+from accelerate import init_empty_weights
+
+from modules import devices, shared
+from .common import (
+    sdnq_version,
+    sdnq_keys,
+    dtype_dict,
+    accepted_weight_dtypes,
+    accepted_matmul_dtypes,
+    allowed_types,
+    linear_types,
+    embedding_types,
+    conv_types,
+    conv_transpose_types,
+    weights_dtype_order,
+    is_fp8_mm_supported,
+    use_tensorwise_fp8_matmul,
+    check_torch_compile,
+    compile_func,
+)
+from .dequantizer import SDNQDequantizer, dequantize_sdnq_model
+from .packed_int import pack_int
+from .packed_float import pack_float
 from .forward import get_forward_func
+from .layers import get_sdnq_wrapper_class
+
+from .quant_utils import quantize_weight, apply_svdquant, apply_hadamard, prepare_weight_for_matmul, prepare_svd_for_matmul
+from .utils import check_param_name_in, get_quant_args_from_config, get_quant_kwargs, add_module_skip_keys
 
 
 class QuantizationMethod(str, Enum):
     SDNQ = "sdnq"
-
-
-def get_scale_asymmetric(weight: torch.FloatTensor, reduction_axes: Union[int, List[int]], weights_dtype: str) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
-    zero_point = torch.amin(weight, dim=reduction_axes, keepdims=True)
-    scale = torch.amax(weight, dim=reduction_axes, keepdims=True).sub_(zero_point).div_(dtype_dict[weights_dtype]["max"] - dtype_dict[weights_dtype]["min"])
-    if dtype_dict[weights_dtype]["min"] != 0:
-        zero_point.sub_(torch.mul(scale, dtype_dict[weights_dtype]["min"]))
-    return scale, zero_point
-
-
-def get_scale_symmetric(weight: torch.FloatTensor, reduction_axes: Union[int, List[int]], weights_dtype: str) -> torch.FloatTensor:
-    return torch.amax(weight.abs(), dim=reduction_axes, keepdims=True).div_(dtype_dict[weights_dtype]["max"])
-
-
-def quantize_weight(weight: torch.FloatTensor, reduction_axes: Union[int, List[int]], weights_dtype: str) -> Tuple[torch.Tensor, torch.FloatTensor, torch.FloatTensor]:
-    if dtype_dict[weights_dtype]["is_unsigned"]:
-        scale, zero_point = get_scale_asymmetric(weight, reduction_axes, weights_dtype)
-        quantized_weight = torch.sub(weight, zero_point).div_(scale)
-    else:
-        scale = get_scale_symmetric(weight, reduction_axes, weights_dtype)
-        quantized_weight = torch.div(weight, scale)
-        zero_point = None
-    if dtype_dict[weights_dtype]["is_integer"]:
-        quantized_weight.round_()
-    else:
-        quantized_weight.nan_to_num_()
-    quantized_weight = quantized_weight.clamp_(dtype_dict[weights_dtype]["min"], dtype_dict[weights_dtype]["max"]).to(dtype_dict[weights_dtype]["torch_dtype"])
-    return quantized_weight, scale, zero_point
-
-
-def apply_svdquant(weight: torch.FloatTensor, rank: int = 32, niter: int = 8) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
-    reshape_weight = False
-    if weight.ndim > 2: # convs
-        reshape_weight = True
-        weight_shape = weight.shape
-        weight = weight.flatten(1,-1)
-    U, S, svd_down = torch.svd_lowrank(weight, q=rank, niter=niter)
-    svd_up = torch.mul(U, S.unsqueeze(0))
-    svd_down = svd_down.t_()
-    weight = weight.sub_(torch.mm(svd_up, svd_down))
-    if reshape_weight:
-        weight = weight.unflatten(-1, (*weight_shape[1:],)) # pylint: disable=possibly-used-before-assignment
-    return weight, svd_up, svd_down
-
-
-def check_param_name_in(param_name: str, param_list: List[str]) -> bool:
-    split_param_name = param_name.split(".")
-    for param in param_list:
-        if param.startswith("."):
-            if param_name.startswith(param[1:]):
-                return True
-            else:
-                continue
-        if (
-            param_name == param
-            or param in split_param_name
-            or ("*" in param and re.match(param.replace(".*", "\\.*").replace("*", ".*"), param_name))
-        ):
-            return True
-    return False
-
-
-def get_minimum_dtype(weights_dtype: str, param_name: str, modules_dtype_dict: Dict[str, List[str]]):
-    if len(modules_dtype_dict.keys()) > 0:
-        for key, value in modules_dtype_dict.items():
-            if check_param_name_in(param_name, value):
-                key = key.lower()
-                if key in {"8bit", "8bits"}:
-                    if dtype_dict[weights_dtype]["num_bits"] != 8:
-                        return "int8"
-                elif key.startswith("minimum_"):
-                    minimum_bits_str = key.removeprefix("minimum_").removesuffix("bits").removesuffix("bit")
-                    if minimum_bits_str.startswith("uint"):
-                        is_unsigned = True
-                        minimum_bits_str = minimum_bits_str.removeprefix("uint")
-                    else:
-                        is_unsigned = False
-                        minimum_bits_str = minimum_bits_str.removeprefix("int")
-                    minimum_bits = int(minimum_bits_str)
-                    if dtype_dict[weights_dtype]["num_bits"] < minimum_bits:
-                        if is_unsigned or minimum_bits <= 4:
-                            return "uint" + minimum_bits_str
-                        else:
-                            return "int" + minimum_bits_str
-                else:
-                    return key
-    return weights_dtype
-
-
-def add_module_skip_keys(model, modules_to_not_convert: List[str] = None, modules_dtype_dict: Dict[str, List[str]] = None):
-    if modules_to_not_convert is None:
-        modules_to_not_convert = []
-    if modules_dtype_dict is None:
-        modules_dtype_dict = {}
-    if getattr(model, "_keep_in_fp32_modules", None) is not None:
-        modules_to_not_convert.extend(model._keep_in_fp32_modules) # pylint: disable=protected-access
-
-    skip_key_list = module_skip_keys_dict.get(model.__class__.__name__, None)
-    if skip_key_list is not None:
-        modules_to_not_convert.extend(skip_key_list[0])
-        for key, value in skip_key_list[1].items():
-            if key in modules_dtype_dict.keys():
-                modules_dtype_dict[key].extend(value)
-            else:
-                modules_dtype_dict[key] = value
-    elif getattr(model, "_skip_layerwise_casting_patterns", None) is not None:
-        modules_to_not_convert.extend(model._skip_layerwise_casting_patterns) # pylint: disable=protected-access
-
-    # dedupe
-    modules_to_not_convert = list(set(modules_to_not_convert))
-    for key, value in modules_dtype_dict.items():
-        modules_dtype_dict[key] = list(set(value))
-
-    return model, modules_to_not_convert, modules_dtype_dict
+    SDNQ_TRAINING = "sdnq_training"
 
 
 @devices.inference_context()
-def sdnq_quantize_layer(layer, weights_dtype="int8", torch_dtype=None, group_size=0, svd_rank=32, svd_steps=8, use_svd=False, quant_conv=False, use_quantized_matmul=False, use_quantized_matmul_conv=False, dequantize_fp32=False, non_blocking=False, quantization_device=None, return_device=None, param_name=None): # pylint: disable=unused-argument
-    layer_class_name = layer.__class__.__name__
-    if layer_class_name in allowed_types:
-        num_of_groups = 1
-        is_conv_type = False
-        is_conv_transpose_type = False
-        is_linear_type = False
-        result_shape = None
-        original_shape = layer.weight.shape
-        if torch_dtype is None:
-            torch_dtype = layer.weight.dtype
-
-        if layer_class_name in conv_types:
-            if not quant_conv:
-                return layer
-            if dtype_dict[weights_dtype]["num_bits"] < 4:
-                weights_dtype = "uint4"
-            is_conv_type = True
-            reduction_axes = 1
-            output_channel_size, channel_size = layer.weight.shape[:2]
-            group_channel_size = channel_size // layer.groups
-            use_quantized_matmul = False
-            if use_quantized_matmul_conv:
-                use_quantized_matmul = group_channel_size >= 32 and output_channel_size >= 32
-                if use_quantized_matmul and not dtype_dict[weights_dtype]["is_integer"]:
-                    use_quantized_matmul = output_channel_size % 16 == 0 and group_channel_size % 16 == 0
-            if use_quantized_matmul and dtype_dict[weights_dtype]["num_bits"] == 8:
-                result_shape = layer.weight.shape
-                layer.weight.data = layer.weight.flatten(1,-1)
-                reduction_axes = -1
-        elif layer_class_name in conv_transpose_types:
-            if not quant_conv:
-                return layer
-            if dtype_dict[weights_dtype]["num_bits"] < 4:
-                weights_dtype = "uint4"
-            is_conv_transpose_type = True
-            reduction_axes = 0
-            channel_size, output_channel_size = layer.weight.shape[:2]
-            use_quantized_matmul = False
-        else:
-            is_linear_type = True
-            reduction_axes = -1
-            try:
-                output_channel_size, channel_size = layer.weight.shape
-            except Exception as e:
-                raise ValueError(f"SDNQ: param_name={param_name} layer_class_name={layer_class_name} layer_weight_shape={layer.weight.shape} weights_dtype={weights_dtype} unsupported") from e
-            if use_quantized_matmul:
-                use_quantized_matmul = channel_size >= 32 and output_channel_size >= 32
-                if use_quantized_matmul:
-                    if dtype_dict[weights_dtype]["is_integer"]:
-                        use_quantized_matmul = output_channel_size % 8 == 0 and channel_size % 8 == 0
-                    else:
-                        use_quantized_matmul = output_channel_size % 16 == 0 and channel_size % 16 == 0
-
-        layer.weight.requires_grad = False
-        if return_device is None:
-            return_device = layer.weight.device
-        if quantization_device is not None:
-            layer.weight.data = layer.weight.to(quantization_device, non_blocking=non_blocking)
-        if layer.weight.dtype != torch.float32:
-            layer.weight.data = layer.weight.to(dtype=torch.float32)
-
-        if use_svd:
-            try:
-                layer.weight.data, svd_up, svd_down = apply_svdquant(layer.weight, rank=svd_rank, niter=svd_steps)
-                if use_quantized_matmul:
-                    svd_up = svd_up.t_()
-                    svd_down = svd_down.t_()
-            except Exception:
-                svd_up, svd_down = None, None
-        else:
-            svd_up, svd_down = None, None
-
-        if group_size == 0:
-            if use_quantized_matmul and dtype_dict[weights_dtype]["num_bits"] >= 6:
-                group_size = -1
-            elif is_linear_type:
-                group_size = 2 ** ((2 if svd_up is None else 3) + dtype_dict[weights_dtype]["num_bits"])
-            else:
-                group_size = 2 ** ((1 if svd_up is None else 2) + dtype_dict[weights_dtype]["num_bits"])
-        elif use_quantized_matmul and dtype_dict[weights_dtype]["num_bits"] == 8:
-            group_size = -1 # override user value, re-quantizing 8bit into 8bit is pointless
-        elif group_size != -1 and not is_linear_type:
-            group_size = max(group_size // 2, 1)
-
-        if group_size > 0:
-            if group_size >= channel_size:
-                group_size = channel_size
-                num_of_groups = 1
-            else:
-                num_of_groups = channel_size // group_size
-                while num_of_groups * group_size != channel_size: # find something divisible
-                    num_of_groups -= 1
-                    if num_of_groups <= 1:
-                        group_size = channel_size
-                        num_of_groups = 1
-                        break
-                    group_size = channel_size // num_of_groups
-            group_size = int(group_size)
-            num_of_groups = int(num_of_groups)
-
-            if num_of_groups > 1:
-                if result_shape is None:
-                    result_shape = layer.weight.shape
-                new_shape = list(result_shape)
-                if is_conv_type:
-                    # output_channel_size, channel_size, X, X
-                    # output_channel_size, num_of_groups, group_size, X, X
-                    new_shape[1] = group_size
-                    new_shape.insert(1, num_of_groups)
-                    reduction_axes = 2
-                elif is_conv_transpose_type:
-                    #channel_size, output_channel_size, X, X
-                    #num_of_groups, group_size, output_channel_size, X, X
-                    new_shape[0] = group_size
-                    new_shape.insert(0, num_of_groups)
-                    reduction_axes = 1
-                elif is_linear_type:
-                    # output_channel_size, channel_size
-                    # output_channel_size, num_of_groups, group_size
-                    last_dim_index = layer.weight.ndim
-                    new_shape[last_dim_index - 1 : last_dim_index] = (num_of_groups, group_size)
-                layer.weight.data = layer.weight.reshape(new_shape)
-
-        layer.weight.data, scale, zero_point = quantize_weight(layer.weight, reduction_axes, weights_dtype)
-        if not dequantize_fp32 and not (use_quantized_matmul and not dtype_dict[weights_dtype]["is_integer"] and not use_tensorwise_fp8_matmul):
-            scale = scale.to(dtype=torch_dtype)
-            if zero_point is not None:
-                zero_point = zero_point.to(dtype=torch_dtype)
-            if svd_up is not None:
-                svd_up = svd_up.to(dtype=torch_dtype)
-                svd_down = svd_down.to(dtype=torch_dtype)
-
-        re_quantize_for_matmul = (num_of_groups > 1 or zero_point is not None)
-        if use_quantized_matmul and not re_quantize_for_matmul:
-            scale.t_()
-            layer.weight.t_()
-            if use_contiguous_mm:
-                layer.weight.data = layer.weight.contiguous()
-            elif layer.weight.is_contiguous():
-                layer.weight.data = layer.weight.t_().contiguous().t_()
-            if not use_tensorwise_fp8_matmul and not dtype_dict[weights_dtype]["is_integer"]:
-                scale = scale.to(dtype=torch.float32)
-
-        scale = scale.to(return_device, non_blocking=non_blocking)
-        layer.scale = torch.nn.Parameter(scale, requires_grad=False)
-        if zero_point is not None:
-            zero_point = zero_point.to(return_device, non_blocking=non_blocking)
-            layer.zero_point = torch.nn.Parameter(zero_point, requires_grad=False)
-        else:
-            layer.zero_point = None
-        if svd_up is not None:
-            svd_up = svd_up.to(return_device, non_blocking=non_blocking)
-            svd_down = svd_down.to(return_device, non_blocking=non_blocking)
-            layer.svd_up = torch.nn.Parameter(svd_up, requires_grad=False)
-            layer.svd_down = torch.nn.Parameter(svd_down, requires_grad=False)
-        else:
-            layer.svd_up, layer.svd_down = None, None
-
-        layer.sdnq_dequantizer = dequantizer_dict[weights_dtype](
-            quantized_weight_shape=layer.weight.shape,
-            result_dtype=torch_dtype,
-            result_shape=result_shape,
-            original_shape=original_shape,
-            weights_dtype=weights_dtype,
-            use_quantized_matmul=use_quantized_matmul,
-            re_quantize_for_matmul=re_quantize_for_matmul,
-        )
-        layer.weight.data = layer.sdnq_dequantizer.pack_weight(layer.weight).to(return_device, non_blocking=non_blocking)
-
-        layer.forward = get_forward_func(layer_class_name, use_quantized_matmul, dtype_dict[weights_dtype]["is_integer"], use_tensorwise_fp8_matmul)
-        layer.forward = layer.forward.__get__(layer, layer.__class__)
-    return layer
-
-
-def apply_sdnq_to_module(model, weights_dtype="int8", torch_dtype=None, group_size=0, svd_rank=32, svd_steps=8, use_svd=False, quant_conv=False, use_quantized_matmul=False, use_quantized_matmul_conv=False, dequantize_fp32=False, non_blocking=False, quantization_device=None, return_device=None, modules_to_not_convert: List[str] = None, modules_dtype_dict: Dict[str, List[str]] = None, full_param_name="", op=None): # pylint: disable=unused-argument
-    has_children = list(model.children())
-    if not has_children:
-        return model
-    if modules_to_not_convert is None:
-        modules_to_not_convert = []
-    if modules_dtype_dict is None:
-        modules_dtype_dict = {}
-    for param_name, module in model.named_children():
-        if param_name == "sdnq_dequantizer":
-            continue
-        if full_param_name:
-            param_name = full_param_name + "." + param_name
-        if hasattr(module, "weight") and module.weight is not None:
-            param_name = param_name + ".weight"
-            if check_param_name_in(param_name, modules_to_not_convert):
-                continue
-            layer_class_name = module.__class__.__name__
-            if layer_class_name in allowed_types:
-                if (layer_class_name in conv_types or layer_class_name in conv_transpose_types) and not quant_conv:
-                    continue
-            else:
-                continue
-
-            weights_dtype = get_minimum_dtype(weights_dtype, param_name, modules_dtype_dict)
-            module = sdnq_quantize_layer(
-                module,
-                weights_dtype=weights_dtype,
-                torch_dtype=torch_dtype,
-                group_size=group_size,
-                svd_rank=svd_rank,
-                svd_steps=svd_steps,
-                use_svd=use_svd,
-                quant_conv=quant_conv,
-                use_quantized_matmul=use_quantized_matmul,
-                use_quantized_matmul_conv=use_quantized_matmul_conv,
-                dequantize_fp32=dequantize_fp32,
-                non_blocking=non_blocking,
-                quantization_device=quantization_device,
-                return_device=return_device,
-                param_name=param_name,
-            )
-        module = apply_sdnq_to_module(
-                module,
-                weights_dtype=weights_dtype,
-                torch_dtype=torch_dtype,
-                group_size=group_size,
-                svd_rank=svd_rank,
-                svd_steps=svd_steps,
-                use_svd=use_svd,
-                quant_conv=quant_conv,
-                use_quantized_matmul=use_quantized_matmul,
-                use_quantized_matmul_conv=use_quantized_matmul_conv,
-                dequantize_fp32=dequantize_fp32,
-                non_blocking=non_blocking,
-                quantization_device=quantization_device,
-                return_device=return_device,
-                modules_to_not_convert=modules_to_not_convert,
-                modules_dtype_dict=modules_dtype_dict,
-                full_param_name=param_name,
-                op=op,
-            )
-    return model
-
-
-def sdnq_post_load_quant(
-    model,
-    weights_dtype="int8",
-    torch_dtype: torch.dtype = None,
+def sdnq_quantize_layer_weight(
+    weight: torch.FloatTensor,
+    layer_class_name: str | None = None,
+    weights_dtype: str = "int8",
+    quantized_matmul_dtype: str | None = None,
     group_size: int = 0,
+    hadamard_group_size: int = 256,
     svd_rank: int = 32,
     svd_steps: int = 8,
     use_svd: bool = False,
+    use_hadamard: bool = False,
+    use_quantized_matmul: bool = False,
+    use_stochastic_rounding: bool = False,
+    dequantize_fp32: bool = True,
+    hadamard: torch.FloatTensor | None = None,
+    using_pre_calculated_svd: bool = False,
+    using_pre_rotated_hadamard: bool = False,
+    skip_sr: bool = False,
+    param_name: str | None = None, # pylint: disable=unused-argument
+    torch_dtype: torch.dtype | None = None,
+):
+    num_of_groups = 1
+    is_conv_type = False
+    is_conv_transpose_type = False
+    is_linear_type = False
+    result_shape = None
+    scale_dtype = None
+
+    weight = weight.detach()
+    original_shape = weight.shape
+    original_stride = weight.stride()
+
+    if torch_dtype is None:
+        torch_dtype = weight.dtype
+    if quantized_matmul_dtype is None:
+        if dtype_dict[weights_dtype]["is_integer"]:
+            quantized_matmul_dtype = "int8"
+        elif dtype_dict[weights_dtype]["num_bits"] < 16:
+            quantized_matmul_dtype = "float8_e4m3fn"
+        else:
+            quantized_matmul_dtype = "float16"
+
+    re_quantize_for_matmul = bool(
+        dtype_dict[weights_dtype]["is_unsigned"]
+        or dtype_dict[weights_dtype]["is_integer"] != dtype_dict[quantized_matmul_dtype]["is_integer"]
+        or dtype_dict[weights_dtype]["num_bits"] > dtype_dict[quantized_matmul_dtype]["num_bits"]
+        or (
+            dtype_dict[weights_dtype]["is_packed"]
+            and not dtype_dict[weights_dtype]["is_integer"]
+            and not dtype_dict[quantized_matmul_dtype]["is_integer"]
+            and (
+                    dtype_dict[weights_dtype]["num_bits"] >= dtype_dict[quantized_matmul_dtype]["num_bits"]
+                    or dtype_dict[weights_dtype]["max"] > dtype_dict[quantized_matmul_dtype]["max"]
+                )
+        )
+    )
+
+    if layer_class_name in conv_types:
+        is_conv_type = True
+        reduction_axes = 1
+        output_channel_size, channel_size = weight.shape[:2]
+        use_quantized_matmul = use_quantized_matmul and channel_size >= 32 and output_channel_size >= 32 and output_channel_size % 16 == 0 and channel_size % 16 == 0
+        if use_quantized_matmul and not re_quantize_for_matmul and not dtype_dict[weights_dtype]["is_packed"]:
+            result_shape = weight.shape
+            weight = weight.flatten(1,-1)
+            reduction_axes = -1
+    elif layer_class_name in conv_transpose_types:
+        is_conv_transpose_type = True
+        reduction_axes = 0
+        channel_size, output_channel_size = weight.shape[:2]
+        use_quantized_matmul = False
+    elif layer_class_name in linear_types:
+        is_linear_type = True
+        reduction_axes = -1
+        output_channel_size, channel_size = weight.shape
+        use_quantized_matmul = use_quantized_matmul and channel_size >= 32 and output_channel_size >= 32 and output_channel_size % 16 == 0 and channel_size % 16 == 0
+    else:
+        if weight.ndim > 1:
+            output_channel_size, channel_size = weight.shape[-2:]
+        else:
+            output_channel_size, channel_size = 1, weight.shape[-1]
+        reduction_axes = -1
+        use_quantized_matmul = False
+
+    if (
+        not dequantize_fp32
+        and dtype_dict[weights_dtype]["max"] <= 16384 # 1/fp16_min_normal
+        and not (
+            use_quantized_matmul
+            and not dtype_dict[quantized_matmul_dtype]["is_integer"]
+            and (not use_tensorwise_fp8_matmul or dtype_dict[quantized_matmul_dtype]["num_bits"] == 16)
+        )
+    ):
+        scale_dtype = torch_dtype
+
+    if use_hadamard:
+        weight, use_hadamard, hadamard_group_size = apply_hadamard(weight, group_size=hadamard_group_size, hadamard=hadamard, layer_class_name=layer_class_name)
+
+    if use_svd:
+        try:
+            weight, svd_up, svd_down = apply_svdquant(weight, rank=svd_rank, niter=svd_steps, dtype=torch_dtype)
+            if use_quantized_matmul:
+                svd_up = svd_up.t_()
+                svd_down = svd_down.t_()
+            svd_up, svd_down = prepare_svd_for_matmul(svd_up, svd_down, use_quantized_matmul)
+        except Exception:
+            svd_up, svd_down = None, None
+    else:
+        svd_up, svd_down = None, None
+
+    if group_size == 0:
+        if use_quantized_matmul and not re_quantize_for_matmul and dtype_dict[weights_dtype]["num_bits"] >= 6:
+            group_size = -1
+        elif is_linear_type:
+            group_size = 2 ** ((3 if (svd_up is not None or using_pre_calculated_svd) else 2) + dtype_dict[weights_dtype]["num_bits"])
+        else:
+            group_size = 2 ** ((2 if (svd_up is not None or using_pre_calculated_svd) else 1) + dtype_dict[weights_dtype]["num_bits"])
+
+    if group_size > 0:
+        if group_size >= channel_size:
+            group_size = channel_size
+            num_of_groups = 1
+        else:
+            num_of_groups = channel_size // group_size
+            while num_of_groups * group_size != channel_size: # find something divisible
+                num_of_groups -= 1
+                if num_of_groups <= 1:
+                    group_size = channel_size
+                    num_of_groups = 1
+                    break
+                group_size = channel_size // num_of_groups
+        group_size = int(group_size)
+        num_of_groups = int(num_of_groups)
+
+        if num_of_groups > 1:
+            if result_shape is None:
+                result_shape = weight.shape
+            if is_conv_type:
+                # output_channel_size, channel_size, X, X
+                # output_channel_size, num_of_groups, group_size, X, X
+                reduction_axes = 2
+                weight = weight.unflatten(1, (num_of_groups, group_size))
+            elif is_conv_transpose_type:
+                #channel_size, output_channel_size, X, X
+                #num_of_groups, group_size, output_channel_size, X, X
+                reduction_axes = 1
+                weight = weight.unflatten(1, (group_size, num_of_groups))
+            else:
+                # output_channel_size, channel_size
+                # output_channel_size, num_of_groups, group_size
+                reduction_axes = -1
+                weight = weight.unflatten(-1, (num_of_groups, group_size))
+        else:
+            group_size = -1
+
+    cast_scale = True
+    transpose_weights = False
+    re_quantize_for_matmul = re_quantize_for_matmul or num_of_groups > 1
+    if use_quantized_matmul and not re_quantize_for_matmul and not dtype_dict[weights_dtype]["is_packed"]:
+        transpose_weights = True
+        if not use_tensorwise_fp8_matmul and not dtype_dict[quantized_matmul_dtype]["is_integer"]:
+            cast_scale = False
+
+    weight, scale, zero_point = quantize_weight(weight, reduction_axes, weights_dtype, dtype=(scale_dtype if cast_scale else None), use_stochastic_rounding=(use_stochastic_rounding and not skip_sr))
+
+    if transpose_weights:
+        scale.t_()
+        weight.t_()
+        weight = prepare_weight_for_matmul(weight)
+
+    quantized_weight_shape = weight.shape
+    if dtype_dict[weights_dtype]["is_packed"]:
+        if dtype_dict[weights_dtype]["is_integer"]:
+            weight = pack_int(weight, weights_dtype)
+        else:
+            weight = pack_float(weight, weights_dtype)
+    else:
+        weight = weight.to(dtype=dtype_dict[weights_dtype]["torch_dtype"])
+
+    sdnq_dequantizer = SDNQDequantizer(
+        result_dtype=torch_dtype,
+        result_shape=result_shape,
+        original_shape=original_shape,
+        original_stride=original_stride,
+        quantized_weight_shape=quantized_weight_shape,
+        weights_dtype=weights_dtype,
+        quantized_matmul_dtype=quantized_matmul_dtype,
+        hadamard_group_size=hadamard_group_size,
+        group_size=group_size,
+        svd_rank=svd_rank,
+        svd_steps=svd_steps,
+        use_quantized_matmul=use_quantized_matmul,
+        re_quantize_for_matmul=re_quantize_for_matmul,
+        use_stochastic_rounding=use_stochastic_rounding,
+        use_hadamard=bool(use_hadamard or using_pre_rotated_hadamard),
+        layer_class_name=layer_class_name,
+    )
+
+    return sdnq_dequantizer, {"weight": weight, "scale": scale, "zero_point": zero_point, "svd_up": svd_up, "svd_down": svd_down}
+
+
+@devices.inference_context()
+def sdnq_quantize_layer_weight_dynamic(
+    weight: torch.FloatTensor,
+    layer_class_name: str | None = None,
+    weights_dtype: str = "uint4",
+    quantized_matmul_dtype: str | None = None,
+    group_size: int = 0,
+    hadamard_group_size: int = 256,
+    svd_rank: int = 32,
+    svd_steps: int = 8,
+    dynamic_loss_threshold: float | None =None,
+    use_svd: bool = False,
+    use_hadamard: bool = False,
+    use_quantized_matmul: bool = False,
+    use_stochastic_rounding: bool = False,
+    dequantize_fp32: bool = True,
+    hadamard: torch.FloatTensor | None = None,
+    param_name: str | None = None,
+    torch_dtype: torch.dtype | None = None,
+):
+    if torch_dtype is None:
+        torch_dtype = weight.dtype
+    if dynamic_loss_threshold is None or dynamic_loss_threshold < 0:
+        dynamic_loss_threshold = 10 ** -(dtype_dict[weights_dtype]["num_bits"] / 2)
+
+    weight = weight.detach()
+    if weight.dtype != torch.float64:
+        weight = weight.to(dtype=torch.float32, copy=False)
+    weight_std = weight.std().square_().clamp_(min=1e-8)
+    original_weight_fp32 = weight
+
+    if use_hadamard:
+        weight, use_hadamard, hadamard_group_size = apply_hadamard(weight, group_size=hadamard_group_size, hadamard=hadamard, layer_class_name=layer_class_name)
+
+    if use_svd:
+        try:
+            weight, svd_up, svd_down = apply_svdquant(weight, rank=svd_rank, niter=svd_steps, dtype=torch_dtype)
+            svd_up, svd_down = prepare_svd_for_matmul(svd_up, svd_down, False)
+            if use_quantized_matmul:
+                svd_up_t, svd_down_t = svd_up.clone().t_(), svd_down.clone().t_()
+                svd_up_t, svd_down_t = prepare_svd_for_matmul(svd_up_t, svd_down_t, True)
+            else:
+                svd_up_t, svd_down_t = None, None
+        except Exception:
+            svd_up, svd_down = None, None
+            svd_up_t, svd_down_t = None, None
+    else:
+        svd_up, svd_down = None, None
+        svd_up_t, svd_down_t = None, None
+
+    quantization_loss = None
+    for i in range(weights_dtype_order.index(weights_dtype), len(weights_dtype_order)):
+        current_weights_dtype = weights_dtype_order[i]
+        if quantized_matmul_dtype is None and not is_fp8_mm_supported and not dtype_dict[current_weights_dtype]["is_integer"] and dtype_dict[current_weights_dtype]["num_bits"] < 16:
+            current_use_quantized_matmul = False
+        else:
+            current_use_quantized_matmul = use_quantized_matmul
+
+        sdnq_dequantizer, weight_data = sdnq_quantize_layer_weight(
+            weight,
+            layer_class_name=layer_class_name,
+            weights_dtype=current_weights_dtype,
+            quantized_matmul_dtype=quantized_matmul_dtype,
+            torch_dtype=torch_dtype,
+            hadamard_group_size=hadamard_group_size,
+            group_size=group_size,
+            svd_rank=svd_rank,
+            svd_steps=svd_steps,
+            use_svd=False,
+            use_hadamard=False,
+            using_pre_calculated_svd=use_svd,
+            using_pre_rotated_hadamard=use_hadamard,
+            use_quantized_matmul=current_use_quantized_matmul,
+            use_stochastic_rounding=use_stochastic_rounding,
+            dequantize_fp32=dequantize_fp32,
+            param_name=param_name,
+        )
+
+        if sdnq_dequantizer.use_quantized_matmul:
+            weight_data["svd_up"] = svd_up_t
+            weight_data["svd_down"] = svd_down_t
+        else:
+            weight_data["svd_up"] = svd_up
+            weight_data["svd_down"] = svd_down
+
+        quantization_loss = torch.nn.functional.mse_loss(
+            original_weight_fp32,
+            sdnq_dequantizer(
+                weight_data["weight"],
+                weight_data["scale"],
+                zero_point=weight_data["zero_point"],
+                svd_up=weight_data["svd_up"],
+                svd_down=weight_data["svd_down"],
+                skip_quantized_matmul=sdnq_dequantizer.use_quantized_matmul,
+                dtype=weight.dtype,
+                skip_compile=True,
+            ),
+        ).div_(weight_std)
+        if quantization_loss <= dynamic_loss_threshold:
+            del original_weight_fp32
+            return sdnq_dequantizer, weight_data
+    del original_weight_fp32
+    return None
+
+
+@devices.inference_context()
+def sdnq_quantize_layer(layer, quantization_config: "SDNQConfig", torch_dtype: torch.dtype | None = None, param_name: str = "", quant_kwargs: dict | None = None): # pylint: disable=unused-argument
+    if torch_dtype is None:
+        torch_dtype = layer.weight.dtype
+    if quant_kwargs is None:
+        quant_kwargs = get_quant_kwargs(layer, quantization_config, torch_dtype=torch_dtype, param_name=param_name)
+
+    layer_class_name = layer.__class__.__name__
+    if (
+        (layer_class_name in embedding_types and not quantization_config.quant_embedding)
+        or ((layer_class_name in conv_transpose_types or layer_class_name in conv_types) and not quantization_config.quant_conv)
+    ):
+        quantization_config.modules_to_not_convert.append(param_name)
+        return layer, quantization_config
+
+    return_device = quant_kwargs.pop("return_device")
+    quantization_device = quant_kwargs.pop("quantization_device")
+    non_blocking = quant_kwargs.pop("non_blocking")
+    use_dynamic_quantization = quant_kwargs.pop("use_dynamic_quantization")
+
+    layer.weight.requires_grad_(False)
+    if return_device is None:
+        return_device = layer.weight.device
+    if quantization_device is not None:
+        layer.weight.data = layer.weight.to(quantization_device, non_blocking=non_blocking, copy=False)
+
+    if use_dynamic_quantization:
+        weight_data = sdnq_quantize_layer_weight_dynamic(layer.weight, **quant_kwargs)
+    else:
+        weight_data = sdnq_quantize_layer_weight(layer.weight, **quant_kwargs)
+
+    if weight_data is not None:
+        layer.sdnq_dequantizer, weight_data = weight_data
+        layer = get_sdnq_wrapper_class(layer, get_forward_func(layer_class_name, layer.sdnq_dequantizer.quantized_matmul_dtype, layer.sdnq_dequantizer.use_quantized_matmul))
+
+        for key, value in weight_data.items():
+            if isinstance(value, (torch.Tensor, torch.nn.Parameter)):
+                setattr(layer, key, torch.nn.Parameter(value.to(return_device, non_blocking=non_blocking, copy=False), requires_grad=False))
+                setattr(getattr(layer, key), "_is_hf_initialized", True) # noqa: B010
+            else:
+                setattr(layer, key, value)
+        del weight_data
+
+        if use_dynamic_quantization:
+            if layer.sdnq_dequantizer.weights_dtype not in quantization_config.modules_dtype_dict.keys():
+                quantization_config.modules_dtype_dict[layer.sdnq_dequantizer.weights_dtype] = [param_name]
+            else:
+                quantization_config.modules_dtype_dict[layer.sdnq_dequantizer.weights_dtype].append(param_name)
+
+        if quant_kwargs["use_quantized_matmul"] and not layer.sdnq_dequantizer.use_quantized_matmul:
+            quantization_config.modules_to_not_use_matmul.append(param_name)
+    else:
+        layer.weight = torch.nn.Parameter(layer.weight.to(return_device, dtype=torch_dtype, non_blocking=non_blocking, copy=False), requires_grad=False)
+        if use_dynamic_quantization:
+            quantization_config.modules_to_not_convert.append(param_name)
+
+    return layer, quantization_config
+
+
+@devices.inference_context()
+def apply_sdnq_to_module(model, quantization_config: "SDNQConfig", torch_dtype: torch.dtype | None = None, full_param_name: str = ""): # pylint: disable=unused-argument
+    if not list(model.children()):
+        return model, quantization_config
+    for module_name, module in model.named_children():
+        if full_param_name:
+            param_name = full_param_name + "." + module_name
+        else:
+            param_name = module_name
+        if hasattr(module, "weight") and module.weight is not None:
+            param_name = param_name + ".weight"
+            layer_class_name = module.__class__.__name__
+            param_in_modules_to_not_convert = check_param_name_in(param_name, quantization_config.modules_to_not_convert)
+            if (
+                layer_class_name in allowed_types
+                and module.weight.dtype in {torch.float64, torch.float32, torch.float16, torch.bfloat16}
+                and param_in_modules_to_not_convert is None
+                and not (layer_class_name in embedding_types and not quantization_config.quant_embedding)
+                and not ((layer_class_name in conv_types or layer_class_name in conv_transpose_types) and not quantization_config.quant_conv)
+            ):
+                module, quantization_config = sdnq_quantize_layer(module, quantization_config, torch_dtype=torch_dtype, param_name=param_name)
+                setattr(model, module_name, module)
+            elif param_in_modules_to_not_convert is None:
+                quantization_config.modules_to_not_convert.append(param_name)
+
+        module, quantization_config = apply_sdnq_to_module(module, quantization_config, torch_dtype=torch_dtype, full_param_name=param_name)
+        setattr(model, module_name, module)
+    return model, quantization_config
+
+
+@devices.inference_context()
+def sdnq_post_load_quant(
+    model: torch.nn.Module,
+    weights_dtype: str = "int8",
+    quantized_matmul_dtype: str | None = None,
+    hadamard_group_size: int = 256,
+    group_size: int = 0,
+    svd_rank: int = 32,
+    svd_steps: int = 8,
+    dynamic_loss_threshold: float | None = None,
+    use_svd: bool = False,
+    use_hadamard: bool = False,
     quant_conv: bool = False,
+    quant_embedding: bool = False,
     use_quantized_matmul: bool = False,
     use_quantized_matmul_conv: bool = False,
-    dequantize_fp32: bool = False,
+    use_dynamic_quantization: bool = False,
+    use_stochastic_rounding: bool = False,
+    dequantize_fp32: bool = True,
     non_blocking: bool = False,
     add_skip_keys:bool = True,
-    quantization_device: torch.device = None,
-    return_device: torch.device = None,
-    modules_to_not_convert: List[str] = None,
-    modules_dtype_dict: Dict[str, List[str]] = None,
-    op=None,
+    modules_to_not_convert: list[str] | None = None,
+    modules_to_not_use_matmul: list[str] | None = None,
+    modules_dtype_dict: dict[str, list[str]] | None = None,
+    modules_quant_config: dict[str, dict] | None = None,
+    quantization_device: torch.device | None = None,
+    return_device: torch.device | None = None,
+    torch_dtype: torch.dtype | None = None,
+    pre_quantized: bool = False,
 ):
+    if pre_quantized:
+        add_skip_keys = False
+        use_dynamic_quantization = False
+    elif (
+        hasattr(model, "quantization_config")
+        or (hasattr(model, "config") and hasattr(model.config, "quantization_config"))
+        or (hasattr(model, "config") and isinstance(model.config, dict) and "quantization_config" in model.config)
+    ):
+        raise RuntimeError("Quantizing a pre-quantized model is not supported!")
+
+    quantization_config = SDNQConfig(
+        weights_dtype=weights_dtype,
+        quantized_matmul_dtype=quantized_matmul_dtype,
+        hadamard_group_size=hadamard_group_size,
+        group_size=group_size,
+        svd_rank=svd_rank,
+        svd_steps=svd_steps,
+        dynamic_loss_threshold=dynamic_loss_threshold,
+        use_svd=use_svd,
+        use_hadamard=use_hadamard,
+        quant_conv=quant_conv,
+        quant_embedding=quant_embedding,
+        use_quantized_matmul=use_quantized_matmul,
+        use_quantized_matmul_conv=use_quantized_matmul_conv,
+        use_dynamic_quantization=use_dynamic_quantization,
+        use_stochastic_rounding=use_stochastic_rounding,
+        dequantize_fp32=dequantize_fp32,
+        non_blocking=non_blocking,
+        add_skip_keys=add_skip_keys,
+        modules_to_not_convert=modules_to_not_convert,
+        modules_to_not_use_matmul=modules_to_not_use_matmul,
+        modules_dtype_dict=modules_dtype_dict,
+        modules_quant_config=modules_quant_config,
+        quantization_device=quantization_device,
+        return_device=return_device,
+    )
     if add_skip_keys:
-        model, modules_to_not_convert, modules_dtype_dict = add_module_skip_keys(model, modules_to_not_convert, modules_dtype_dict)
+        model, quantization_config = add_module_skip_keys(model, quantization_config)
 
     model.eval()
-    model = apply_sdnq_to_module(
-        model,
-        weights_dtype=weights_dtype,
-        torch_dtype=torch_dtype,
-        group_size=group_size,
-        svd_rank=svd_rank,
-        svd_steps=svd_steps,
-        use_svd=use_svd,
-        quant_conv=quant_conv,
-        use_quantized_matmul=use_quantized_matmul,
-        use_quantized_matmul_conv=use_quantized_matmul_conv,
-        dequantize_fp32=dequantize_fp32,
-        non_blocking=non_blocking,
-        quantization_device=quantization_device,
-        return_device=return_device,
-        modules_to_not_convert=modules_to_not_convert,
-        modules_dtype_dict=modules_dtype_dict.copy(),
-        op=op,
-    )
-    model.quantization_config = SDNQConfig(
-        weights_dtype=weights_dtype,
-        group_size=group_size,
-        svd_rank=svd_rank,
-        svd_steps=svd_steps,
-        use_svd=use_svd,
-        quant_conv=quant_conv,
-        use_quantized_matmul=use_quantized_matmul,
-        use_quantized_matmul_conv=use_quantized_matmul_conv,
-        dequantize_fp32=dequantize_fp32,
-        non_blocking=non_blocking,
-        quantization_device=quantization_device,
-        return_device=return_device,
-        modules_to_not_convert=modules_to_not_convert,
-        modules_dtype_dict=modules_dtype_dict.copy(),
-    )
+    model, quantization_config = apply_sdnq_to_module(model, quantization_config, torch_dtype=torch_dtype)
 
+    model.quantization_config = quantization_config
     if hasattr(model, "config"):
         try:
             model.config.quantization_config = model.quantization_config
+        except Exception:
+            pass
+        try:
             model.config["quantization_config"] = model.quantization_config.to_dict()
         except Exception:
             pass
     model.quantization_method = QuantizationMethod.SDNQ
 
     return model
+
+
+class SDNQQuantize:
+    def __init__(self, hf_quantizer):
+        self.hf_quantizer = hf_quantizer
+
+    def convert(
+        self,
+        input_dict: dict[str, list[torch.Tensor]],
+        model: torch.nn.Module | None = None,
+        full_layer_name: str | None = None,
+        missing_keys: list[str] | None = None, # pylint: disable=unused-argument
+        **kwargs, # pylint: disable=unused-argument
+    ) -> dict[str, torch.FloatTensor]:
+        _module_name, value = tuple(input_dict.items())[0]
+        value = value[0]
+        self.hf_quantizer.create_quantized_param(model, value, full_layer_name, value.device)
+        param, name = get_module_from_name(model, full_layer_name)
+        param = getattr(param, name)
+        return {full_layer_name: param}
+
+    @property
+    def reverse_op(self):
+        raise NotImplementedError
 
 
 class SDNQQuantizer(DiffusersQuantizer, HfQuantizer):
@@ -460,178 +565,200 @@ class SDNQQuantizer(DiffusersQuantizer, HfQuantizer):
 
     def check_if_quantized_param(
         self,
-        model,
-        param_value: "torch.Tensor",
+        model: torch.nn.Module,
+        param_value: torch.Tensor, # pylint: disable=unused-argument
         param_name: str,
         *args, **kwargs, # pylint: disable=unused-argument
     ):
         if self.pre_quantized:
             layer, _tensor_name = get_module_from_name(model, param_name)
-            if hasattr(layer, "sdnq_dequantizer"):
+            if hasattr(layer, "sdnq_dequantizer") and param_name.rsplit(".", maxsplit=1)[-1] in sdnq_keys:
                 return True
         elif param_name.endswith(".weight"):
-            if not check_param_name_in(param_name, self.quantization_config.modules_to_not_convert):
+            if check_param_name_in(param_name, self.quantization_config.modules_to_not_convert) is None:
                 layer_class_name = get_module_from_name(model, param_name)[0].__class__.__name__
                 if layer_class_name in allowed_types:
-                    if layer_class_name in conv_types or layer_class_name in conv_transpose_types:
+                    if layer_class_name in embedding_types:
+                        if self.quantization_config.quant_embedding:
+                            return True
+                    elif layer_class_name in conv_types or layer_class_name in conv_transpose_types:
                         if self.quantization_config.quant_conv:
                             return True
                     else:
                         return True
-        if param_value is not None and param_value.device.type == "cpu":
-            with devices.inference_context():
-                param_value.data = param_value.clone() # safetensors is unable to release the cpu memory without this
+                self.quantization_config.modules_to_not_convert.append(param_name)
         return False
 
     def check_quantized_param(self, *args, **kwargs) -> bool:
         """
-        needed for transformers compatibilty, returns self.check_if_quantized_param
+        needed for transformers compatibility, returns self.check_if_quantized_param
         """
         return self.check_if_quantized_param(*args, **kwargs)
 
     def param_needs_quantization(self, model, param_name: str, *args, **kwargs) -> bool:
         """
-        needed for transformers compatibilty, returns self.check_if_quantized_param
+        needed for transformers compatibility, returns self.check_if_quantized_param
         """
         return self.check_if_quantized_param(model, None, param_name, *args, **kwargs)
 
     @devices.inference_context()
     def create_quantized_param( # pylint: disable=arguments-differ
         self,
-        model,
+        model: torch.nn.Module,
         param_value: torch.FloatTensor,
         param_name: str,
         target_device: torch.device,
         *args, **kwargs, # pylint: disable=unused-argument
     ):
+        layer, tensor_name = get_module_from_name(model, param_name)
+
         if self.pre_quantized:
-            layer, tensor_name = get_module_from_name(model, param_name)
             if param_value is not None:
-                return_dtype = param_value.dtype if tensor_name == "weight" else torch.float32 if self.quantization_config.dequantize_fp32 else self.torch_dtype if self.torch_dtype is not None else param_value.dtype
-                if param_value.dtype == return_dtype and devices.same_device(param_value.device, target_device):
-                    param_value = param_value.clone()
+                if tensor_name == "weight":
+                    return_dtype = param_value.dtype
+                elif self.quantization_config.dequantize_fp32 and tensor_name in sdnq_keys:
+                    if param_value.dtype != torch.float64 and self.torch_dtype != torch.float64:
+                        return_dtype = torch.float32
+                    else:
+                        return_dtype = torch.float64
                 else:
-                    param_value = param_value.to(target_device, dtype=return_dtype)
+                    return_dtype = kwargs.get("dtype", param_value.dtype if self.torch_dtype is None else self.torch_dtype)
+
+                param_value = param_value.detach()
+                param_value = param_value.to(target_device, dtype=return_dtype, copy=False)
+
+                if tensor_name == "weight" and layer.sdnq_dequantizer.use_quantized_matmul and not layer.sdnq_dequantizer.re_quantize_for_matmul:
+                    param_value = prepare_weight_for_matmul(param_value)
+                elif tensor_name == "svd_up":
+                    param_value, _ = prepare_svd_for_matmul(param_value, None, layer.sdnq_dequantizer.use_quantized_matmul)
+                elif tensor_name == "svd_down":
+                    _, param_value = prepare_svd_for_matmul(None, param_value, layer.sdnq_dequantizer.use_quantized_matmul)
+
                 param_value = torch.nn.Parameter(param_value, requires_grad=False)
+                param_value._is_hf_initialized = True # pylint: disable=protected-access
             setattr(layer, tensor_name, param_value)
             return
 
-        torch_dtype = param_value.dtype if self.torch_dtype is None else self.torch_dtype
-        weights_dtype = get_minimum_dtype(self.quantization_config.weights_dtype, param_name, self.quantization_config.modules_dtype_dict)
+        torch_dtype = kwargs.get("dtype", param_value.dtype if self.torch_dtype is None else self.torch_dtype)
+        quant_kwargs = get_quant_kwargs(layer, self.quantization_config, torch_dtype=torch_dtype, param_name=param_name)
+        if quant_kwargs["return_device"] is None:
+            quant_kwargs["return_device"] = target_device
+        if quant_kwargs["quantization_device"] is not None:
+            target_device = quant_kwargs["quantization_device"]
+            quant_kwargs["quantization_device"] = None
 
-        if self.quantization_config.return_device is not None:
-            return_device = self.quantization_config.return_device
-        else:
-            return_device = target_device
+        param_value = param_value.detach()
+        param_value = param_value.to(target_device, non_blocking=self.quantization_config.non_blocking, copy=False).to(dtype=torch.float32 if param_value.dtype != torch.float64 else torch.float64)
 
-        if self.quantization_config.quantization_device is not None:
-            target_device = self.quantization_config.quantization_device
-
-        if param_value.dtype == torch.float32 and devices.same_device(param_value.device, target_device):
-            param_value = param_value.clone()
-        else:
-            param_value = param_value.to(target_device, non_blocking=self.quantization_config.non_blocking).to(dtype=torch.float32)
-
-        layer, _ = get_module_from_name(model, param_name)
         layer.weight = torch.nn.Parameter(param_value, requires_grad=False)
-        layer = sdnq_quantize_layer(
-            layer,
-            weights_dtype=weights_dtype,
-            torch_dtype=torch_dtype,
-            group_size=self.quantization_config.group_size,
-            svd_rank=self.quantization_config.svd_rank,
-            svd_steps=self.quantization_config.svd_steps,
-            use_svd=self.quantization_config.use_svd,
-            quant_conv=self.quantization_config.quant_conv,
-            use_quantized_matmul=self.quantization_config.use_quantized_matmul,
-            use_quantized_matmul_conv=self.quantization_config.use_quantized_matmul_conv,
-            dequantize_fp32=self.quantization_config.dequantize_fp32,
-            non_blocking=self.quantization_config.non_blocking,
-            quantization_device=None,
-            return_device=return_device,
-            param_name=param_name,
-        )
+        layer, self.quantization_config = sdnq_quantize_layer(layer, self.quantization_config, torch_dtype=torch_dtype, param_name=param_name, quant_kwargs=quant_kwargs) # pylint: disable=attribute-defined-outside-init
 
-    def adjust_max_memory(self, max_memory: Dict[str, Union[int, str]]) -> Dict[str, Union[int, str]]:
+        parent_module, tensor_name = get_module_from_name(model, param_name.removesuffix(tensor_name).removesuffix("."))
+        setattr(parent_module, tensor_name, layer)
+
+    def get_quantize_ops(self):
+        return SDNQQuantize(self)
+
+    def adjust_max_memory(self, max_memory: dict[str, int | str]) -> dict[str, int | str]:
         max_memory = {key: val * 0.80 for key, val in max_memory.items()}
         return max_memory
 
     def adjust_target_dtype(self, target_dtype: torch.dtype) -> torch.dtype: # pylint: disable=unused-argument,arguments-renamed
         return dtype_dict[self.quantization_config.weights_dtype]["target_dtype"]
 
-    def update_torch_dtype(self, torch_dtype: torch.dtype = None) -> torch.dtype:
-        self.torch_dtype = torch_dtype
-        return torch_dtype
-
     def _process_model_before_weight_loading( # pylint: disable=arguments-differ
         self,
-        model,
+        model: torch.nn.Module,
         device_map, # pylint: disable=unused-argument
-        keep_in_fp32_modules: List[str] = None,
+        keep_in_fp32_modules: list[str] | None = None,
         **kwargs, # pylint: disable=unused-argument
     ):
         if self.pre_quantized:
-            from accelerate import init_empty_weights
             self.quantization_config.quantization_device = None
             self.quantization_config.return_device = None
             self.quantization_config.non_blocking = False
             self.quantization_config.add_skip_keys = False
 
-            quantization_config_dict = self.quantization_config.to_dict()
-            quantization_config_dict.pop("is_integer", None)
-            quantization_config_dict.pop("quant_method", None)
-            quantization_config_dict.pop("quantization_device", None)
-            quantization_config_dict.pop("return_device", None)
-            quantization_config_dict.pop("non_blocking", None)
-            quantization_config_dict.pop("add_skip_keys", None)
             with init_empty_weights():
-                model = sdnq_post_load_quant(model, add_skip_keys=False, **quantization_config_dict)
+                model = sdnq_post_load_quant(model, torch_dtype=self.torch_dtype, pre_quantized=True, **get_quant_args_from_config(self.quantization_config))
 
         if self.quantization_config.add_skip_keys:
             if keep_in_fp32_modules is not None:
                 self.quantization_config.modules_to_not_convert.extend(keep_in_fp32_modules)
-            model, self.quantization_config.modules_to_not_convert, self.quantization_config.modules_dtype_dict = add_module_skip_keys(
-                model, self.quantization_config.modules_to_not_convert, self.quantization_config.modules_dtype_dict
-            )
+            if hasattr(self, "get_modules_to_not_convert") and hasattr(model, "tie_weights"):
+                self.quantization_config.modules_to_not_convert.extend(self.get_modules_to_not_convert(model, add_default_skips=True))
+            model, self.quantization_config = add_module_skip_keys(model, self.quantization_config) # pylint: disable=attribute-defined-outside-init
+
+
+    def _process_model_after_weight_loading(self, model, **kwargs): # pylint: disable=unused-argument
+        model.quantization_config = self.quantization_config
+        model.quantization_method = QuantizationMethod.SDNQ
         if hasattr(model, "config"):
             try:
                 model.config.quantization_config = self.quantization_config
+            except Exception:
+                pass
+            try:
                 model.config["quantization_config"] = self.quantization_config.to_dict()
             except Exception:
                 pass
-        model.quantization_config = self.quantization_config
 
-    def _process_model_after_weight_loading(self, model, **kwargs): # pylint: disable=unused-argument
+        if self.pre_quantized:
+            from .loader import post_process_model
+            model = post_process_model(model)
+        if self.quantization_config.is_training:
+            from .training import convert_sdnq_model_to_training
+            model = convert_sdnq_model_to_training(
+                model,
+                dtype=self.torch_dtype,
+                quantized_matmul_dtype=self.quantization_config.quantized_matmul_dtype,
+                use_grad_ckpt=self.quantization_config.use_grad_ckpt,
+                use_quantized_matmul=self.quantization_config.use_quantized_matmul,
+                use_stochastic_rounding=self.quantization_config.use_stochastic_rounding,
+                dequantize_fp32=self.quantization_config.dequantize_fp32,
+            )
+
         if shared.opts.diffusers_offload_mode != "none":
-            model = model.to(devices.cpu)
+            try:
+                model = model.to(device=devices.cpu)
+            except Exception:
+                model = model.to_empty(device=devices.cpu)
         devices.torch_gc(force=True, reason="sdnq")
         return model
+
+    def get_state_dict_and_metadata(self, state_dict: dict | torch.nn.Module, **kwargs) -> tuple[dict | None, dict]: # pylint: disable=unused-argument, arguments-differ
+        # transformers
+        if isinstance(state_dict, torch.nn.Module):
+            return None, {}
+        # diffusers
+        return state_dict, {}
 
     def get_accelerator_warm_up_factor(self):
         return 32 // dtype_dict[self.quantization_config.weights_dtype]["num_bits"]
 
     def get_cuda_warm_up_factor(self):
         """
-        needed for transformers compatibilty, returns self.get_accelerator_warm_up_factor
+        needed for transformers compatibility, returns self.get_accelerator_warm_up_factor
         """
         return self.get_accelerator_warm_up_factor()
 
     def _dequantize(self, model):
-        model = dequantize_sdnq_model(model)
-        if hasattr(model, "quantization_method"):
-            del model.quantization_method
-        if hasattr(model, "quantization_config"):
-            del model.quantization_config
-        if hasattr(model, "config") and hasattr(model.config, "quantization_config"):
-            del model.config.quantization_config
-        return model
+        return dequantize_sdnq_model(model)
 
-    def is_serializable(self, *args, **kwargs) -> bool:  # pylint: disable=unused-argument, invalid-overridden-method
-        return True
+    def is_serializable(self, *args, **kwargs) -> bool: # pylint: disable=unused-argument, invalid-overridden-method
+        return not self.quantization_config.is_training
+
+    @property
+    def supports_safetensors_serialization(self) -> bool:
+        return self.is_serializable()
 
     @property
     def is_trainable(self):
-        return False
+        return self.quantization_config.is_training
+
+    @property
+    def is_qat_trainable(self) -> bool:
+        return self.is_trainable()
 
     @property
     def is_compileable(self):
@@ -646,84 +773,158 @@ class SDNQConfig(QuantizationConfigMixin):
 
     Args:
         weights_dtype (`str`, *optional*, defaults to `"int8"`):
-            The target dtype for the weights after quantization. Supported values are:
-            ("int8", "int7", "int6", "int5", "int4", "int3", "int2", "uint8", "uint7", "uint6", "uint5", "uint4", "uint3", "uint2", "uint1", "bool", "float8_e4m3fn", "float8_e4m3fnuz", "float8_e5m2", "float8_e5m2fnuz")
+            The target dtype for the weights after quantization.
+            See `sdnq.common.accepted_weight_dtypes` for all the supported values.
+            These are some of the recommended values to use: ("int8", "int7", "int6", "uint5", "uint4", "uint3", "uint2", "float8_e4m3fn", "float7_e3m3fn", "float6_e3m2fn", "float5_e2m2fn", "float4_e2m1fn", "float3_e1m1fn", "float2_e1m0fn")
+        quantized_matmul_dtype (`str`, *optional*, defaults to `None`):
+            The target dtype for quantized matmul.
+            `None` will use "int8" with integer weight dtypes and "float8_e4m3fn" or "float16" with float weight dtypes.
+            Supported values are: ("int8", "float8_e4m3fn", "float16")
+        hadamard_group_size (`int`, *optional*, defaults to `0`):
+            Used to decide how many elements of a tensor will share the same Hadamard rotation group.
         group_size (`int`, *optional*, defaults to `0`):
             Used to decide how many elements of a tensor will share the same quantization group.
-            group_size = 0 will automatically select a group size based on weights_dtype.
+            group_size = `0` will automatically select a group size based on weights_dtype.
+            group_size = `-1` will disable group sizes and use simple row-wise quantization instead.
         svd_rank (`int`, *optional*, defaults to `32`):
             The rank size used for the SVDQuant algorithm.
         svd_steps (`int`, *optional*, defaults to `8`):
             The number of iterations to use in svd lowrank estimation.
+        dynamic_loss_threshold (`float`, *optional*, defaults to `None`):
+            The target quantization mse loss threshold to use for dynamic quantization.
+            The value `None` or negative values means auto select a threshold based on the weights_dtype.
         use_svd (`bool`, *optional*, defaults to `False`):
             Enabling this option will use SVDQuant algorithm on top of SDNQ quantization.
+        use_hadamard (`bool`, *optional*, defaults to `False`):
+            Enabling this option will use Hadamard rotation on top of SDNQ quantization.
+        use_grad_ckpt (`bool`, *optional*, defaults to `True`):
+            This option is only used for training models when `is_training` is enabled or with `sdnq.training.sdnq_training_post_load_quant`.
+            Disabling this option will quantize the tensors needed for the backward pass before saving in the forward pass.
+            Disable this option only if you are not using gradient checkpointing and enable it when you are using gradient checkpointing.
         quant_conv (`bool`, *optional*, defaults to `False`):
-            Enabling this option will quantize the convolutional layers in UNet models too.
+            Enabling this option will quantize the nn.Conv layers in UNet models too.
+            Note: nn.Conv layers doesn't support training.
+        quant_embedding (`bool`, *optional*, defaults to `False`):
+            Enabling this option will quantize the nn.Embedding layers in text models too.
+            Note: nn.Embedding layers doesn't support training.
         use_quantized_matmul (`bool`, *optional*, defaults to `False`):
-            Enabling this option will use quantized INT8 or FP8 MatMul instead of BF16 / FP16.
+            Enabling this option will use quantized INT8, FP8 or FP16 MatMul on the forward pass and the backward pass instead of BF16 / FP16.
+            `False` means no quantized matmul and quantized_matmul_dtype will be ignored.
         use_quantized_matmul_conv (`bool`, *optional*, defaults to `False`):
-            Same as use_quantized_matmul_conv but for the convolutional layers with UNets like SDXL.
-        dequantize_fp32 (`bool`, *optional*, defaults to `False`):
-            Enabling this option will use FP32 on the dequantization step.
+            Same as use_quantized_matmul but for the nn.Conv layers with UNets like SDXL.
+        use_stochastic_rounding (`bool`, *optional*, defaults to `False`):
+            Enabling this option will use stochastic rounding on the quantization step.
+            Recommended for full finetuning / full rank training.
+        use_static_quantization (`bool`, *optional*, defaults to `True`):
+            This option is only used for training models with `sdnq.training.sdnq_training_post_load_quant`.
+            Disabling this option means model weights will be kept unquantized in their original precision and only the use_quantized_matmul (if enabled) will be used.
+        use_dynamic_quantization (`bool`, *optional*, defaults to `False`):
+            Enabling this option will dynamically select a per layer quantization type based on the dynamic_loss_threshold.
+            weights_dtype will be used as the minimum allowed quantization type when this option is enabled.
+        dequantize_fp32 (`bool`, *optional*, defaults to `True`):
+            Enabling this option will keep the quant scales in FP32 and compute the de-quant steps in FP32.
+            This option is highly recommended to be enabled.
         non_blocking (`bool`, *optional*, defaults to `False`):
             Enabling this option will use non blocking ops when moving layers between the quantization device and the return device.
         add_skip_keys (`bool`, *optional*, defaults to `True`):
-            Disabling this option won't add model specific modules_to_not_convert and modules_dtype_dict keys.
+            Disabling this option won't add model specific keys to modules_to_not_convert, modules_to_not_use_matmul and modules_dtype_dict.
         quantization_device (`torch.device`, *optional*, defaults to `None`):
             Used to set which device will be used for the quantization calculation on model load.
         return_device (`torch.device`, *optional*, defaults to `None`):
             Used to set which device will the quantized weights be sent back to.
         modules_to_not_convert (`list`, *optional*, default to `None`):
-            The list of modules to not quantize, useful for quantizing models that explicitly require to have some
+            The list of modules to not quantize. Useful for quantizing models that explicitly require to have some
             modules left in their original precision (e.g. Whisper encoder, Llava encoder, Mixtral gate layers).
+        modules_to_not_use_matmul (`list`, *optional*, default to `None`):
+            The list of modules to not use quantized matmul. Useful for quantizing models that explicitly require to have some
+            modules left in their original activation precision (e.g. AdaLN layers).
         modules_dtype_dict (`dict`, *optional*, default to `None`):
-            The dict of dtypes and list of modules, useful for quantizing some modules with a different dtype.
+            The dict of dtypes and list of modules. Useful for quantizing some modules with a different dtype.
+        modules_quant_config (`dict`, *optional*, default to `None`):
+            The dict of modules and a dict of quantization kwargs to use for that module.
+            Useful for quantizing some modules with a different quantization config.
+        is_training (`bool`, *optional*, defaults to `False`):
+            This option is auto enabled when using `sdnq.training.sdnq_training_post_load_quant`.
+            Enabling this option with SDNQQuantizer will convert the model to SDNQ Training format after quantization.
+            Note: Safetensors serialization is not supported with SDNQ training.
     """
 
     def __init__( # pylint: disable=super-init-not-called
         self,
         weights_dtype: str = "int8",
+        quantized_matmul_dtype: str | None = None,
+        hadamard_group_size: int = 256,
         group_size: int = 0,
         svd_rank: int = 32,
         svd_steps: int = 8,
+        dynamic_loss_threshold: float | None = None,
         use_svd: bool = False,
+        use_hadamard: bool = False,
+        use_grad_ckpt: bool = True,
         quant_conv: bool = False,
+        quant_embedding: bool = False,
         use_quantized_matmul: bool = False,
         use_quantized_matmul_conv: bool = False,
-        dequantize_fp32: bool = False,
+        use_static_quantization: bool = True,
+        use_dynamic_quantization: bool = False,
+        use_stochastic_rounding: bool = False,
+        dequantize_fp32: bool = True,
         non_blocking: bool = False,
         add_skip_keys: bool = True,
-        quantization_device: Optional[torch.device] = None,
-        return_device: Optional[torch.device] = None,
-        modules_to_not_convert: Optional[List[str]] = None,
-        modules_dtype_dict: Optional[Dict[str, List[str]]] = None,
+        quantization_device: torch.device | None = None,
+        return_device: torch.device | None = None,
+        modules_to_not_convert: list[str] | None = None,
+        modules_to_not_use_matmul: list[str] | None = None,
+        modules_dtype_dict: dict[str, list[str]] | None = None,
+        modules_quant_config: dict[str, dict] | None = None,
+        is_training: bool = False,
         **kwargs, # pylint: disable=unused-argument
     ):
         self.weights_dtype = weights_dtype
-        self.quant_method = QuantizationMethod.SDNQ
+        self.quantized_matmul_dtype = quantized_matmul_dtype
+        self.is_training = is_training
+        if self.is_training:
+            self.quant_method = QuantizationMethod.SDNQ_TRAINING
+        else:
+            self.quant_method = QuantizationMethod.SDNQ
+        self.hadamard_group_size = hadamard_group_size
         self.group_size = group_size
         self.svd_rank = svd_rank
+        self.dynamic_loss_threshold = dynamic_loss_threshold
         self.svd_steps = svd_steps
         self.use_svd = use_svd
+        self.use_hadamard = use_hadamard
+        self.use_grad_ckpt = use_grad_ckpt
         self.quant_conv = quant_conv
+        self.quant_embedding = quant_embedding
         self.use_quantized_matmul = use_quantized_matmul
         self.use_quantized_matmul_conv = use_quantized_matmul_conv
+        self.use_static_quantization = use_static_quantization
+        self.use_dynamic_quantization = use_dynamic_quantization
+        self.use_stochastic_rounding = use_stochastic_rounding
         self.dequantize_fp32 = dequantize_fp32
         self.non_blocking = non_blocking
         self.add_skip_keys = add_skip_keys
         self.quantization_device = quantization_device
         self.return_device = return_device
         self.modules_to_not_convert = modules_to_not_convert
+        self.modules_to_not_use_matmul = modules_to_not_use_matmul
         self.modules_dtype_dict = modules_dtype_dict
-        self.post_init()
+        self.modules_quant_config = modules_quant_config
         self.is_integer = dtype_dict[self.weights_dtype]["is_integer"]
+        self.sdnq_version = sdnq_version
+        self.post_init()
 
     def post_init(self):
         r"""
         Safety checker that arguments are correct
         """
-        if self.weights_dtype not in accepted_weights:
-            raise ValueError(f"SDNQ only support weights in {accepted_weights} but found {self.weights_dtype}")
+        if self.use_quantized_matmul and not check_torch_compile():
+            raise RuntimeError("SDNQ Quantized MatMul requires a working Triton install.")
+        if self.weights_dtype not in accepted_weight_dtypes:
+            raise ValueError(f"SDNQ only support weight dtypes in {accepted_weight_dtypes} but found {self.weights_dtype}")
+        if self.quantized_matmul_dtype is not None and self.quantized_matmul_dtype not in accepted_matmul_dtypes:
+            raise ValueError(f"SDNQ only support quantized matmul dtypes in {accepted_matmul_dtypes} but found {self.quantized_matmul_dtype}")
 
         if self.modules_to_not_convert is None:
             self.modules_to_not_convert = []
@@ -734,11 +935,21 @@ class SDNQConfig(QuantizationConfigMixin):
         elif not isinstance(self.modules_to_not_convert, list):
             raise ValueError(f"modules_to_not_convert must be a list but got {type(self.modules_to_not_convert)}")
 
+        if self.modules_to_not_use_matmul is None:
+            self.modules_to_not_use_matmul = []
+        elif isinstance(self.modules_to_not_use_matmul, str):
+            self.modules_to_not_use_matmul = [self.modules_to_not_use_matmul]
+        elif isinstance(self.modules_to_not_use_matmul, tuple):
+            self.modules_to_not_use_matmul = list(self.modules_to_not_use_matmul)
+        elif not isinstance(self.modules_to_not_use_matmul, list):
+            raise ValueError(f"modules_to_not_use_matmul must be a list but got {type(self.modules_to_not_use_matmul)}")
+
         if self.modules_dtype_dict is None:
             self.modules_dtype_dict = {}
         elif not isinstance(self.modules_dtype_dict, dict):
             raise ValueError(f"modules_dtype_dict must be a dict but got {type(self.modules_dtype_dict)}")
         elif len(self.modules_dtype_dict.keys()) > 0:
+            self.modules_dtype_dict = self.modules_dtype_dict.copy()
             for key, value in self.modules_dtype_dict.items():
                 if isinstance(value, str):
                     value = [value]
@@ -749,17 +960,42 @@ class SDNQConfig(QuantizationConfigMixin):
                 if not isinstance(key, str) or not isinstance(value, list):
                     raise ValueError(f"modules_dtype_dict must be a dictionary of strings and lists but got {type(key)} and {type(value)}")
 
+        if self.modules_quant_config is None:
+            self.modules_quant_config = {}
+
+        self.modules_to_not_convert = self.modules_to_not_convert.copy()
+        self.modules_to_not_use_matmul = self.modules_to_not_use_matmul.copy()
+        self.modules_dtype_dict = self.modules_dtype_dict.copy()
+        self.modules_quant_config = self.modules_quant_config.copy()
+
+        # dedupe
+        self.modules_to_not_convert = list(set(self.modules_to_not_convert))
+        self.modules_to_not_use_matmul = list(set(self.modules_to_not_use_matmul))
+        for key, value in self.modules_dtype_dict.items():
+            self.modules_dtype_dict[key] = list(set(value))
+
     def to_dict(self):
-        dct = self.__dict__.copy() # make serializable
-        dct["quantization_device"] = str(dct["quantization_device"]) if dct["quantization_device"] is not None else None
-        dct["return_device"] = str(dct["return_device"]) if dct["return_device"] is not None else None
-        return dct
+        quantization_config_dict = self.__dict__.copy() # make serializable
+        quantization_config_dict["quantization_device"] = str(quantization_config_dict["quantization_device"]) if quantization_config_dict["quantization_device"] is not None else None
+        quantization_config_dict["return_device"] = str(quantization_config_dict["return_device"]) if quantization_config_dict["return_device"] is not None else None
+        return quantization_config_dict
+
+    def __str__(self):
+        return f"SDNQConfig(weights_dtype={self.weights_dtype} quantization_device={self.quantization_device} return_device={self.return_device} group_size={self.group_size} use_quantized_matmul={self.use_quantized_matmul} quantized_matmul_dtype={self.quantized_matmul_dtype} quant_conv={self.quant_conv} quant_embedding={self.quant_embedding} use_quantized_matmul_conv={self.use_quantized_matmul_conv} use_static_quantization={self.use_static_quantization} use_dynamic_quantization={self.use_dynamic_quantization} dynamic_loss_threshold={self.dynamic_loss_threshold} use_stochastic_rounding={self.use_stochastic_rounding} use_hadamard={self.use_hadamard} hadamard_group_size={self.hadamard_group_size} use_svd={self.use_svd} svd_rank={self.svd_rank} svd_steps={self.svd_steps} dequantize_fp32={self.dequantize_fp32} non_blocking={self.non_blocking} add_skip_keys={self.add_skip_keys} modules_to_not_convert={self.modules_to_not_convert} modules_to_not_use_matmul={self.modules_to_not_use_matmul} modules_dtype_dict={self.modules_dtype_dict} modules_quant_config={self.modules_quant_config} )"
 
 
 import diffusers.quantizers.auto # noqa: E402,RUF100 # pylint: disable=wrong-import-order
 diffusers.quantizers.auto.AUTO_QUANTIZER_MAPPING["sdnq"] = SDNQQuantizer
 diffusers.quantizers.auto.AUTO_QUANTIZATION_CONFIG_MAPPING["sdnq"] = SDNQConfig
 
+diffusers.quantizers.auto.AUTO_QUANTIZER_MAPPING["sdnq_training"] = SDNQQuantizer
+diffusers.quantizers.auto.AUTO_QUANTIZATION_CONFIG_MAPPING["sdnq_training"] = SDNQConfig
+
 import transformers.quantizers.auto # noqa: E402,RUF100 # pylint: disable=wrong-import-order
 transformers.quantizers.auto.AUTO_QUANTIZER_MAPPING["sdnq"] = SDNQQuantizer
 transformers.quantizers.auto.AUTO_QUANTIZATION_CONFIG_MAPPING["sdnq"] = SDNQConfig
+
+transformers.quantizers.auto.AUTO_QUANTIZER_MAPPING["sdnq_training"] = SDNQQuantizer
+transformers.quantizers.auto.AUTO_QUANTIZATION_CONFIG_MAPPING["sdnq_training"] = SDNQConfig
+
+sdnq_quantize_layer_weight_compiled = compile_func(sdnq_quantize_layer_weight)

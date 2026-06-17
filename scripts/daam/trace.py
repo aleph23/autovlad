@@ -1,12 +1,11 @@
 from pathlib import Path
-from typing import List, Type, Any, Dict, Union
+from typing import List, Type, Any, Dict, Union, TYPE_CHECKING
 import math
 
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.models.attention_processor import Attention
 import numpy as np
-import PIL.Image as Image
 import torch
 import torch.nn.functional as F
 
@@ -14,6 +13,9 @@ from .utils import cache_dir, auto_autocast
 from .experiment import GenerationExperiment
 from .heatmap import RawHeatMapCollection, GlobalHeatMap
 from .hook import ObjectHooker, AggregateHooker, UNetCrossAttentionLocator
+
+if TYPE_CHECKING:
+    import PIL.Image as Image
 
 
 __all__ = ['trace', 'DiffusionHeatMapHooker', 'GlobalHeatMap']
@@ -26,7 +28,7 @@ class DiffusionHeatMapHooker(AggregateHooker):
             low_memory: bool = False,
             load_heads: bool = False,
             save_heads: bool = False,
-            data_dir: str = None
+            data_dir: str | None = None
     ):
         self.all_heat_maps = RawHeatMapCollection()
         h = (pipeline.unet.config.sample_size * pipeline.vae_scale_factor)
@@ -34,7 +36,7 @@ class DiffusionHeatMapHooker(AggregateHooker):
         locate_middle = load_heads or save_heads
         self.locator = UNetCrossAttentionLocator(restrict={0} if low_memory else None, locate_middle_block=locate_middle)
         self.last_prompt: str = ''
-        self.last_image: Image = None
+        self.last_image: Image.Image = None
         self.time_idx = 0
         self._gen_idx = 0
 
@@ -117,11 +119,11 @@ class DiffusionHeatMapHooker(AggregateHooker):
 
             try:
                 maps = torch.stack(all_merges, dim=0)
-            except RuntimeError:
+            except RuntimeError as e:
                 if head_idx is not None or layer_idx is not None:
-                    raise RuntimeError('No heat maps found for the given parameters.')
+                    raise RuntimeError('No heat maps found for the given parameters.') from e
                 else:
-                    raise RuntimeError('No heat maps found. Did you forget to call `with trace(...)` during generation?')
+                    raise RuntimeError('No heat maps found. Did you forget to call `with trace(...)` during generation?') from e
 
             maps = maps.mean(0)[:, 0]
             maps = maps[:len(self.pipe.tokenizer.tokenize(prompt)) + 2]  # 1 for SOS and 1 for padding
@@ -196,7 +198,7 @@ class UNetCrossAttentionHooker(ObjectHooker[Attention]):
             latent_hw: int = 9216,
             load_heads: bool = False,
             save_heads: bool = False,
-            data_dir: Union[str, Path] = None,
+            data_dir: Union[str, Path] | None = None,
     ):
         super().__init__(module)
         self.heat_maps = parent_trace.all_heat_maps

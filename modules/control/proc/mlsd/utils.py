@@ -22,7 +22,7 @@ def deccode_output_score_and_ptss(tpMap, topk_n = 200, ksize = 5):
     center: tpMap[1, 0, :, :]
     displacement: tpMap[1, 1:5, :, :]
     '''
-    b, c, h, w = tpMap.shape
+    b, _c, _h, w = tpMap.shape
     assert  b==1, 'only support bsize==1'
     displacement = tpMap[:, 1:5, :, :][0]
     center = tpMap[:, 0, :, :]
@@ -471,9 +471,9 @@ def pred_squares(image,
                 square[end_idx]
 
                 # check whether outside or inside
-                start_position, start_min, start_cover_param, start_peri_param = check_outside_inside(start_segments,
+                _start_position, start_min, start_cover_param, start_peri_param = check_outside_inside(start_segments,
                                                                                                       connect_idx)
-                end_position, end_min, end_cover_param, end_peri_param = check_outside_inside(end_segments, connect_idx)
+                _end_position, end_min, end_cover_param, end_peri_param = check_outside_inside(end_segments, connect_idx)
 
                 cover += dist_segments[connect_idx] + start_cover_param * start_min + end_cover_param * end_min
                 perimeter += dist_segments[connect_idx] + start_peri_param * start_min + end_peri_param * end_min

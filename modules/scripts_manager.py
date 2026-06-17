@@ -1,23 +1,36 @@
+from __future__ import annotations
+
 import os
 import re
 import sys
 import time
-from collections import namedtuple
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, NamedTuple
 import gradio as gr
 from modules import paths, script_callbacks, extensions, script_loading, scripts_postprocessing, errors, timer
+from modules.logger import log
 from installer import control_extensions
+
+if TYPE_CHECKING:
+    from types import ModuleType
+    from modules.api.models import ItemScript
+    from gradio.blocks import Block
+    from gradio.components import IOComponent
+    from modules.processing import Processed, StableDiffusionProcessing
 
 
 AlwaysVisible = object()
 time_component = {}
 time_setup = {}
-debug = errors.log.trace if os.environ.get('SD_SCRIPT_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.trace if os.environ.get('SD_SCRIPT_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
 class PostprocessImageArgs:
     def __init__(self, image):
         self.image = image
+
+    def __str__(self):
+        return f'PostprocessImageArgs(image={self.image})'
 
 
 class PostprocessBatchListArgs:
@@ -27,39 +40,43 @@ class PostprocessBatchListArgs:
 
 @dataclass
 class OnComponent:
-    component: gr.blocks.Block
+    component: Block
 
 
 class Script:
-    parent = None
-    name = None
-    filename = None
+    parent: str | None = None
+    name: str | None = None
+    filename: str | None = None
     args_from = 0
     args_to = 0
     alwayson = False
     is_txt2img = False
     is_img2img = False
-    api_info = None
+    api_info: ItemScript | None = None
     group = None
-    infotext_fields = None
-    paste_field_names = None
+    infotext_fields: list | None = None
+    paste_field_names: list[str] | None = None
     section = None
     standalone = False
+    external = False
     on_before_component_elem_id = [] # list of callbacks to be called before a component with an elem_id is created
     on_after_component_elem_id = [] # list of callbacks to be called after a component with an elem_id is created
+
+    def __str__(self):
+        return f'Script: name="{self.name}" filename="{self.filename}" external={self.external} parent="{self.parent}" args_from={self.args_from} args_to={self.args_to} alwayson={self.alwayson} is_txt2img={self.is_txt2img} is_img2img={self.is_img2img}'
 
     def title(self):
         """this function should return the title of the script. This is what will be displayed in the dropdown menu."""
         raise NotImplementedError
 
-    def ui(self, is_img2img):
+    def ui(self, is_img2img) -> list[IOComponent]:
         """this function should create gradio UI elements. See https://gradio.app/docs/#components
         The return value should be an array of all components that are used in processing.
         Values of those returned components will be passed to run() and process() functions.
         """
         pass # pylint: disable=unnecessary-pass
 
-    def show(self, is_img2img): # pylint: disable=unused-argument
+    def show(self, is_img2img) -> bool | AlwaysVisible: # pylint: disable=unused-argument
         """
         is_img2img is True if this function is called for the img2img interface, and False otherwise
         This function should return:
@@ -69,7 +86,7 @@ class Script:
          """
         return True
 
-    def run(self, p, *args):
+    def run(self, p: StableDiffusionProcessing, *args):
         """
         This function is called if the script has been selected in the script dropdown.
         It must do all processing and return the Processed object with results, same as
@@ -79,13 +96,13 @@ class Script:
         """
         pass # pylint: disable=unnecessary-pass
 
-    def setup(self, p, *args):
+    def setup(self, p: StableDiffusionProcessing, *args):
         """For AlwaysVisible scripts, this function is called when the processing object is set up, before any processing starts.
         args contains all values returned by components from ui().
         """
         pass # pylint: disable=unnecessary-pass
 
-    def before_process(self, p, *args):
+    def before_process(self, p: StableDiffusionProcessing, *args):
         """
         This function is called very early during processing begins for AlwaysVisible scripts.
         You can modify the processing object (p) here, inject hooks, etc.
@@ -93,7 +110,7 @@ class Script:
         """
         pass # pylint: disable=unnecessary-pass
 
-    def process(self, p, *args):
+    def process(self, p: StableDiffusionProcessing, *args):
         """
         This function is called before processing begins for AlwaysVisible scripts.
         You can modify the processing object (p) here, inject hooks, etc.
@@ -101,7 +118,7 @@ class Script:
         """
         pass # pylint: disable=unnecessary-pass
 
-    def process_images(self, p, *args):
+    def process_images(self, p: StableDiffusionProcessing, *args):
         """
         This function is called instead of main processing for AlwaysVisible scripts.
         You can modify the processing object (p) here, inject hooks, etc.
@@ -109,7 +126,7 @@ class Script:
         """
         pass # pylint: disable=unnecessary-pass
 
-    def before_process_batch(self, p, *args, **kwargs):
+    def before_process_batch(self, p: StableDiffusionProcessing, *args, **kwargs):
         """
         Called before extra networks are parsed from the prompt, so you can add
         new extra network keywords to the prompt with this callback.
@@ -121,7 +138,7 @@ class Script:
         """
         pass # pylint: disable=unnecessary-pass
 
-    def process_batch(self, p, *args, **kwargs):
+    def process_batch(self, p: StableDiffusionProcessing, *args, **kwargs):
         """
         Same as process(), but called for every batch.
         **kwargs will have those items:
@@ -132,7 +149,7 @@ class Script:
         """
         pass # pylint: disable=unnecessary-pass
 
-    def postprocess_batch(self, p, *args, **kwargs):
+    def postprocess_batch(self, p: StableDiffusionProcessing, *args, **kwargs):
         """
         Same as process_batch(), but called for every batch after it has been generated.
         **kwargs will have same items as process_batch, and also:
@@ -141,13 +158,13 @@ class Script:
         """
         pass # pylint: disable=unnecessary-pass
 
-    def postprocess_image(self, p, pp: PostprocessImageArgs, *args):
+    def postprocess_image(self, p: StableDiffusionProcessing, pp: PostprocessImageArgs, *args):
         """
         Called for every image after it has been generated.
         """
         pass # pylint: disable=unnecessary-pass
 
-    def postprocess_batch_list(self, p, pp: PostprocessBatchListArgs, *args, **kwargs):
+    def postprocess_batch_list(self, p: StableDiffusionProcessing, pp: PostprocessBatchListArgs, *args, **kwargs):
         """
         Same as postprocess_batch(), but receives batch images as a list of 3D tensors instead of a 4D tensor.
         This is useful when you want to update the entire batch instead of individual images.
@@ -163,33 +180,32 @@ class Script:
         """
         pass # pylint: disable=unnecessary-pass
 
-    def postprocess(self, p, processed, *args):
+    def postprocess(self, p: StableDiffusionProcessing, processed, *args):
         """
         This function is called after processing ends for AlwaysVisible scripts.
         args contains all values returned by components from ui()
         """
         pass # pylint: disable=unnecessary-pass
 
-    def before_component(self, component, **kwargs):
-        """
-        Called before a component is created.
-        Use elem_id/label fields of kwargs to figure out which component it is.
-        This can be useful to inject your own components somewhere in the middle of vanilla UI.
-        You can return created components in the ui() function to add them to the list of arguments for your processing functions
-        """
+    """
+    # script can define two methods below, they are not defined by default to skip unnecessary calls for scripts that don't need this functionality
+    def before_component(self, component: IOComponent, **kwargs):
+        # Called before a component is created.
+        # Use elem_id/label fields of kwargs to figure out which component it is.
+        # This can be useful to inject your own components somewhere in the middle of vanilla UI.
+        # You can return created components in the ui() function to add them to the list of arguments for your processing functions
         pass # pylint: disable=unnecessary-pass
 
-    def after_component(self, component, **kwargs):
-        """
-        Called after a component is created. Same as above.
-        """
+    def after_component(self, component: IOComponent, **kwargs):
+        # Called after a component is created. Same as above.
         pass # pylint: disable=unnecessary-pass
+    """
 
     def describe(self):
         """unused"""
         return ""
 
-    def elem_id(self, item_id):
+    def elem_id(self, item_id: str):
         """helper function to generate id for a HTML element, constructs final id out of script name, tab and user-supplied item_id"""
         title = re.sub(r'[^a-z_0-9]', '', re.sub(r'\s', '_', self.title().lower()))
         return f'script_{self.parent}_{title}_{item_id}'
@@ -206,37 +222,49 @@ def basedir():
     return current_basedir
 
 
-ScriptFile = namedtuple("ScriptFile", ["basedir", "filename", "path", "priority"])
+class ScriptFile(NamedTuple):
+    basedir: str
+    filename: str
+    path: str
+    priority: str
+
+
+class ScriptClassData(NamedTuple):
+    script_class: type[Script] | type[scripts_postprocessing.ScriptPostprocessing]
+    path: str
+    basedir: str
+    module: ModuleType
+
+
 scripts_data = []
 postprocessing_scripts_data = []
-ScriptClassData = namedtuple("ScriptClassData", ["script_class", "path", "basedir", "module"])
 
 
-def list_scripts(scriptdirname, extension):
-    tmp_list = []
+def list_scripts(scriptdirname: str, extension: str):
+    tmp_list: list[ScriptFile] = []
     base = os.path.join(paths.script_path, scriptdirname)
     if os.path.exists(base):
         for filename in sorted(os.listdir(base)):
             tmp_list.append(ScriptFile(paths.script_path, filename, os.path.join(base, filename), '50'))
     for ext in extensions.active():
         tmp_list += ext.list_files(scriptdirname, extension)
-    priority_list = []
+    priority_list: list[ScriptFile] = []
     for script in tmp_list:
         if os.path.splitext(script.path)[1].lower() == extension and os.path.isfile(script.path):
             if script.basedir == paths.script_path:
                 priority = '0'
-            elif script.basedir.startswith(os.path.join(paths.script_path, 'scripts')):
+            elif script.basedir.startswith(os.path.join(paths.script_path, 'scripts')) or script.basedir.startswith('scripts'):
                 priority = '1'
-            elif script.basedir.startswith(os.path.join(paths.script_path, 'extensions-builtin')):
+            elif script.basedir.startswith(os.path.join(paths.script_path, 'extensions-builtin')) or script.basedir.startswith('extensions-builtin'):
                 priority = '2'
-            elif script.basedir.startswith(os.path.join(paths.script_path, 'extensions')):
+            elif script.basedir.startswith(os.path.join(paths.script_path, 'extensions')) or script.basedir.startswith('extensions'):
                 priority = '3'
             else:
                 priority = '9'
             if os.path.isfile(os.path.join(base, "..", ".priority")):
-                with open(os.path.join(base, "..", ".priority"), "r", encoding="utf-8") as f:
+                with open(os.path.join(base, "..", ".priority"), encoding="utf-8") as f:
                     priority = priority + str(f.read().strip())
-                    errors.log.debug(f'Script priority override: ${script.name}:{priority}')
+                    log.debug(f'Script priority override: ${script.name}:{priority}')
             else:
                 priority = priority + script.priority
             priority_list.append(ScriptFile(script.basedir, script.filename, script.path, priority))
@@ -245,7 +273,7 @@ def list_scripts(scriptdirname, extension):
     return priority_sort
 
 
-def list_files_with_name(filename):
+def list_files_with_name(filename: str):
     res = []
     dirs = [paths.script_path] + [ext.path for ext in extensions.active()]
     for dirpath in dirs:
@@ -268,7 +296,7 @@ def load_scripts():
     scripts_list = sorted(scripts_list, key=lambda item: item.priority + item.path.lower(), reverse=False)
     syspath = sys.path
 
-    def register_scripts_from_module(module, scriptfile):
+    def register_scripts_from_module(module: ModuleType, scriptfile):
         for script_class in module.__dict__.values():
             if type(script_class) != type:
                 continue
@@ -300,7 +328,7 @@ def load_scripts():
     return t, time.time()-t0
 
 
-def wrap_call(func, filename, funcname, *args, default=None, **kwargs):
+def wrap_call(func: Callable, filename: str, funcname: str, *args, default=None, **kwargs):
     try:
         res = func(*args, **kwargs)
         return res
@@ -310,37 +338,39 @@ def wrap_call(func, filename, funcname, *args, default=None, **kwargs):
 
 
 class ScriptSummary:
-    def __init__(self, op):
+    def __init__(self, op: str):
         self.start = time.time()
         self.update = time.time()
         self.op = op
         self.time = {}
 
     def record(self, script):
-        self.update = time.time()
-        self.time[script] = round(time.time() - self.update, 2)
+        now = time.time()
+        self.time[script] = round(now - self.update, 2)
+        self.update = now
 
     def report(self):
         total = sum(self.time.values())
         if total == 0:
             return
         scripts = [f'{k}:{v}' for k, v in self.time.items() if v > 0]
-        errors.log.debug(f'Script: op={self.op} total={total} scripts={scripts}')
+        log.debug(f'Script: op={self.op} total={total} scripts={scripts}')
 
 
 class ScriptRunner:
     def __init__(self, name=''):
         self.name = name
-        self.scripts = []
-        self.selectable_scripts = []
-        self.alwayson_scripts = []
-        self.auto_processing_scripts = []
-        self.titles = []
-        self.infotext_fields = []
-        self.paste_field_names = []
+        self.scripts: list[Script] = []
+        self.selectable_scripts: list[Script] = []
+        self.alwayson_scripts: list[Script] = []
+        self.auto_processing_scripts: list[ScriptClassData] = []
+        self.titles: list[str] = []
+        self.alwayson_titles: list[str] = []
+        self.infotext_fields: list[tuple[IOComponent, str]] = []
+        self.paste_field_names: list[str] = []
         self.script_load_ctr = 0
         self.is_img2img = False
-        self.inputs = [None]
+        self.inputs: list = [None]
         self.time = 0
 
     def add_script(self, script_class, path, is_img2img, is_control):
@@ -349,6 +379,13 @@ class ScriptRunner:
             script.filename = path
             script.is_txt2img = not is_img2img
             script.is_img2img = is_img2img
+            if path.startswith(paths.extensions_dir) and not path.startswith(paths.extensions_builtin_dir):
+                script.external = True
+            if is_control and script.external:
+                title = script.title()
+                if title not in control_extensions:
+                    log.debug(f'Script: fn="{script.filename}" type=control title="{title}" skip')
+                    return
             if is_control: # this is messy but show is a legacy function that is not aware of control tab
                 v1 = script.show(script.is_txt2img)
                 v2 = script.show(script.is_img2img)
@@ -366,7 +403,7 @@ class ScriptRunner:
                 self.scripts.append(script)
                 self.selectable_scripts.append(script)
         except Exception as e:
-            errors.log.error(f'Script initialize: {path} {e}')
+            log.error(f'Script initialize: {path} {e}')
             errors.display(e, 'script')
 
     def initialize_scripts(self, is_img2img=False, is_control=False):
@@ -376,6 +413,7 @@ class ScriptRunner:
         self.selectable_scripts.clear()
         self.alwayson_scripts.clear()
         self.titles.clear()
+        self.alwayson_titles.clear()
         self.infotext_fields.clear()
         self.paste_field_names.clear()
         self.script_load_ctr = 0
@@ -405,6 +443,7 @@ class ScriptRunner:
     def setup_ui(self, parent='unknown', accordion=True):
         import modules.api.models as api_models
         self.titles = [wrap_call(script.title, script.filename, "title") or f"{script.filename} [error]" for script in self.selectable_scripts]
+        self.alwayson_titles = [wrap_call(script.title, script.filename, "title") or f"{script.filename} [error]" for script in self.alwayson_scripts]
 
         inputs = []
         inputs_alwayson = [True]
@@ -419,15 +458,15 @@ class ScriptRunner:
             script.name = wrap_call(script.title, script.filename, "title", default=script.filename).lower()
             api_args = []
             for control in controls:
-                debug(f'Script control: parent={script.parent} script="{script.name}" label="{control.label}" type={control} id={control.elem_id}')
                 if hasattr(gr.components, 'IOComponent'):
                     if not isinstance(control, gr.components.IOComponent):
-                        errors.log.error(f'Invalid script control: "{script.filename}" control={control}')
+                        log.error(f'Invalid script control: "{script.filename}" control={control}')
                         continue
                 else:
                     if not isinstance(control, gr.components.Component):
-                        errors.log.error(f'Invalid script control: "{script.filename}" control={control}')
+                        log.error(f'Invalid script control: "{script.filename}" control={control}')
                         continue
+                debug(f'Script control: parent={script.parent} script="{script.name}" label="{control.label}" type={control} id={control.elem_id}')
                 control.custom_script_source = os.path.basename(script.filename)
                 arg_info = api_models.ScriptArg(label=control.label or "")
                 for field in ("value", "minimum", "maximum", "step", "choices"):
@@ -454,40 +493,70 @@ class ScriptRunner:
             dropdown = gr.Dropdown(label="Script", elem_id=f'{parent}_script_list', choices=["None"] + self.titles, value="None", type="index")
             inputs.insert(0, dropdown)
 
+        # internal
         with gr.Row():
             for script in self.alwayson_scripts:
                 if not script.standalone:
                     continue
                 if (self.name == 'control') and (script.name not in control_extensions) and (script.title() not in control_extensions):
-                    errors.log.debug(f'Script: fn="{script.filename}" type={self.name} skip')
+                    log.debug(f'Script: fn="{script.filename}" type={self.name} skip')
                     continue
                 t0 = time.time()
                 with gr.Group(elem_id=f'{parent}_script_{script.title().lower().replace(" ", "_")}', elem_classes=['group-extension']) as group:
-                    create_script_ui(script, inputs, inputs_alwayson)
+                    try:
+                        create_script_ui(script, inputs, inputs_alwayson)
+                    except Exception as e:
+                        errors.display(e, f'Create Script UI: type=internal fn="{script.filename}"')
                 script.group = group
                 time_setup[script.title()] = time_setup.get(script.title(), 0) + (time.time()-t0)
 
+        # extensions-builtin
         with gr.Row():
-            with gr.Accordion(label="Extensions", elem_id=f'{parent}_script_alwayson') if accordion else gr.Group():
+            with gr.Group(label="Extras", elem_id=f'{parent}_extras_alwayson'):
                 for script in self.alwayson_scripts:
-                    if script.standalone:
+                    if script.standalone or script.external:
                         continue
                     if (self.name == 'control') and (paths.extensions_dir in script.filename) and (script.title() not in control_extensions):
-                        errors.log.debug(f'Script: fn="{script.filename}" type={self.name} skip')
+                        log.debug(f'Script: fn="{script.filename}" type={self.name} skip')
                         continue
                     t0 = time.time()
                     with gr.Group(elem_id=f'{parent}_script_{script.title().lower().replace(" ", "_")}', elem_classes=['group-extension']) as group:
-                        create_script_ui(script, inputs, inputs_alwayson)
+                        try:
+                            create_script_ui(script, inputs, inputs_alwayson)
+                        except Exception as e:
+                            errors.display(e, f'Create Script UI: type=builtin fn="{script.filename}"')
                     script.group = group
                     time_setup[script.title()] = time_setup.get(script.title(), 0) + (time.time()-t0)
 
+        # extensions
+        with gr.Row():
+            with gr.Accordion(label="Extensions", elem_id=f'{parent}_script_alwayson') if accordion else gr.Group():
+                for script in self.alwayson_scripts:
+                    if script.standalone or not script.external:
+                        continue
+                    if (self.name == 'control') and (paths.extensions_dir in script.filename) and (script.title() not in control_extensions):
+                        log.debug(f'Script: fn="{script.filename}" type={self.name} skip')
+                        continue
+                    t0 = time.time()
+                    with gr.Group(elem_id=f'{parent}_script_{script.title().lower().replace(" ", "_")}', elem_classes=['group-extension']) as group:
+                        try:
+                            create_script_ui(script, inputs, inputs_alwayson)
+                        except Exception as e:
+                            errors.display(e, f'Create Script UI: type=extension fn="{script.filename}"')
+                    script.group = group
+                    time_setup[script.title()] = time_setup.get(script.title(), 0) + (time.time()-t0)
+
+
         for script in self.selectable_scripts:
             if (self.name == 'control') and (paths.extensions_dir in script.filename) and (script.title() not in control_extensions):
-                errors.log.debug(f'Script: fn="{script.filename}" type={self.name} skip')
+                log.debug(f'Script: fn="{script.filename}" type={self.name} skip')
                 continue
             with gr.Group(elem_id=f'{parent}_script_{script.title().lower().replace(" ", "_")}', elem_classes=['group-scripts'], visible=False) as group:
                 t0 = time.time()
-                create_script_ui(script, inputs, inputs_alwayson)
+                try:
+                    create_script_ui(script, inputs, inputs_alwayson)
+                except Exception as e:
+                    errors.display(e, f'Create Script UI: type=selectable fn="{script.filename}"')
                 time_setup[script.title()] = time_setup.get(script.title(), 0) + (time.time()-t0)
                 script.group = group
 
@@ -501,7 +570,7 @@ class ScriptRunner:
             if title == 'None': # called when an initial value is set from ui-config.json to show script's UI components
                 return
             if title not in self.titles:
-                errors.log.error(f'Script not found: {title}')
+                log.error(f'Script: title="{title}" op=init not found')
                 return
             script_index = self.titles.index(title)
             self.selectable_scripts[script_index].group.visible = True
@@ -511,24 +580,32 @@ class ScriptRunner:
 
         def onload_script_visibility(params):
             title = params.get('Script', None)
-            if title:
+            if title and title in self.titles:
                 title_index = self.titles.index(title)
                 visibility = title_index == self.script_load_ctr
                 self.script_load_ctr = (self.script_load_ctr + 1) % len(self.titles)
                 return gr.update(visible=visibility)
+            elif title and title in self.alwayson_titles:
+                title_index = self.alwayson_titles.index(title)
+                visibility = title_index == self.script_load_ctr
+                self.script_load_ctr = (self.script_load_ctr + 1) % len(self.titles)
+                return gr.update(visible=visibility)
             else:
+                # log.warning(f'Script: title="{title}" op=visibility not found')
                 return gr.update(visible=False)
 
         self.infotext_fields.append((dropdown, lambda x: gr.update(value=x.get('Script', 'None'))))
         self.infotext_fields.extend([(script.group, onload_script_visibility) for script in self.selectable_scripts if script.group is not None])
         return inputs
 
-    def run(self, p, *args):
+    def run(self, p: StableDiffusionProcessing, *args) -> Processed | None:
         s = ScriptSummary('run')
         script_index = args[0] if len(args) > 0 else 0
-        if script_index == 0:
+        if (script_index is None) or (script_index == 0):
             return None
-        script = self.selectable_scripts[script_index-1]
+        script = self.selectable_scripts[script_index - 1]
+        if script is None:
+            script = self.alwayson_scripts[script_index - 1]
         if script is None:
             return None
         if 'upscale' in script.title():
@@ -541,17 +618,17 @@ class ScriptRunner:
             processed = script.run(p, *parsed)
         else:
             processed = None
-            errors.log.error(f'Script: file="{script.filename}" no run function defined')
+            log.error(f'Script: file="{script.filename}" no run function defined')
         s.record(script.title())
         s.report()
         return processed
 
-    def after(self, p, processed, *args):
+    def after(self, p: StableDiffusionProcessing, processed: Processed, *args):
         s = ScriptSummary('after')
         script_index = args[0] if len(args) > 0 else 0
-        if script_index == 0:
+        if (script_index is None) or (script_index == 0):
             return processed
-        script = self.selectable_scripts[script_index-1]
+        script = self.selectable_scripts[script_index - 1]
         if script is None or not hasattr(script, 'after'):
             return processed
         parsed = []
@@ -564,7 +641,7 @@ class ScriptRunner:
         s.report()
         return processed
 
-    def before_process(self, p, **kwargs):
+    def before_process(self, p: StableDiffusionProcessing, **kwargs):
         s = ScriptSummary('before-process')
         for script in self.alwayson_scripts:
             try:
@@ -576,7 +653,7 @@ class ScriptRunner:
             s.record(script.title())
         s.report()
 
-    def process(self, p, **kwargs):
+    def process(self, p: StableDiffusionProcessing, **kwargs):
         s = ScriptSummary('process')
         for script in self.alwayson_scripts:
             try:
@@ -588,7 +665,7 @@ class ScriptRunner:
             s.record(script.title())
         s.report()
 
-    def process_images(self, p, **kwargs):
+    def process_images(self, p: StableDiffusionProcessing, **kwargs):
         s = ScriptSummary('process_images')
         processed = None
         for script in self.alwayson_scripts:
@@ -604,7 +681,7 @@ class ScriptRunner:
         s.report()
         return processed
 
-    def before_process_batch(self, p, **kwargs):
+    def before_process_batch(self, p: StableDiffusionProcessing, **kwargs):
         s = ScriptSummary('before-process-batch')
         for script in self.alwayson_scripts:
             try:
@@ -616,7 +693,7 @@ class ScriptRunner:
             s.record(script.title())
         s.report()
 
-    def process_batch(self, p, **kwargs):
+    def process_batch(self, p: StableDiffusionProcessing, **kwargs):
         s = ScriptSummary('process-batch')
         for script in self.alwayson_scripts:
             try:
@@ -628,7 +705,7 @@ class ScriptRunner:
             s.record(script.title())
         s.report()
 
-    def postprocess(self, p, processed):
+    def postprocess(self, p: StableDiffusionProcessing, processed):
         s = ScriptSummary('postprocess')
         for script in self.alwayson_scripts:
             try:
@@ -640,7 +717,7 @@ class ScriptRunner:
             s.record(script.title())
         s.report()
 
-    def postprocess_batch(self, p, images, **kwargs):
+    def postprocess_batch(self, p: StableDiffusionProcessing, images, **kwargs):
         s = ScriptSummary('postprocess-batch')
         for script in self.alwayson_scripts:
             try:
@@ -652,7 +729,7 @@ class ScriptRunner:
             s.record(script.title())
         s.report()
 
-    def postprocess_batch_list(self, p, pp: PostprocessBatchListArgs, **kwargs):
+    def postprocess_batch_list(self, p: StableDiffusionProcessing, pp: PostprocessBatchListArgs, **kwargs):
         s = ScriptSummary('postprocess-batch-list')
         for script in self.alwayson_scripts:
             try:
@@ -664,7 +741,7 @@ class ScriptRunner:
             s.record(script.title())
         s.report()
 
-    def postprocess_image(self, p, pp: PostprocessImageArgs):
+    def postprocess_image(self, p: StableDiffusionProcessing, pp: PostprocessImageArgs):
         s = ScriptSummary('postprocess-image')
         for script in self.alwayson_scripts:
             try:
@@ -676,33 +753,47 @@ class ScriptRunner:
             s.record(script.title())
         s.report()
 
-    def before_component(self, component, **kwargs):
+    def before_component(self, component: IOComponent, **kwargs):
+        if component is None or isinstance(component, gr.Blocks):
+            return
         s = ScriptSummary('before-component')
         for script in self.scripts:
+            if not hasattr(script, 'before_component'):
+                continue
+            for elem_id, callback in script.on_before_component_elem_id:
+                if elem_id == kwargs.get("elem_id"):
+                    try:
+                        callback(OnComponent(component=component))
+                    except Exception as e:
+                        errors.display(e, f"Running script before component: id={elem_id} fn={script.filename}")
             try:
                 script.before_component(component, **kwargs)
             except Exception as e:
-                errors.display(e, f'Running script before component: {script.filename}')
+                errors.display(e, f'Running script before component: fn={script.filename}')
             s.record(script.title())
         s.report()
 
-    def after_component(self, component, **kwargs):
+    def after_component(self, component: IOComponent, **kwargs):
+        if component is None or isinstance(component, gr.Blocks):
+            return
         s = ScriptSummary('after-component')
         for script in self.scripts:
+            if not hasattr(script, 'after_component'):
+                continue
             for elem_id, callback in script.on_after_component_elem_id:
                 if elem_id == kwargs.get("elem_id"):
                     try:
                         callback(OnComponent(component=component))
                     except Exception as e:
-                        errors.display(e, f"Running script before_component_elem_id: {script.filename}")
+                        errors.display(e, f"Running script after component: id={elem_id} fn={script.filename}")
             try:
                 script.after_component(component, **kwargs)
             except Exception as e:
-                errors.display(e, f'Running script after component: {script.filename}')
+                errors.display(e, f'Running script after component: fn={script.filename}')
             s.record(script.title())
         s.report()
 
-    def reload_sources(self, cache):
+    def reload_sources(self, cache: dict):
         s = ScriptSummary('reload-sources')
         for si, script in list(enumerate(self.scripts)):
             if hasattr(script, 'args_to') and hasattr(script, 'args_from'):

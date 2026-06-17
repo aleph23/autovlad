@@ -1,5 +1,7 @@
 import os
 import inspect
+from html import escape
+from typing import cast
 import gradio as gr
 from modules import errors, sd_models, sd_vae, extras, sd_samplers, ui_symbols, modelstats
 from modules.ui_components import ToolButton
@@ -11,6 +13,91 @@ from modules.shared import opts, log
 extra_ui = []
 
 
+def get_folder_size(folder):
+    total_size = 0
+    for dirpath, _dirnames, filenames in os.walk(folder, followlinks=False):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if not os.path.islink(fp) and os.path.isfile(fp):
+                total_size += os.path.getsize(fp)
+    return round(total_size / 1024 / 1024 / 1024, 3)
+
+
+def update_model_hashes():
+    from modules import sd_unet, sd_checkpoint
+    unets = {}
+    for k, v in sd_unet.unet_dict.items():
+        unets[k] = sd_checkpoint.CheckpointInfo(name=k, filename=v, model_type='unet')
+    yield from sd_models.update_model_hashes(unets, model_type='unet')
+    yield from sd_models.update_model_hashes(model_type='checkpoint')
+
+
+def create_models_table(rows: list | None = None):
+    from modules import sd_detect
+    if rows is None:
+        rows = []
+    rows = sorted(rows, key=lambda row: str(getattr(row, 'model_name', '')).lower())
+    html = """
+        <table class="simple-table sortable-table" data-sortable="true" data-default-sort-key="name" data-default-sort-order="asc" data-sort-key="name" data-sort-order="asc">
+            <thead>
+                <tr>
+                    <th class="sortable sorted-asc" aria-sort="ascending" data-sort-key="name" data-sort-type="text">Name</th>
+                    <th class="sortable" data-sort-key="family" data-sort-type="text">Family</th>
+                    <th class="sortable" data-sort-key="type" data-sort-type="text">Type</th>
+                    <th class="sortable" data-sort-key="pipeline" data-sort-type="text">Pipeline</th>
+                    <th class="sortable" data-sort-key="size" data-sort-type="number">Size</th>
+                    <th class="sortable" data-sort-key="mtime" data-sort-type="number">MTime</th>
+                    <th class="sortable" data-sort-key="hash" data-sort-type="text">Hash</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {tbody}
+            </tbody>
+        </table>
+    """
+    tbody = ''
+    for row in rows:
+        try:
+            f = row.filename
+            stat_size, stat_mtime = modelstats.stat(f)
+            if os.path.isfile(f):
+                typ = os.path.splitext(f)[1][1:]
+                size = round(stat_size / 1024 / 1024 / 1024, 3)
+            elif os.path.isdir(f):
+                typ = 'diffusers'
+                size = get_folder_size(f)
+            else:
+                typ = 'unknown'
+                size = 0
+            guess = 'Stable Diffusion' # set default guess
+            guess = sd_detect.guess_by_size(f, guess)
+            guess = sd_detect.guess_by_name(f, guess)
+            guess, pipeline = sd_detect.guess_by_diffusers(f, guess)
+            guess = sd_detect.guess_variant(f, guess)
+            pipeline = sd_detect.shared_items.get_pipelines().get(guess, None) if pipeline is None else pipeline
+            model_name = escape(str(row.model_name))
+            pipeline_name = escape(pipeline.__name__ if pipeline else '(unknown)')
+            typ_name = escape(str(typ))
+            guess_name = escape(str(guess))
+            hash_name = escape(str(row.shorthash))
+            mtime_sort = stat_mtime.timestamp() if hasattr(stat_mtime, 'timestamp') else 0
+            tbody += f"""
+                <tr>
+                    <td data-sort-value="{model_name.lower()}">{model_name}</td>
+                    <td data-sort-value="{typ_name.lower()}">{typ_name}</td>
+                    <td data-sort-value="{guess_name.lower()}">{guess_name}</td>
+                    <td data-sort-value="{pipeline_name.lower()}">{pipeline_name}</td>
+                    <td data-sort-value="{size}">{size:.3f} GB</td>
+                    <td data-sort-value="{mtime_sort}">{stat_mtime}</td>
+                    <td data-sort-value="{hash_name.lower()}">{hash_name}</td>
+                    <td style="cursor:pointer;" onclick="deleteFile('{escape(str(row.path))}')">\uf530</td>
+                </tr>
+            """
+        except Exception as e:
+            log.error(f'Model list: row={vars(row)} {e}')
+    return html.format(tbody=tbody)
+
 def create_ui():
     log.debug('UI initialize: tab=models')
     dummy_component = gr.Label(visible=False)
@@ -21,7 +108,7 @@ def create_ui():
 
         with gr.Column(elem_id='models_input_container', scale=3):
 
-            with gr.Tab(label="Current", elem_id="models_current_tab"):
+            with gr.Tab(label="Active Model", elem_id="models_current_tab"):
                 def create_modules_table(rows: list):
                     html = """
                         <table class="simple-table">
@@ -74,7 +161,7 @@ def create_ui():
                     with gr.Row():
                         save_path = gr.Textbox(label="Model base path", placeholder="Path to save model to", value=opts.diffusers_dir)
                     with gr.Row():
-                        save_shard = gr.Textbox(label="Max shard size", placeholder="Maximum shard size", value="10GB")
+                        save_shard = gr.Textbox(label="Max shard size", placeholder="Maximum shard size", value="5GB")
                         save_overwrite = gr.Checkbox(label="Overwrite existing", value=False)
                     with gr.Row():
                         save_result = gr.HTML(value="", elem_id="model_save_outcome")
@@ -86,64 +173,27 @@ def create_ui():
 
                 model_analyze.click(fn=analyze, inputs=[], outputs=[model_desc, model_meta])
 
-            with gr.Tab(label="List", elem_id="models_list_tab"):
-                def create_models_table(rows: list):
-                    from modules import sd_detect
-                    html = """
-                        <table class="simple-table">
-                            <thead>
-                                <tr><th>Name</th><th>Type</th><th>Detect</th><th>Pipeline</th><th>Hash</th><th>Size</th><th>MTime</th></tr>
-                            </thead>
-                            <tbody>
-                                {tbody}
-                            </tbody>
-                        </table>
-                    """
-                    tbody = ''
-                    for row in rows:
-                        try:
-                            f = row.filename
-                            stat_size, stat_mtime = modelstats.stat(f)
-                            if os.path.isfile(f):
-                                typ = os.path.splitext(f)[1][1:]
-                                size = f"{round(stat_size / 1024 / 1024 / 1024, 3)} gb"
-                            elif os.path.isdir(f):
-                                typ = 'diffusers'
-                                size = 'folder'
-                            else:
-                                typ = 'unknown'
-                                size = 'unknown'
-                            guess = 'Stable Diffusion XL' if 'XL' in f.upper() else 'Stable Diffusion' # set default guess
-                            guess = sd_detect.guess_by_size(f, guess)
-                            guess = sd_detect.guess_by_name(f, guess)
-                            guess, pipeline = sd_detect.guess_by_diffusers(f, guess)
-                            guess = sd_detect.guess_variant(f, guess)
-                            pipeline = sd_detect.shared_items.get_pipelines().get(guess, None) if pipeline is None else pipeline
-                            tbody += f"""
-                                <tr>
-                                    <td>{row.model_name}</td>
-                                    <td>{typ}</td>
-                                    <td>{guess}</td>
-                                    <td>{pipeline.__name__ if pipeline else '(unknown)'}</td>
-                                    <td>{row.shorthash}</td>
-                                    <td>{size}</td>
-                                    <td>{stat_mtime}</td>
-                                </tr>
-                            """
-                        except Exception as e:
-                            log.error(f'Model list: row={vars(row)} {e}')
-                    return html.format(tbody=tbody)
-
+            with gr.Tab(label="Models List", elem_id="models_list_tab"):
                 with gr.Row():
                     gr.HTML('<h2>List all locally available models</h2><br>')
                 with gr.Row():
-                    model_list_btn = gr.Button(value="List models", variant='primary')
-                    model_checkhash_btn = gr.Button(value="Calculate missing hashes", variant='secondary')
+                    model_list_btn = gr.Button(value="Refresh list", variant='primary')
+                    model_checkhash_btn = gr.Button(value="Calculate hashes", variant='secondary')
                 with gr.Row():
-                    model_table = gr.HTML(value='', elem_id="model_list_table")
+                    model_table = gr.HTML(value=create_models_table(), elem_id="model_list_table", elem_classes="scroll-auto")
 
-                model_checkhash_btn.click(fn=sd_models.update_model_hashes, inputs=[], outputs=[model_table])
-                model_list_btn.click(fn=lambda: create_models_table(sd_models.checkpoints_list.values()), inputs=[], outputs=[model_table])
+                model_checkhash_btn.click(fn=update_model_hashes, inputs=[], outputs=[model_table])
+                model_list_btn.click(fn=lambda: create_models_table(list(sd_models.checkpoints_list.values())), inputs=[], outputs=[model_table])
+
+            with gr.Tab(label="Cache List", elem_id="models_cache_tab"):
+                with gr.Row():
+                    gr.HTML('<h2>List models in Hugging Face cache</h2><br>')
+                with gr.Row():
+                    model_cache_btn = gr.Button(value="Refresh list", variant='primary')
+                with gr.Row():
+                    cache_table = gr.HTML(value=create_models_table(), elem_id="model_cache_table", elem_classes="scroll-auto")
+
+                model_cache_btn.click(fn=lambda: create_models_table(sd_models.list_hfcache()), inputs=[], outputs=[cache_table])
 
             with gr.Tab(label="Metadata", elem_id="models_metadata_tab"):
                 from modules.civitai.metadata_civitai import civit_search_metadata, civit_update_metadata
@@ -171,14 +221,14 @@ def create_ui():
                     return ['None'] + sd_models.checkpoint_titles()
 
                 with gr.Row():
-                    gr.HTML('<h2>&nbspMerge multiple models<br></h2>')
+                    gr.HTML('<h3>&nbspMerge multiple models<br></h2>')
                 with gr.Row(equal_height=False):
                     with gr.Column(variant='compact'):
                         with gr.Row():
                             custom_name = gr.Textbox(label="New model name")
                         with gr.Row():
                             merge_mode = gr.Dropdown(choices=merge_methods.__all__, value="weighted_sum", label="Interpolation Method")
-                            merge_mode_docs = gr.HTML(value=getattr(merge_methods, "weighted_sum", "").__doc__.replace("\n", "<br>"))
+                            merge_mode_docs = gr.HTML(value=merge_methods.weighted_sum.__doc__.strip().replace("\n", "<br>")) # pylint: disable=no-member # pyright: ignore[reportOptionalMemberAccess]
                         with gr.Row():
                             primary_model_name = gr.Dropdown(sd_model_choices(), label="Primary model", value="None")
                             create_refresh_button(primary_model_name, sd_models.list_models, lambda: {"choices": sd_model_choices()}, "checkpoint_A_refresh")
@@ -318,7 +368,11 @@ def create_ui():
                         return gr.Slider.update(value=None, visible=False)
 
                 def show_help(mode):
-                    doc = getattr(merge_methods, mode).__doc__.replace("\n", "<br>")
+                    try:
+                        doc = getattr(merge_methods, mode).__doc__.strip().replace("\n", "<br>")
+                    except AttributeError:
+                        log.warning(f'Merge mode "{mode}" is missing documentation')
+                        doc = "Error: Documentation missing"
                     return gr.update(value=doc, visible=True)
 
                 def show_unload(device):
@@ -341,7 +395,7 @@ def create_ui():
                         preset = interpolate(presets, ratio)
                     else:
                         preset = presets[0]
-                    preset = ['%.3f' % x if int(x) != x else str(x) for x in preset] # pylint: disable=consider-using-f-string
+                    preset = [f'{x:.3f}' if int(x) != x else str(x) for x in preset] # pylint: disable=consider-using-f-string
                     preset = [preset[0], ",".join(preset[1:13]), preset[13], ",".join(preset[14:])]
                     return [gr.update(value=x) for x in preset] + [gr.update(selected=2)]
 
@@ -358,8 +412,8 @@ def create_ui():
                 merge_mode.input(fn=tertiary, inputs=merge_mode, outputs=[tertiary_model_name, tertiary_refresh])
                 merge_mode.input(fn=beta_visibility, inputs=merge_mode, outputs=[beta, alpha_label, beta_label, beta_apply_preset, beta_preset, beta_base, beta_in_blocks, beta_mid_block, beta_out_blocks])
                 re_basin.change(fn=show_iters, inputs=re_basin, outputs=re_basin_iterations)
-                apply_preset.click(fn=load_presets, inputs=[alpha_preset, alpha_preset_lambda], outputs=[alpha_base, alpha_in_blocks, alpha_mid_block, alpha_out_blocks, tabs])
-                beta_apply_preset.click(fn=load_presets, inputs=[beta_preset, beta_preset_lambda], outputs=[beta_base, beta_in_blocks, beta_mid_block, beta_out_blocks, tabs])
+                apply_preset.click(fn=load_presets, inputs=[alpha_preset, alpha_preset_lambda], outputs=[alpha_base, alpha_in_blocks, alpha_mid_block, alpha_out_blocks, cast("gr.components.Component", tabs)]) # Casting because Tabs has an update method.
+                beta_apply_preset.click(fn=load_presets, inputs=[beta_preset, beta_preset_lambda], outputs=[beta_base, beta_in_blocks, beta_mid_block, beta_out_blocks, cast("gr.components.Component", tabs)]) # Casting because Tabs has an update method.
 
                 modelmerger_merge.click(
                     fn=wrap_gradio_gpu_call(modelmerger, extra_outputs=lambda: [gr.update() for _ in range(4)], name='Models'),
@@ -408,7 +462,7 @@ def create_ui():
 
             with gr.Tab(label="Replace", elem_id="models_replace_tab"):
                 with gr.Row():
-                    gr.HTML('<h2>&nbspReplace model components<br></h2>')
+                    gr.HTML('<h3>&nbspReplace model components<br></h2>')
                 with gr.Row():
                     with gr.Column(scale=3):
                         model_type = gr.Dropdown(label="Base model type", choices=['sd15', 'sdxl', 'sd21', 'sd35', 'flux.1'], value='sdxl', interactive=False)
@@ -478,11 +532,21 @@ def create_ui():
                     outputs=[models_outcome]
                 )
 
-            with gr.Tab(label="CivitAI", elem_id="models_civitai_tab"):
+            with gr.Tab(label="CivitAI", elem_id="models_civitai_tab") as civitai_tab:
                 from modules.civitai.search_civitai import search_civitai, create_model_cards, base_models
 
-                def civitai_search(civit_search_text, civit_search_tag, civit_nsfw, civit_type, civit_base, civit_token):
-                    results = search_civitai(query=civit_search_text, tag=civit_search_tag, nsfw=civit_nsfw, types=civit_type, base=civit_base, token=civit_token)
+                sort_fallback = ['', 'Most Downloaded', 'Highest Rated', 'Most Liked', 'Most Discussed',
+                                 'Most Collected', 'Most Images', 'Newest', 'Oldest']
+                type_fallback = ['', 'Checkpoint', 'TextualInversion', 'Hypernetwork', 'AestheticGradient',
+                                 'LORA', 'LoCon', 'DoRA', 'Controlnet', 'Upscaler', 'MotionModule',
+                                 'VAE', 'Poses', 'Wildcards', 'Workflows', 'Detection', 'Other']
+                def civitai_search(civit_search_text, civit_search_tag, civit_nsfw, civit_type,
+                                   civit_base, civit_token, civit_sort, civit_period):
+                    if civit_search_text and civit_search_tag:
+                        civit_search_tag = ''  # query+tag is broken at API level, keyword wins
+                    results = search_civitai(query=civit_search_text, tag=civit_search_tag, nsfw=civit_nsfw,
+                                             types=civit_type, base=civit_base, token=civit_token,
+                                             sort=civit_sort, period=civit_period)
                     html = create_model_cards(results)
                     return html
 
@@ -491,55 +555,120 @@ def create_ui():
                     opts.civitai_token = token
                     opts.save()
 
-                def civitai_download(model_urls, model_names, model_types, model_path, civit_token, model_output):
+                def civitai_download(model_urls, model_names, model_types, model_bases,
+                                     model_ids, version_ids, model_path, civit_token, model_output):
                     from modules.civitai.download_civitai import download_civit_model
-                    for model_url, model_name, model_type in zip(model_urls, model_names, model_types):
+                    for model_url, model_name, model_type, model_base, model_id, version_id in zip(
+                            model_urls, model_names, model_types, model_bases, model_ids, version_ids, strict=False):
                         msg = f"<h4>Initiating download</h4><div>{model_name} | {model_type} | <a href='{model_url}'>{model_url}</a></div><br>"
                         yield msg + model_output
-                        download_civit_model(model_url, model_name, model_path, model_type, civit_token)
+                        download_civit_model(model_url, model_name, model_path, model_type, civit_token,
+                                             base_model=model_base, model_id=int(model_id or 0), version_id=int(version_id or 0))
                         yield model_output
+
+                def civitai_toggle_subfolder(enabled, template):
+                    opts.data['civitai_save_subfolder_enabled'] = enabled
+                    if enabled and not template:
+                        template = '{{BASEMODEL}}'
+                    opts.data['civitai_save_subfolder'] = template
+                    opts.save()
+                    return gr.update(value=template, interactive=enabled)
 
                 with gr.Row():
                     gr.HTML('<h2>Search & Download</h2>')
                 with gr.Row(elem_id='civitai_search_row'):
-                    civit_search_text = gr.Textbox(label='', placeholder='keyword', elem_id="civit_search_text")
-                    civit_search_tag = gr.Textbox(label='', placeholder='tag', elem_id="civit_search_text")
+                    civit_search_text = gr.Textbox(label='', placeholder='keyword, model id, or civitai url', elem_id="civit_search_text")
+                    civit_search_tag = gr.Textbox(label='', placeholder='tag', elem_id="civit_search_tag")
                     civit_search_text_btn = ToolButton(value=ui_symbols.search, interactive=True, elem_id="civit_text_search")
-                with gr.Accordion(label='Advanced', open=False, elem_id="civitai_search_options"):
+                with gr.Accordion(label='Options', open=False, elem_id="civitai_search_options"):
                     civit_download_btn = gr.Button(value="Download model", variant='primary', elem_id="civitai_download_btn", visible=False)
+                    with gr.Row():
+                        civit_type = gr.Dropdown(choices=type_fallback, label='CivitAI model type', value='', elem_id='civit_type')
+                        civit_base = gr.Dropdown(choices=base_models, label='CivitAI base model', value='')
+                    with gr.Row():
+                        civit_sort = gr.Dropdown(choices=sort_fallback, label='CivitAI sort', value='', elem_id='civit_sort')
+                        civit_period = gr.Dropdown(
+                            choices=['', 'AllTime', 'Year', 'Month', 'Week', 'Day'],
+                            label='CivitAI time period', value='', elem_id='civit_period',
+                        )
+                    with gr.Row():
+                        civit_nsfw = gr.Checkbox(label='CivitAI NSFW allowed', value=True)
                     with gr.Row():
                         civit_token = gr.Textbox(opts.civitai_token, label='CivitAI token', placeholder='optional access token for private or gated models', elem_id="civitai_token")
                     with gr.Row():
-                        civit_nsfw = gr.Checkbox(label='NSFW allowed', value=True)
-                    with gr.Row():
-                        civit_type = gr.Textbox(label='Target model type', placeholder='Checkpoint, LORA, ...', value='')
-                    with gr.Row():
-                        # civit_base = gr.Textbox(label='Base model', placeholder='SDXL, ...')
-                        civit_base = gr.Dropdown(choices=base_models, label='Base model', value='')
-                    with gr.Row():
                         civit_folder = gr.Textbox(label='Download folder', placeholder='optional folder for downloads')
+                    with gr.Row():
+                        civit_subfolder_enabled = gr.Checkbox(
+                            label='Sort downloads into subfolders',
+                            value=getattr(opts, 'civitai_save_subfolder_enabled', False),
+                            elem_id='civit_subfolder_enabled',
+                        )
+                        civit_subfolder_template = gr.Textbox(
+                            label='Subfolder template',
+                            value=getattr(opts, 'civitai_save_subfolder', '') if getattr(opts, 'civitai_save_subfolder_enabled', False) else '',
+                            placeholder='e.g. {{BASEMODEL}} or {{CREATOR}}/{{BASEMODEL}}',
+                            interactive=getattr(opts, 'civitai_save_subfolder_enabled', False),
+                            elem_id='civit_subfolder_template',
+                        )
                 with gr.Row():
                     civitai_models_output = gr.HTML('', elem_id="civitai_models_output")
-                # sort, period, limit
-                _dummy = gr.Label(visible=False)  # dummy component to get argspec later
-                civit_inputs = [civit_search_text, civit_search_tag, civit_nsfw, civit_type, civit_base, civit_token]
+                _dummy = gr.Label(visible=False)
+                civit_inputs = [civit_search_text, civit_search_tag, civit_nsfw, civit_type,
+                                civit_base, civit_token, civit_sort, civit_period]
                 civit_search_text_btn.click(fn=civitai_search, inputs=civit_inputs, outputs=[civitai_models_output])
                 civit_search_text.submit(fn=civitai_search, inputs=civit_inputs, outputs=[civitai_models_output])
                 civit_search_tag.submit(fn=civitai_search, inputs=civit_inputs, outputs=[civitai_models_output])
                 civit_token.change(fn=civitai_update_token, inputs=[civit_token], outputs=[])
+                civit_subfolder_enabled.change(
+                    fn=civitai_toggle_subfolder,
+                    inputs=[civit_subfolder_enabled, civit_subfolder_template],
+                    outputs=[civit_subfolder_template],
+                )
+                civit_subfolder_template.change(
+                    fn=lambda v: (setattr(opts, 'civitai_save_subfolder', v), opts.save()),
+                    inputs=[civit_subfolder_template], outputs=[],
+                )
                 civit_download_btn.click(
                     fn=civitai_download,
                     _js="downloadCivitModel",
-                    inputs=[_dummy, _dummy, _dummy, civit_folder, civit_token, civitai_models_output],
+                    inputs=[_dummy, _dummy, _dummy, _dummy, _dummy, _dummy, civit_folder, civit_token, civitai_models_output],
                     outputs=[civitai_models_output],
-                    show_progress=True,
+                    show_progress='full',
+                )
+
+                _civitai_loaded = False
+
+                def civitai_on_tab_enter():
+                    nonlocal _civitai_loaded
+                    if _civitai_loaded:
+                        return [gr.update(), gr.update(), gr.update(), gr.update(), gr.update()]
+                    _civitai_loaded = True
+                    from modules.civitai.client_civitai import client
+                    options = client.discover_options()
+                    type_choices = [''] + (options.get('types', []) or type_fallback[1:])
+                    sort_choices = [''] + (options.get('sort', []) or sort_fallback[1:])
+                    base_choices = [''] + (options.get('base_models', []) or base_models[1:])
+                    results = search_civitai(query='', sort='Most Downloaded', period='AllTime', limit=20)
+                    html = create_model_cards(results)
+                    return [
+                        gr.update(choices=type_choices),
+                        gr.update(choices=sort_choices, value='Most Downloaded'),
+                        gr.update(choices=base_choices),
+                        gr.update(value='AllTime'),
+                        html,
+                    ]
+
+                civitai_tab.select(
+                    fn=civitai_on_tab_enter,
+                    inputs=[],
+                    outputs=[civit_type, civit_sort, civit_base, civit_period, civitai_models_output],
                 )
 
             with gr.Tab(label="Huggingface", elem_id="models_huggingface_tab"):
                 from modules.models_hf import hf_search, hf_select, hf_download_model, hf_update_token
                 with gr.Column(scale=6):
                     with gr.Row():
-                        gr.HTML('<h2>&nbspDownload model from huggingface<br></h2>')
+                        gr.HTML('<h3>&nbspDownload model from huggingface<br></h2>')
                     with gr.Row():
                         hf_search_text = gr.Textbox('', label='Search models', placeholder='search huggingface models')
                         hf_search_btn = ToolButton(value=ui_symbols.search, interactive=True, elem_id="hf_text_search")

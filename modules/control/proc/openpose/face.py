@@ -328,7 +328,7 @@ class Face(object):
 
     def __call__(self, face_img):
         device = next(iter(self.model.parameters())).device
-        H, W, C = face_img.shape
+        H, W, _C = face_img.shape
 
         w_size = 384
         x_data = torch.from_numpy(util.smart_resize(face_img, (w_size, w_size))).permute([2, 0, 1]) / 256.0 - 0.5

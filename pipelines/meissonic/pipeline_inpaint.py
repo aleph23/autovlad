@@ -289,7 +289,7 @@ class MeissonicInpaintPipeline(DiffusionPipeline):
             self.vqvae.float()
 
         latents = self.vqvae.encode(image.to(dtype=self.vqvae.dtype, device=self._execution_device)).latents
-        latents_bsz, channels, latents_height, latents_width = latents.shape
+        latents_bsz, _channels, latents_height, latents_width = latents.shape
         latents = self.vqvae.quantize(latents)[2][2].reshape(latents_bsz, latents_height, latents_width)
 
         mask = self.mask_processor.preprocess(

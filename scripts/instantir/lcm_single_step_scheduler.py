@@ -322,7 +322,7 @@ class LCMSingleStepScheduler(SchedulerMixin, ConfigMixin):
 
     def set_timesteps(
         self,
-        num_inference_steps: int = None,
+        num_inference_steps: int | None = None,
         device: Union[str, torch.device] = None,
         original_inference_steps: Optional[int] = None,
         strength: int = 1.0,

@@ -64,7 +64,7 @@ def teacache_ltx_forward(
         inp = self.transformer_blocks[0].norm1(inp)
         num_ada_params = self.transformer_blocks[0].scale_shift_table.shape[0]
         ada_values = self.transformer_blocks[0].scale_shift_table[None, None] + temb_.reshape(batch_size, temb_.size(1), num_ada_params, -1)
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = ada_values.unbind(dim=2)
+        shift_msa, scale_msa, _gate_msa, _shift_mlp, _scale_mlp, _gate_mlp = ada_values.unbind(dim=2)
         modulated_inp = inp * (1 + scale_msa) + shift_msa
         if self.cnt == 0 or self.cnt == self.num_steps-1:
             should_calc = True

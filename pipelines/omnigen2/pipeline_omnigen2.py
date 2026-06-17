@@ -243,10 +243,10 @@ class OmniGen2Pipeline(DiffusionPipeline):
         if batch_size == 1:
             images = [images]
         latents = []
-        for i, img in enumerate(images):
+        for _i, img in enumerate(images):
             if img is not None and len(img) > 0:
                 ref_latents = []
-                for j, img_j in enumerate(img):
+                for _j, img_j in enumerate(img):
                     img_j = self.image_processor.preprocess(img_j, max_pixels=max_pixels, max_side_length=max_side_length)
                     ref_latents.append(self.encode_vae(img_j.to(device=device)).squeeze(0))
             else:
@@ -471,7 +471,7 @@ class OmniGen2Pipeline(DiffusionPipeline):
         image_guidance_scale: float = 1.0,
         cfg_range: Tuple[float, float] = (0.0, 1.0),
         attention_kwargs: Optional[Dict[str, Any]] = None,
-        timesteps: List[int] = None,
+        timesteps: List[int] | None = None,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.FloatTensor] = None,
         output_type: Optional[str] = "pil",
@@ -610,7 +610,7 @@ class OmniGen2Pipeline(DiffusionPipeline):
         verbose,
         step_func=None
     ):
-        batch_size = latents.shape[0]
+        latents.shape[0]
 
         timesteps, num_inference_steps = retrieve_timesteps(
             self.scheduler,
@@ -701,7 +701,7 @@ class OmniGen2Pipeline(DiffusionPipeline):
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
         timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
-        batch_size, num_channels_latents, height, width = latents.shape
+        _batch_size, _num_channels_latents, _height, _width = latents.shape
 
         optional_kwargs = {}
         if 'ref_image_hidden_states' in set(inspect.signature(self.transformer.forward).parameters.keys()):

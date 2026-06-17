@@ -2,14 +2,15 @@ import os
 from urllib.parse import unquote
 import gradio as gr
 from PIL import Image
-from modules import shared, ui_symbols, ui_common, images, video, modelstats
+from modules import ui_symbols, ui_common, images, video, modelstats
+from modules.logger import log
 from modules.ui_components import ToolButton
 
 
 def read_media(fn):
     fn = unquote(fn).replace('%3A', ':')
     if not os.path.isfile(fn):
-        shared.log.error(f'Gallery not found: file="{fn}"')
+        log.error(f'Gallery not found: file="{fn}"')
         return [[], None, '', '', f'Media not found: {fn}']
     stat_size, stat_mtime = modelstats.stat(fn)
     # Treat common containers as video for preview; Gradio/HTML5 will handle codec support.
@@ -18,7 +19,7 @@ def read_media(fn):
         geninfo = ''
         try:
             frames, fps, duration, w, h, codec, _frame = video.get_video_params(fn)
-            log = f'''
+            info_html = f'''
                 <p>Video <b>{w} x {h}</b>
                 | Codec <b>{codec}</b>
                 | Frames <b>{frames:,}</b>
@@ -28,8 +29,8 @@ def read_media(fn):
                 | Modified <b>{stat_mtime}</b></p><br>
                 '''
         except Exception as e:  # keep preview even if probing fails
-            shared.log.warning(f'Video probe failed: file="{fn}" {e}')
-            log = f'''
+            log.warning(f'Video probe failed: file="{fn}" {e}')
+            info_html = f'''
                 <p>Video
                 | Size <b>{stat_size:,}</b>
                 | Modified <b>{stat_mtime}</b></p><br>
@@ -37,39 +38,35 @@ def read_media(fn):
         return [
             gr.update(visible=False, value=[]),          # hide image gallery preview
             gr.update(visible=True, value=fn),           # show video player
-            geninfo, geninfo, log
+            geninfo, geninfo, info_html
         ]
     else:  # image
         image = Image.open(fn)
         image.already_saved_as = fn
         geninfo, _items = images.read_info_from_image(image)
-        log = f'''
+        info_html = f'''
             <p>Image <b>{image.width} x {image.height}</b>
             | Format <b>{image.format}</b>
             | Mode <b>{image.mode}</b>
             | Size <b>{stat_size:,}</b>
             | Modified <b>{stat_mtime}</b></p><br>
             '''
-        return [gr.update(visible=True, value=[image]), gr.update(visible=False), geninfo, geninfo, log]
+        return [gr.update(visible=True, value=[image]), gr.update(visible=False), geninfo, geninfo, info_html]
 
 
 def create_ui():
-    shared.log.debug('UI initialize: tab=gallery')
+    log.debug('UI initialize: tab=gallery')
     with gr.Blocks() as tab:
         with gr.Row(elem_id='tab-gallery-sort-buttons'):
             sort_buttons = []
-            sort_buttons.append(ToolButton(value=ui_symbols.sort_alpha_asc, elem_classes=['gallery-sort']))
-            sort_buttons.append(ToolButton(value=ui_symbols.sort_alpha_dsc, elem_classes=['gallery-sort']))
-            sort_buttons.append(ToolButton(value=ui_symbols.sort_size_asc, elem_classes=['gallery-sort']))
-            sort_buttons.append(ToolButton(value=ui_symbols.sort_size_dsc, elem_classes=['gallery-sort']))
-            sort_buttons.append(ToolButton(value=ui_symbols.sort_num_asc, elem_classes=['gallery-sort']))
-            sort_buttons.append(ToolButton(value=ui_symbols.sort_num_dsc, elem_classes=['gallery-sort']))
-            sort_buttons.append(ToolButton(value=ui_symbols.sort_time_asc, elem_classes=['gallery-sort']))
-            sort_buttons.append(ToolButton(value=ui_symbols.sort_time_dsc, elem_classes=['gallery-sort']))
+            sort_buttons.append(sort_name := ToolButton(value=ui_symbols.sort_alpha, elem_classes=['gallery-sort']))
+            sort_buttons.append(sort_size := ToolButton(value=ui_symbols.sort_size, elem_classes=['gallery-sort']))
+            sort_buttons.append(sort_res := ToolButton(value=ui_symbols.sort_num, elem_classes=['gallery-sort']))
+            sort_buttons.append(sort_time := ToolButton(value=ui_symbols.sort_time, elem_classes=['gallery-sort']))
+            sort_buttons.append(clear_cache := ToolButton(value=ui_symbols.clear, elem_classes=['gallery-sort']))
             gr.Textbox(show_label=False, placeholder='Search', elem_id='tab-gallery-search')
             gr.HTML('', elem_id='tab-gallery-status')
-            for btn in sort_buttons:
-                btn.click(fn=None, _js='gallerySort', inputs=[btn], outputs=[])
+            gr.HTML('', elem_id='tab-gallery-progress')
         with gr.Row():
             with gr.Column():
                 gr.HTML('', elem_id='tab-gallery-folders')
@@ -80,4 +77,11 @@ def create_ui():
                 gallery_video = gr.Video(None, elem_id='tab-gallery-video', show_label=False, visible=False)
                 gallery_images, gen_info, html_info, _html_info_formatted, html_log = ui_common.create_output_panel("gallery")
                 btn_gallery_image.click(fn=read_media, _js='gallerySendImage', inputs=[html_info], outputs=[gallery_images, gallery_video, html_info, gen_info, html_log])
+
+    sort_name.click(fn=None, _js='() => gallerySort("name")')
+    sort_size.click(fn=None, _js='() => gallerySort("size")')
+    sort_res.click(fn=None, _js='() => gallerySort("res")')
+    sort_time.click(fn=None, _js='() => gallerySort("mod")')
+    clear_cache.click(fn=None, _js='clearCache')
+
     return [(tab, 'Gallery', 'tab-gallery')]

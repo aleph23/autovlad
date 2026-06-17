@@ -1,9 +1,11 @@
 import os
 import html
 import json
-import concurrent
+import concurrent.futures
 from datetime import datetime
-from modules import shared, ui_extra_networks, sd_models, modelstats, paths
+from modules import shared, ui_extra_networks, sd_models, modelstats, paths, devices
+from modules.logger import log
+from modules.json_helpers import readfile
 
 
 version_map = {
@@ -18,6 +20,8 @@ version_map = {
     "StableDiffusionXL": "SD XL",
     "WanToVideo": "Wan",
     "WanVACE": "Wan",
+    "Z": "Z-Image",
+    "Glm": "GLM-Image",
 }
 
 class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
@@ -36,13 +40,35 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
             return any(model.endswith(url) for model in existing)
 
         if not shared.opts.sd_checkpoint_autodownload or not shared.opts.extra_network_reference_enable:
+            log.debug(f'Networks: type="reference" autodownload={shared.opts.sd_checkpoint_autodownload} enable={shared.opts.extra_network_reference_enable}')
             return []
+        count = { 'total': 0, 'ready': 0, 'hidden': 0, 'experimental': 0, 'base': 0, 'quantized': 0, 'distilled': 0, 'community': 0, 'cloud': 0, 'nunchaku': 0 }
+
+        reference_base = readfile(os.path.join('data', 'reference.json'), as_type="dict")
+        reference_quant = readfile(os.path.join('data', 'reference-quant.json'), as_type="dict")
+        reference_distilled = readfile(os.path.join('data', 'reference-distilled.json'), as_type="dict")
+        reference_community = readfile(os.path.join('data', 'reference-community.json'), as_type="dict")
+        reference_cloud = readfile(os.path.join('data', 'reference-cloud.json'), as_type="dict")
+        reference_nunchaku = readfile(os.path.join('data', 'reference-nunchaku.json'), as_type="dict")
+        shared.reference_models = {}
+        shared.reference_models.update(reference_base)
+        shared.reference_models.update(reference_quant)
+        shared.reference_models.update(reference_community)
+        shared.reference_models.update(reference_distilled)
+        shared.reference_models.update(reference_cloud)
+        shared.reference_models.update(reference_nunchaku)
+
         for k, v in shared.reference_models.items():
+            count['total'] += 1
             url = v['path']
+            if v.get('hidden', False):
+                count['hidden'] += 1
+                continue
             experimental = v.get('experimental', False)
             if experimental:
                 if shared.cmd_opts.experimental:
-                    shared.log.debug(f'Networks: experimental model="{k}"')
+                    log.debug(f'Networks: experimental model="{k}"')
+                    count['experimental'] += 1
                 else:
                     continue
             preview = v.get('preview', v['path'])
@@ -61,6 +87,29 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
                 path = f'{v.get("path", "")}+{v.get("subfolder", "")}'
             else:
                 path = f'{v.get("path", "")}'
+
+            tag = v.get('tags', '')
+            tag = tag.split(',')[0].strip() # take first tag if multiple
+            if tag == 'nunchaku' and (devices.backend != 'cuda' and not shared.cmd_opts.experimental):
+                count['hidden'] += 1
+                continue
+            if tag in count:
+                count[tag] += 1
+            elif tag != '':
+                count[tag] = 1
+            else:
+                count['base'] += 1
+
+            ready = reference_downloaded(url)
+            version = "ready" if ready else "download"
+            if tag == 'cloud':
+                version = 'Cloud'
+            if not ready and shared.opts.offline_mode:
+                count['hidden'] += 1
+                continue
+            if ready:
+                count['ready'] += 1
+
             yield {
                 "type": 'Model',
                 "name": name,
@@ -75,8 +124,10 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
                 "info": {},
                 "metadata": {},
                 "description": v.get('desc', ''),
-                "version": "ready" if reference_downloaded(url) else "download",
+                "version": version,
+                "tags": tag,
             }
+        log.debug(f'Networks: type="reference" {count}')
 
     def create_item(self, name):
         record = None
@@ -100,13 +151,19 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
             if 'baseModel' in version:
                 record['version'] = version.get("baseModel", "")
             elif '_class_name' in record['info']:
-                record['version'] = record['info'].get('_class_name', '').replace('Pipeline', '').replace('Image', '')
+                cls = record['info']['_class_name']
+                if isinstance(cls, list):
+                    cls = cls[-1]
+                record['version'] = cls.replace('Pipeline', '').replace('Image', '')
             else:
                 record['version'] = ''
             record['version'] = version_map.get(record['version'], record['version'])
 
         except Exception as e:
-            shared.log.debug(f'Networks error: type=model file="{name}" {e}')
+            log.error(f'Networks error: type=model file="{name}" {e}')
+            if os.environ.get('SD_EN_DEBUG', None) is not None:
+                from modules import errors
+                errors.display(e, 'Networks')
         return record
 
     def list_items(self):

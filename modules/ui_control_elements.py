@@ -11,7 +11,7 @@ from modules import shared, ui_components, ui_symbols, ui_common, masking # pyli
 from modules import ui_control_helpers as helpers
 
 
-def create_ui_elements(units, result_txt, preview_process):
+def create_ui_elements(units, result_txt, output_gallery):
     max_units = shared.opts.control_max_units
     with gr.Accordion('Control elements', open=False, elem_id="control_elements"):
         with gr.Tabs(elem_id='control-tabs') as _tabs_control_type:
@@ -28,7 +28,12 @@ def create_ui_elements(units, result_txt, preview_process):
                     enabled = True if i==0 else False
                     with gr.Accordion(f'ControlNet unit {i+1}', visible= i < num_controlnet_units.value, elem_classes='control-unit') as unit_ui:
                         with gr.Row():
-                            enabled_cb = gr.Checkbox(enabled, label='Active', container=False, show_label=True, elem_id=f'control_unit-{i}-enabled')
+                            with gr.Group(elem_id=f'controlnet_unit-{i}-controls', elem_classes='controlnet-controls'):
+                                enabled_cb = gr.Checkbox(enabled, label='Active', container=False, show_label=True, elem_id=f'control_unit-{i}-enabled')
+                                image_upload = gr.UploadButton(label=ui_symbols.upload, file_types=['image'], elem_classes=['form', 'gradio-button', 'tool'], elem_id=f'controlnet_unit-{i}-upload')
+                                image_reuse= ui_components.ToolButton(value=ui_symbols.reuse, elem_id=f'controlnet_unit-{i}-reuse')
+                                reset_btn = ui_components.ToolButton(value=ui_symbols.reset, elem_id=f'controlnet_unit-{i}-reset')
+                                preview_btn = ui_components.ToolButton(value=ui_symbols.preview, elem_id=f'controlnet_unit-{i}-preview')
                             process_id = gr.Dropdown(label="Processor", choices=processors.list_models(), value='None', elem_id=f'control_unit-{i}-process_name')
                             model_id = gr.Dropdown(label="ControlNet", choices=controlnet.list_models(), value='None', elem_id=f'control_unit-{i}-model_name')
                             ui_common.create_refresh_button(model_id, controlnet.list_models, lambda: {"choices": controlnet.list_models(refresh=True)}, f'controlnet_models_{i}_refresh')
@@ -37,10 +42,6 @@ def create_ui_elements(units, result_txt, preview_process):
                             control_start = gr.Slider(label="CN Start", minimum=0.0, maximum=1.0, step=0.05, value=0, elem_id=f'control_unit-{i}-start')
                             control_end = gr.Slider(label="CN End", minimum=0.0, maximum=1.0, step=0.05, value=1.0, elem_id=f'control_unit-{i}-end')
                             control_tile = gr.Dropdown(label="CN Tiles", choices=[x.strip() for x in shared.opts.control_tiles.split(',') if 'x' in x], value='1x1', visible=False, elem_id=f'control_unit-{i}-tile')
-                            reset_btn = ui_components.ToolButton(value=ui_symbols.reset, elem_id=f'controlnet_unit-{i}-reset')
-                            image_upload = gr.UploadButton(label=ui_symbols.upload, file_types=['image'], elem_classes=['form', 'gradio-button', 'tool'], elem_id=f'controlnet_unit-{i}-upload')
-                            image_reuse= ui_components.ToolButton(value=ui_symbols.reuse, elem_id=f'controlnet_unit-{i}-reuse')
-                            btn_preview= ui_components.ToolButton(value=ui_symbols.preview, elem_id=f'controlnet_unit-{i}-preview')
                             image_preview = gr.Image(label="Input", type="pil", height=128, width=128, visible=False, interactive=True, show_label=False, show_download_button=False, container=False, elem_id=f'controlnet_unit-{i}-override')
                     controlnet_ui_units.append(unit_ui)
                     units.append(unit.Unit(
@@ -53,8 +54,8 @@ def create_ui_elements(units, result_txt, preview_process):
                         process_id = process_id,
                         model_id = model_id,
                         model_strength = model_strength,
-                        preview_process = preview_process,
-                        preview_btn = btn_preview,
+                        preview_process = output_gallery,
+                        preview_btn = preview_btn,
                         image_upload = image_upload,
                         image_reuse = image_reuse,
                         image_preview = image_preview,
@@ -102,7 +103,7 @@ def create_ui_elements(units, result_txt, preview_process):
                         process_id = process_id,
                         model_id = model_id,
                         model_strength = model_strength,
-                        preview_process = preview_process,
+                        preview_process = output_gallery,
                         preview_btn = btn_preview,
                         image_upload = image_upload,
                         image_reuse = image_reuse,
@@ -149,7 +150,7 @@ def create_ui_elements(units, result_txt, preview_process):
                         process_id = process_id,
                         model_id = model_id,
                         model_strength = model_strength,
-                        preview_process = preview_process,
+                        preview_process = output_gallery,
                         preview_btn = btn_preview,
                         image_upload = image_upload,
                         image_reuse = image_reuse,
@@ -195,7 +196,7 @@ def create_ui_elements(units, result_txt, preview_process):
                         process_id = process_id,
                         model_id = model_id,
                         model_strength = model_strength,
-                        preview_process = preview_process,
+                        preview_process = output_gallery,
                         preview_btn = btn_preview,
                         image_upload = image_upload,
                         image_reuse = image_reuse,
@@ -238,7 +239,7 @@ def create_ui_elements(units, result_txt, preview_process):
                         process_id = process_id,
                         model_id = model_id,
                         model_strength = model_strength,
-                        preview_process = preview_process,
+                        preview_process = output_gallery,
                         preview_btn = btn_preview,
                         image_upload = image_upload,
                         image_reuse = image_reuse,
@@ -253,10 +254,6 @@ def create_ui_elements(units, result_txt, preview_process):
             with gr.Group(elem_classes=['processor-group']):
                 settings = []
                 with gr.Accordion('Global', open=True, elem_classes=['processor-settings']):
-                    control_hires = gr.Checkbox(label="Use control during hires", value=shared.opts.control_hires, elem_id='control_hires')
-                    def set_control_hires(value):
-                        shared.opts.control_active = value
-                    control_hires.change(fn=set_control_hires, inputs=[control_hires], outputs=[])
                     control_max_units = gr.Slider(label="Maximum units", minimum=1, maximum=10, step=1, value=shared.opts.control_max_units, elem_id='control_max_units')
                     def set_control_max_units(value):
                         shared.opts.control_max_units = value
@@ -265,11 +262,19 @@ def create_ui_elements(units, result_txt, preview_process):
                     def set_control_tiles(value):
                         shared.opts.control_tiles = value
                     control_tiles.change(fn=set_control_tiles, inputs=[control_tiles], outputs=[])
-                    control_move_processor = gr.Checkbox(label="Move processor to CPU after use", value=shared.opts.control_move_processor, elem_id='control_move_processor')
+                    control_hires = gr.Checkbox(label="Hires use control", value=shared.opts.control_hires, elem_id='control_hires')
+                    def set_control_hires(value):
+                        shared.opts.control_hires = value
+                    control_hires.change(fn=set_control_hires, inputs=[control_hires], outputs=[])
+                    control_aspect_ratio = gr.Checkbox(label="Keep aspect ratio", value=shared.opts.control_aspect_ratio, elem_id='control_aspect_ratio')
+                    def set_control_aspect_ratio(value):
+                        shared.opts.control_aspect_ratio = value
+                    control_aspect_ratio.change(fn=set_control_aspect_ratio, inputs=[control_aspect_ratio], outputs=[])
+                    control_move_processor = gr.Checkbox(label="Offload processor", value=shared.opts.control_move_processor, elem_id='control_move_processor')
                     def set_control_move_processor(value):
                         shared.opts.control_move_processor = value
                     control_move_processor.change(fn=set_control_move_processor, inputs=[control_move_processor], outputs=[])
-                    control_unload_processor = gr.Checkbox(label="Unload processor after use", value=shared.opts.control_unload_processor, elem_id='control_unload_processor')
+                    control_unload_processor = gr.Checkbox(label="Unload processor", value=shared.opts.control_unload_processor, elem_id='control_unload_processor')
                     def set_control_unload_processor(value):
                         shared.opts.control_unload_processor = value
                     control_unload_processor.change(fn=set_control_unload_processor, inputs=[control_unload_processor], outputs=[])
@@ -316,6 +321,8 @@ def create_ui_elements(units, result_txt, preview_process):
                     settings.append(gr.Slider(label="Denoising steps", minimum=1, maximum=99, step=1, value=10))
                     settings.append(gr.Slider(label="Ensemble size", minimum=1, maximum=99, step=1, value=10))
                 with gr.Accordion('Depth Anything', open=True, elem_classes=['processor-settings']):
+                    settings.append(gr.Dropdown(label="Depth map", choices=['none'] + masking.COLORMAP, value='inferno'))
+                with gr.Accordion('Depth Pro', open=True, elem_classes=['processor-settings']):
                     settings.append(gr.Dropdown(label="Depth map", choices=['none'] + masking.COLORMAP, value='inferno'))
                 for setting in settings:
                     setting.change(fn=processors.update_settings, inputs=settings, outputs=[])

@@ -1,13 +1,14 @@
+from modules.logger import log
 from modules import scripts_manager, processing, shared, devices
 
 
-class Script(scripts_manager.Script):
+class InitLatentsScript(scripts_manager.Script):
     standalone = False
 
     def title(self):
         return 'Init Latents'
 
-    def show(self, is_img2img):
+    def show(self, _is_img2img):
         return scripts_manager.AlwaysVisible
 
     @staticmethod
@@ -28,7 +29,7 @@ class Script(scripts_manager.Script):
         p.init_latent = slerp(p.subseed_strength, latents, var_latents) if p.subseed_strength < 1 else var_latents
         p.generator = generator if p.subseed_strength <= 0.5 else var_generator
 
-    def process_batch(self, p: processing.StableDiffusionProcessing, *args, **kwargs): # pylint: disable=arguments-differ
+    def process_batch(self, p: processing.StableDiffusionProcessing, *args, **_kwargs): # pylint: disable=arguments-differ
         if not shared.sd_loaded or not hasattr(shared.sd_model, 'unet'):
             return
         from modules.processing_helpers import create_random_tensors
@@ -44,5 +45,5 @@ class Script(scripts_manager.Script):
                 subseed_strength=p.subseed_strength,
                 p=p
             )
-            shared.log.debug(f'Latent: seed={p.seeds} subseed={p.subseeds} strength={p.subseed_strength} tensor={list(p.init_latent.shape)}')
+            log.debug(f'Latent: seed={p.seeds} subseed={p.subseeds} strength={p.subseed_strength} tensor={list(p.init_latent.shape)}')
             p.init_latent = p.init_latent.to(device=shared.sd_model._execution_device, dtype=shared.sd_model.unet.dtype) # pylint: disable=protected-access

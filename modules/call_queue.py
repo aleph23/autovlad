@@ -1,15 +1,27 @@
+import os
+import sys
 import html
 import threading
 import time
 import cProfile
 from modules import shared, progress, errors, timer
+from modules.logger import log
+
 
 queue_lock = threading.Lock()
+debug = os.environ.get('SD_QUEUE_DEBUG', None) is not None
+
+
+def get_lock():
+    if debug:
+        fn = f'{sys._getframe(3).f_code.co_name}:{sys._getframe(2).f_code.co_name}:{sys._getframe(1).f_code.co_name}' # pylint: disable=protected-access
+        log.debug(f'Queue: fn={fn} lock={queue_lock.locked()}')
+    return queue_lock
 
 
 def wrap_queued_call(func):
     def f(*args, **kwargs):
-        with queue_lock:
+        with get_lock():
             res = func(*args, **kwargs)
         return res
     return f
@@ -24,17 +36,17 @@ def wrap_gradio_gpu_call(func, extra_outputs=None, name=None):
             progress.add_task_to_queue(id_task)
         else:
             id_task = None
-        with queue_lock:
+        with get_lock():
             progress.start_task(id_task)
-            res = [None, '', '', '']
             try:
                 res = func(*args, **kwargs)
                 progress.record_results(id_task, res)
             except Exception as e:
-                shared.log.error(f"Exception: {e}")
-                shared.log.error(f"Arguments: args={str(args)[:10240]} kwargs={str(kwargs)[:10240]}")
+                log.error(f"Exception: {e}")
+                log.error(f"Arguments: args={str(args)[:10240]} kwargs={str(kwargs)[:10240]}")
                 errors.display(e, 'gradio call')
-                res[-1] = f"<div class='error'>{html.escape(str(e))}</div>"
+                res = extra_outputs or []
+                res.append(f"<div class='error'>{html.escape(str(e))}</div>")
             finally:
                 progress.finish_task(id_task)
         return res
@@ -58,8 +70,9 @@ def wrap_gradio_call(func, extra_outputs=None, add_stats=False, name=None):
             res = func(*args, **kwargs)
             if res is None:
                 msg = "No result returned from function"
-                shared.log.warning(msg)
-                res = [None, '', '', f"<div class='error'>{html.escape(msg)}</div>"]
+                log.warning(msg)
+                res = extra_outputs_array or []
+                res.append(f"<div class='error'>{html.escape(msg)}</div>")
             else:
                 res = list(res)
             if shared.cmd_opts.profile:
@@ -67,9 +80,8 @@ def wrap_gradio_call(func, extra_outputs=None, add_stats=False, name=None):
                 errors.profile(pr, 'Wrap')
         except Exception as e:
             errors.display(e, 'gradio call')
-            if extra_outputs_array is None:
-                extra_outputs_array = [None, '']
-            res = extra_outputs_array + [f"<div class='error'>{html.escape(type(e).__name__+': '+str(e))}</div>"]
+            res = extra_outputs_array or []
+            res.append(f"<div class='error'>{html.escape(type(e).__name__+': '+str(e))}</div>")
         shared.state.end(jobid)
         if not add_stats:
             return tuple(res)

@@ -233,7 +233,7 @@ class PatchEmbed(nn.Module):
         self.patch_size = patch_size
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, _H, _W = x.shape
         x = self.patch_proj(x)
         x = rearrange(x, "b c h w -> b (h w) c")
         return x
@@ -380,7 +380,7 @@ class DiT(ModelMixin, ConfigMixin, FromOriginalModelMixin, PeftAdapterMixin):  #
 
     @apply_forward_hook
     def forward(self, x, context, timesteps):
-        b, c, h, w = x.shape
+        b, _c, h, w = x.shape
         x = self.patch_embed(x)  # b, T, d
 
         x = torch.cat([self.register_tokens.repeat(b, 1, 1), x], 1)  # b, T + N, d

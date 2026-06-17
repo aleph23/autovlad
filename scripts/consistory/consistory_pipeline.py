@@ -52,7 +52,7 @@ class ConsistoryExtendAttnSDXLPipeline(
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -214,7 +214,7 @@ class ConsistoryExtendAttnSDXLPipeline(
             callback_on_step_end_tensor_inputs (`List`, *optional*):
                 The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
                 will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
-                `._callback_tensor_inputs` attribute of your pipeine class.
+                `._callback_tensor_inputs` attribute of your pipeline class.
 
         Examples:
 
@@ -322,7 +322,7 @@ class ConsistoryExtendAttnSDXLPipeline(
             latents,
         )
 
-        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        # 6. Prepare extra step kwargs.
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         if share_queries:

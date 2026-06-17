@@ -1,8 +1,8 @@
 from typing import Any, Dict
 import torch
 import torchvision.transforms.functional as F
-from ...vae import AutoencoderKLDiffusers
-from ..base import BaseConditioner
+from lbm.vae import AutoencoderKLDiffusers
+from lbm.embedders.base import BaseConditioner
 from .latents_concat_embedder_config import LatentsConcatEmbedderConfig
 
 

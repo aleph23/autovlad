@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
-from diffusers.utils import logging, deprecate, USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
+from diffusers.utils import deprecate, USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
 import torch
 import numpy as np
@@ -130,7 +130,7 @@ def teacache_hidream_forward(
         else:
             # 2. Blocks
             ori_hidden_states = hidden_states.clone()
-            for bid, block in enumerate(self.double_stream_blocks):
+            for _bid, block in enumerate(self.double_stream_blocks):
                 cur_llama31_encoder_hidden_states = encoder_hidden_states[block_id]
                 cur_encoder_hidden_states = torch.cat(
                     [initial_encoder_hidden_states, cur_llama31_encoder_hidden_states], dim=1
@@ -166,7 +166,7 @@ def teacache_hidream_forward(
                 )
                 hidden_states_masks = torch.cat([hidden_states_masks, encoder_attention_mask_ones], dim=1)
 
-            for bid, block in enumerate(self.single_stream_blocks):
+            for _bid, block in enumerate(self.single_stream_blocks):
                 cur_llama31_encoder_hidden_states = encoder_hidden_states[block_id]
                 hidden_states = torch.cat([hidden_states, cur_llama31_encoder_hidden_states], dim=1)
                 if torch.is_grad_enabled() and self.gradient_checkpointing:
@@ -192,7 +192,7 @@ def teacache_hidream_forward(
             hidden_states = hidden_states[:, :image_tokens_seq_len, ...]
             self.previous_residual = hidden_states - ori_hidden_states
     else:
-        for bid, block in enumerate(self.double_stream_blocks):
+        for _bid, block in enumerate(self.double_stream_blocks):
             cur_llama31_encoder_hidden_states = encoder_hidden_states[block_id]
             cur_encoder_hidden_states = torch.cat(
                 [initial_encoder_hidden_states, cur_llama31_encoder_hidden_states], dim=1
@@ -228,7 +228,7 @@ def teacache_hidream_forward(
             )
             hidden_states_masks = torch.cat([hidden_states_masks, encoder_attention_mask_ones], dim=1)
 
-        for bid, block in enumerate(self.single_stream_blocks):
+        for _bid, block in enumerate(self.single_stream_blocks):
             cur_llama31_encoder_hidden_states = encoder_hidden_states[block_id]
             hidden_states = torch.cat([hidden_states, cur_llama31_encoder_hidden_states], dim=1)
             if torch.is_grad_enabled() and self.gradient_checkpointing:

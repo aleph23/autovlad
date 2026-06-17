@@ -261,7 +261,7 @@ def download_pretrained_from_url(
             if hashlib.sha256(open(download_target, "rb").read()).hexdigest().startswith(expected_sha256):
                 return download_target
             else:
-                warnings.warn(f"{download_target} exists, but the SHA256 checksum does not match; re-downloading the file")
+                warnings.warn(f"{download_target} exists, but the SHA256 checksum does not match; re-downloading the file", stacklevel=2)
         else:
             return download_target
 

@@ -1,13 +1,11 @@
 """
 Additional params for Text-to-Video
 <https://huggingface.co/docs/diffusers/api/pipelines/text_to_video>
-
-TODO text2video items:
-- Video-to-Video upscaling: <https://huggingface.co/cerspense/zeroscope_v2_XL>, <https://huggingface.co/damo-vilab/MS-Vid2Vid-XL>
 """
 
 import gradio as gr
-from modules import scripts_manager, processing, shared, images, sd_models, modelloader
+from modules import scripts_manager, processing, shared, video, sd_models, modelloader
+from modules.logger import log
 
 
 MODELS = [
@@ -21,7 +19,7 @@ MODELS = [
 ]
 
 
-class Script(scripts_manager.Script):
+class ModelScopeScript(scripts_manager.Script):
     def title(self):
         return 'Video: ModelScope'
 
@@ -56,21 +54,22 @@ class Script(scripts_manager.Script):
     def run(self, p: processing.StableDiffusionProcessing, model_name, use_default, num_frames, video_type, duration, gif_loop, mp4_pad, mp4_interpolate): # pylint: disable=arguments-differ, unused-argument
         if model_name == 'None':
             return None
+        p.video_interpolate = mp4_interpolate
         model = [m for m in MODELS if m['name'] == model_name][0]
-        shared.log.debug(f'Text2Video: model={model} defaults={use_default} frames={num_frames}, video={video_type} duration={duration} loop={gif_loop} pad={mp4_pad} interpolate={mp4_interpolate}')
+        log.debug(f'Text2Video: model={model} defaults={use_default} frames={num_frames}, video={video_type} duration={duration} loop={gif_loop} pad={mp4_pad} interpolate={mp4_interpolate}')
 
         if model['path'] in shared.opts.sd_model_checkpoint:
-            shared.log.debug(f'Text2Video cached: model={shared.opts.sd_model_checkpoint}')
+            log.debug(f'Text2Video cached: model={shared.opts.sd_model_checkpoint}')
         else:
             checkpoint = sd_models.get_closest_checkpoint_match(model['path'])
             if checkpoint is None:
-                shared.log.debug(f'Text2Video downloading: model={model["path"]}')
+                log.debug(f'Text2Video downloading: model={model["path"]}')
                 checkpoint = modelloader.download_diffusers_model(hub_id=model['path'])
                 sd_models.list_models()
             if checkpoint is None:
-                shared.log.error(f'Text2Video: failed to find model={model["path"]}')
+                log.error(f'Text2Video: failed to find model={model["path"]}')
                 return None
-            shared.log.debug(f'Text2Video loading: model={checkpoint}')
+            log.debug(f'Text2Video loading: model={checkpoint}')
             shared.opts.sd_model_checkpoint = checkpoint.name
             sd_models.reload_model_weights(op='model')
 
@@ -83,13 +82,14 @@ class Script(scripts_manager.Script):
         elif num_frames > 0:
             p.task_args['num_frames'] = num_frames
         else:
-            shared.log.error('Text2Video: invalid number of frames')
+            log.error('Text2Video: invalid number of frames')
             return None
 
         shared.sd_model = sd_models.set_diffuser_pipe(shared.sd_model, sd_models.DiffusersTaskType.TEXT_2_IMAGE)
-        shared.log.debug(f'Text2Video: args={p.task_args}')
+        log.debug(f'Text2Video: args={p.task_args}')
         processed = processing.process_images(p)
 
         if video_type != 'None':
-            images.save_video(p, filename=None, images=processed.images, video_type=video_type, duration=duration, loop=gif_loop, pad=mp4_pad, interpolate=mp4_interpolate)
+            video.save_video(p, filename=None, images=processed.images, video_type=video_type, duration=duration, loop=gif_loop, pad=mp4_pad, interpolate=mp4_interpolate)
+            p.video_saved = True
         return processed

@@ -1,7 +1,7 @@
 import torch
 from diffusers.models import AutoencoderKL
-from ..base.base_model import BaseModel
-from ..tiler import Tiler, pad
+from lbm.base.base_model import BaseModel
+from lbm.tiler import Tiler, pad
 from .autoencoderKL_config import AutoencoderKLDiffusersConfig
 
 
@@ -56,7 +56,7 @@ class AutoencoderKLDiffusers(BaseModel):
         # set downsampling factor
         self.downsampling_factor = int(x.shape[2] / z.shape[2])
 
-    def encode(self, x: torch.tensor, batch_size: int = 8):
+    def encode(self, x: torch.Tensor, batch_size: int = 8):
         latents = []
         for i in range(0, x.shape[0], batch_size):
             latents.append(
@@ -67,7 +67,7 @@ class AutoencoderKLDiffusers(BaseModel):
 
         return latents
 
-    def decode(self, z: torch.tensor):
+    def decode(self, z: torch.Tensor):
 
         if self.has_latents_mean and self.has_latents_std:
             latents_mean = (

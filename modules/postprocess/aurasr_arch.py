@@ -14,6 +14,7 @@ import torch.nn.functional as F
 
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
+import itertools
 
 
 def get_same_padding(size, kernel, dilation, stride):
@@ -262,7 +263,7 @@ class LinearAttention(nn.Module):
         self.to_out = nn.Sequential(nn.Conv2d(hidden_dim, dim, 1), RMSNorm(dim))
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        _b, _c, h, w = x.shape
 
         x = self.norm(x)
 
@@ -296,7 +297,7 @@ class Attention(nn.Module):
         self.to_out = nn.Conv2d(hidden_dim, dim, 1)
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        _b, _c, h, w = x.shape
         x = self.norm(x)
         qkv = self.to_qkv(x).chunk(3, dim=1)
 
@@ -487,8 +488,8 @@ class UnetUpsampler(torch.nn.Module):
         down_dims = [init_down_dim, *map(lambda m: dim * m, down_dim_mults)]
         self.init_conv = nn.Conv2d(input_channels, init_down_dim, 7, padding=3)
 
-        up_in_out = list(zip(up_dims[:-1], up_dims[1:]))
-        down_in_out = list(zip(down_dims[:-1], down_dims[1:]))
+        up_in_out = list(itertools.pairwise(up_dims))
+        down_in_out = list(itertools.pairwise(down_dims))
 
         block_klass = partial(
             ResnetBlock,
@@ -507,7 +508,7 @@ class UnetUpsampler(torch.nn.Module):
 
         block_count = 6
 
-        for ind, (
+        for _, (
             (dim_in, dim_out),
             layer_full_attn,
             layer_attn_depth,
@@ -515,7 +516,7 @@ class UnetUpsampler(torch.nn.Module):
             attn_klass = FullAttention if layer_full_attn else LinearTransformer
 
             blocks = []
-            for i in range(block_count):
+            for _i in range(block_count):
                 blocks.append(block_klass(dim_in, dim_in))
 
             self.downs.append(
@@ -569,7 +570,7 @@ class UnetUpsampler(torch.nn.Module):
 
             blocks = []
             input_dim = dim_in * 2 if ind < len(down_in_out) else dim_in
-            for i in range(block_count):
+            for _i in range(block_count):
                 blocks.append(block_klass(input_dim, dim_in))
 
             self.ups.append(
@@ -708,7 +709,7 @@ class UnetUpsampler(torch.nn.Module):
 
 
 def tile_image(image, chunk_size=64):
-    c, h, w = image.shape
+    _c, h, w = image.shape
     h_chunks = ceil(h / chunk_size)
     w_chunks = ceil(w / chunk_size)
     tiles = []
@@ -787,12 +788,12 @@ class AuraSR:
             try:
                 from safetensors.torch import load_file
                 checkpoint = load_file(hf_model_path / "model.safetensors" if not Path(model_id).is_file() else model_id)
-            except ImportError:
+            except ImportError as e:
                 raise ImportError(
                     "The safetensors library is not installed. "
                     "Please install it with `pip install safetensors` "
                     "or use `use_safetensors=False` to load the model with PyTorch."
-                )
+                ) from e
         else:
             checkpoint = torch.load(hf_model_path / "model.ckpt" if not Path(model_id).is_file() else model_id)
 

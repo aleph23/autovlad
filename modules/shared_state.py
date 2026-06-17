@@ -4,7 +4,8 @@ import sys
 import uuid
 import time
 import datetime
-from modules.errors import log, display
+from modules.logger import log
+from modules.errors import display
 
 
 debug_output = os.environ.get('SD_STATE_DEBUG', None)
@@ -148,7 +149,9 @@ class State:
                 return job
         return None
 
-    def history(self, op:str, task_id:str=None, results:list=[]):
+    def history(self, op: str, task_id: str | None = None, results: list | None = None):
+        if results is None:
+            results = []
         job = {
             'id': task_id or self.id,
             'job': self.job.lower(),
@@ -172,7 +175,7 @@ class State:
         if len(self.results) > 0:
             self.history('output', self.id, results=self.results)
 
-    def get_id(self, task_id:str=None):
+    def get_id(self, task_id: str | None = None):
         if task_id is None or task_id == 0:
             task_id = uuid.uuid4().hex[:15]
         if not isinstance(task_id, str):
@@ -215,7 +218,7 @@ class State:
         self.sampling_steps = 0
         self.textinfo = None
         self.prediction_type = "epsilon"
-        self.api = api or self.api
+        self.api = api if api is not None else False
         self.time_start = time.time()
         self.history('begin', self.id)
         if debug_output:
@@ -223,7 +226,7 @@ class State:
         modules.devices.torch_gc()
         return self.id
 
-    def end(self, task_id=None):
+    def end(self, task_id=None, api=None):
         import modules.devices
         if debug_output:
             log.trace(f'State end: {self}')
@@ -234,6 +237,8 @@ class State:
                 self.job = prev_job['job']
                 self.duration = round(time.time() - prev_job['timestamp'], 3) if prev_job['timestamp'] is not None else None
         self.time_start = time.time()
+        if api is not None:
+            self.api = api
         self.history('end', task_id or self.id)
         self.clear()
         modules.devices.torch_gc()
@@ -259,39 +264,53 @@ class State:
     def set_current_image(self):
         if self.job == 'VAE' or self.job == 'Upscale': # avoid generating preview while vae is running
             return False
-        from modules.shared import opts, cmd_opts
-        if cmd_opts.lowvram or self.api or (not opts.live_previews_enable) or (opts.show_progress_every_n_steps <= 0):
+        from modules.shared import cmd_opts
+        if cmd_opts.lowvram or self.api or self.disable_preview:
             return False
-        if (not self.disable_preview) and (abs(self.sampling_step - self.current_image_sampling_step) >= opts.show_progress_every_n_steps):
-            return self.do_set_current_image()
-        return False
+        return self.do_set_current_image()
 
     def do_set_current_image(self):
-        if (self.current_latent is None) or self.disable_preview or (self.preview_job == self.job_no):
+        from modules import shared, images, sd_samplers_common
+        if self.disable_preview or (self.preview_job == self.job_no):
             return False
-        from modules import shared, sd_samplers
-        self.preview_job = self.job_no
-        try:
-            sample = self.current_latent
-            self.current_image_sampling_step = self.sampling_step
-            try:
-                if self.current_noise_pred is not None and self.current_sigma is not None and self.current_sigma_next is not None:
-                    original_sample = sample - (self.current_noise_pred * (self.current_sigma_next-self.current_sigma))
-                    if self.prediction_type in {"epsilon", "flow_prediction"}:
-                        sample = original_sample - (self.current_noise_pred * self.current_sigma)
-                    elif self.prediction_type == "v_prediction":
-                        sample = self.current_noise_pred * (-self.current_sigma / (self.current_sigma**2 + 1) ** 0.5) + (original_sample / (self.current_sigma**2 + 1)) # pylint: disable=invalid-unary-operand-type
-            except Exception:
-                pass # ignore sigma errors
-            image = sd_samplers.samples_to_image_grid(sample) if shared.opts.show_progress_grid else sd_samplers.sample_to_image(sample)
-            self.assign_current_image(image)
+
+        if (shared.opts.show_progress_type == "None") and (shared.history.last_image is not None):
+            last_image = images.image_grid(shared.history.last_image)
+            self.assign_current_image(last_image)
             self.preview_job = -1
             return True
-        except Exception as e:
+
+        if self.current_latent is not None:
+            try:
+                self.preview_job = self.job_no
+                sample = self.current_latent
+                self.current_image_sampling_step = self.sampling_step
+                try:
+                    if self.current_noise_pred is not None and self.current_sigma is not None and self.current_sigma_next is not None:
+                        original_sample = sample - (self.current_noise_pred * (self.current_sigma_next-self.current_sigma))
+                        if self.prediction_type in {"epsilon", "flow_prediction"}:
+                            sample = original_sample - (self.current_noise_pred * self.current_sigma)
+                        elif self.prediction_type == "v_prediction":
+                            sample = self.current_noise_pred * (-self.current_sigma / (self.current_sigma**2 + 1) ** 0.5) + (original_sample / (self.current_sigma**2 + 1)) # pylint: disable=invalid-unary-operand-type
+                except Exception:
+                    pass # ignore sigma errors
+                image = sd_samplers_common.samples_to_image_grid(sample)
+                self.assign_current_image(image)
+                self.preview_job = -1
+                return True
+            except Exception as e:
+                self.preview_job = -1
+                log.error(f'State image: last={self.id_live_preview} step={self.sampling_step} {e}')
+                display(e, 'State image')
+                return False
+        elif self.current_image is not None:
+            self.preview_job = self.job_no
+            self.assign_current_image(self.current_image)
             self.preview_job = -1
-            log.error(f'State image: last={self.id_live_preview} step={self.sampling_step} {e}')
-            display(e, 'State image')
-            return False
+            return True
+        else:
+            pass
+        return False
 
     def assign_current_image(self, image):
         self.current_image = image

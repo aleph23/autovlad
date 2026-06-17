@@ -14,7 +14,7 @@ try:
     from transformers import AutoModel, AutoModelForMaskedLM, AutoTokenizer, AutoConfig, PretrainedConfig
     from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, \
         BaseModelOutputWithPoolingAndCrossAttentions
-except ImportError as e:
+except ImportError:
     transformers = None
 
 
@@ -77,10 +77,10 @@ class HFTextEncoder(nn.Module):
             self,
             model_name_or_path: str,
             output_dim: int,
-            tokenizer_name: str = None,
+            tokenizer_name: str | None = None,
             config: PretrainedConfig = None,
-            pooler_type: str = None,
-            proj: str = None,
+            pooler_type: str | None = None,
+            proj: str | None = None,
             pretrained: bool = True,
             masked_language_modeling: bool = False):
         super().__init__()

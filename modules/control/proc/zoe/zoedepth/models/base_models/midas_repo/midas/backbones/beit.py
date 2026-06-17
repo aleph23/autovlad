@@ -66,7 +66,7 @@ def attention_forward(self, x, resolution, shared_rel_pos_bias: Optional[torch.T
     """
     Modification of timm.models.beit.py: Attention.forward to support arbitrary window sizes.
     """
-    B, N, C = x.shape
+    B, N, _C = x.shape
 
     qkv_bias = torch.cat((self.q_bias, self.k_bias, self.v_bias)) if self.q_bias is not None else None
     qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)

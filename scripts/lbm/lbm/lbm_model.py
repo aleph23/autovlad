@@ -5,10 +5,10 @@ import torch
 import torch.nn as nn
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from tqdm import tqdm
-from ..base.base_model import BaseModel
-from ..embedders import ConditionerWrapper
-from ..unets import DiffusersUNet2DCondWrapper, DiffusersUNet2DWrapper
-from ..vae import AutoencoderKLDiffusers
+from lbm.base.base_model import BaseModel
+from lbm.embedders import ConditionerWrapper
+from lbm.unets import DiffusersUNet2DCondWrapper, DiffusersUNet2DWrapper
+from lbm.vae import AutoencoderKLDiffusers
 from .lbm_config import LBMConfig
 
 
@@ -304,7 +304,7 @@ class LBMModel(BaseModel):
     def _get_conditioning(
         self,
         batch: Dict[str, Any],
-        ucg_keys: List[str] = None,
+        ucg_keys: List[str] | None = None,
         set_ucg_rate_zero=False,
         *args,
         **kwargs,

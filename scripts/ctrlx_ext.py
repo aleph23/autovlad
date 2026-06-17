@@ -3,9 +3,10 @@
 import gradio as gr
 from diffusers import StableDiffusionXLPipeline
 from modules import shared, scripts_manager, processing, processing_helpers, sd_models, devices
+from modules.logger import log
 
 
-class Script(scripts_manager.Script):
+class CtrlXScript(scripts_manager.Script):
     def title(self):
         return 'Ctrl-X: Controlling Structure and Appearance'
 
@@ -40,13 +41,13 @@ class Script(scripts_manager.Script):
     def run(self, p: processing.StableDiffusionProcessing, struct_prompt, struct_strength, struct_guidance, struct_image, appear_prompt, appear_strength, appear_guidance, appear_image): # pylint: disable=arguments-differ
         c = shared.sd_model.__class__.__name__ if shared.sd_loaded else ''
         if shared.sd_model_type != 'sdxl':
-            shared.log.warning(f'Ctrl-X: pipeline={c} required=StableDiffusionXLPipeline')
+            log.warning(f'Ctrl-X: pipeline={c} required=StableDiffusionXLPipeline')
             return None
 
         import yaml
-        from scripts.ctrlx import CtrlXStableDiffusionXLPipeline
-        from scripts.ctrlx.sdxl import get_control_config, register_control
-        from scripts.ctrlx.utils import get_self_recurrence_schedule
+        from scripts.ctrlx import CtrlXStableDiffusionXLPipeline # pylint: disable=no-name-in-module
+        from scripts.ctrlx.sdxl import get_control_config, register_control # pylint: disable=no-name-in-module
+        from scripts.ctrlx.utils import get_self_recurrence_schedule # pylint: disable=no-name-in-module
 
         orig_prompt_attention = shared.opts.prompt_attention
         shared.opts.data['prompt_attention'] = 'fixed'
@@ -55,7 +56,7 @@ class Script(scripts_manager.Script):
 
         # calculate ctrx+x schedule
         if p.sampler_name not in ['DDIM', 'Euler', 'Euler a', 'DPM++ 1S', 'DDPM', 'Euler SGM', 'LCM', 'TCD']:
-            shared.log.warning(f'Ctrl-X: sampler={p.sampler_name} override="Euler a" supported=[Euler, Euler a, Euler SGM, DDIM, DDPM, , LCM, TCD]')
+            log.warning(f'Ctrl-X: sampler={p.sampler_name} override="Euler a" supported=[Euler, Euler a, Euler SGM, DDIM, DDPM, , LCM, TCD]')
             p.sampler_name = 'Euler a'
         processing_helpers.update_sampler(p, shared.sd_model)
         shared.sd_model.scheduler.set_timesteps(p.steps, device=devices.device)
@@ -85,8 +86,8 @@ class Script(scripts_manager.Script):
         p.task_args['self_recurrence_schedule'] = get_self_recurrence_schedule(config['self_recurrence_schedule'], p.steps)
         is_struct = p.task_args.get('structure_image') is not None
         is_appear = p.task_args.get('appearance_image') is not None
-        shared.log.info(f'Ctrl-X: structure={struct_strength if is_struct else None} appearance={appear_strength if is_appear else None}')
-        shared.log.debug(f'Ctrl-X: config={control_config} args={p.task_args}')
+        log.info(f'Ctrl-X: structure={struct_strength if is_struct else None} appearance={appear_strength if is_appear else None}')
+        log.debug(f'Ctrl-X: config={control_config} args={p.task_args}')
 
         # process
         processed: processing.Processed = processing.process_images(p)

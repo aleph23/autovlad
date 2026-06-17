@@ -2,8 +2,8 @@ import os
 import time
 from typing import Union
 import threading
-from diffusers import pipelines, StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAdapter, MultiAdapter, StableDiffusionAdapterPipeline, StableDiffusionXLAdapterPipeline # pylint: disable=unused-import
-from installer import log
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAdapter, MultiAdapter, StableDiffusionAdapterPipeline, StableDiffusionXLAdapterPipeline # pylint: disable=unused-import
+from modules.logger import log
 from modules import errors, sd_models
 from modules.control.units import detect
 
@@ -71,7 +71,7 @@ class AdapterModel(T2IAdapter):
 
 
 class Adapter():
-    def __init__(self, model_id: str = None, device = None, dtype = None, load_config = None):
+    def __init__(self, model_id: str | None = None, device = None, dtype = None, load_config = None):
         self.model: AdapterModel = None
         self.model_id: str = model_id
         self.device = device
@@ -91,25 +91,31 @@ class Adapter():
         self.model = None
         self.model_id = None
 
-    def load(self, model_id: str = None, force: bool = True) -> str:
+    def load(self, model_id: str | None = None, force: bool = True) -> str:
         with load_lock:
             try:
                 t0 = time.time()
                 model_id = model_id or self.model_id
                 if model_id is None or model_id == 'None':
                     self.reset()
-                    return
+                    return ''
                 if model_id not in all_models:
                     log.error(f'Control {what} unknown model: id="{model_id}" available={list(all_models)}')
-                    return
+                    return ''
                 model_path, model_args = all_models[model_id]
                 self.load_config.update(model_args)
+                from modules.shared import opts
+                if opts.offline_mode:
+                    self.load_config["local_files_only"] = True
+                    os.environ['HF_HUB_OFFLINE'] = '1'
+                else:
+                    os.environ.pop('HF_HUB_OFFLINE', None)
+                    os.unsetenv('HF_HUB_OFFLINE')
                 if model_path is None:
                     log.error(f'Control {what} model load failed: id="{model_id}" error=unknown model id')
-                    return
+                    return ''
                 if model_id == self.model_id and not force:
-                    # log.debug(f'Control {what} model: id="{model_id}" path="{model_path}" already loaded')
-                    return
+                    return ''
                 log.debug(f'Control {what} model loading: id="{model_id}" path="{model_path}"')
                 if model_path.endswith('.pth') or model_path.endswith('.pt') or model_path.endswith('.safetensors') or model_path.endswith('.bin'):
                     from huggingface_hub import hf_hub_download
@@ -168,6 +174,7 @@ class AdapterPipeline():
                 adapter=adapter,
             )
             sd_models.move_model(self.pipeline, pipeline.device)
+            sd_models.apply_balanced_offload(self.pipeline, force=True)
         elif detect.is_sd15(pipeline):
             self.pipeline = StableDiffusionAdapterPipeline(
                 vae=pipeline.vae,
@@ -181,6 +188,7 @@ class AdapterPipeline():
                 adapter=adapter,
             )
             sd_models.move_model(self.pipeline, pipeline.device)
+            sd_models.apply_balanced_offload(self.pipeline, force=True)
         else:
             log.error(f'Control {what} pipeline: class={pipeline.__class__.__name__} unsupported model type')
             return

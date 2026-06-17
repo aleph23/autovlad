@@ -1,5 +1,6 @@
 import os
 from modules import shared, devices, files_cache, sd_models, model_quant
+from modules.logger import log
 
 
 unet_dict = {}
@@ -8,24 +9,25 @@ failed_unet = []
 debug = os.environ.get('SD_LOAD_DEBUG', None) is not None
 
 
-dit_models = ['Flux', 'StableDiffusion3', 'HiDream', 'Lumina2', 'Chroma', 'Wan', 'Qwen']
+dit_models = ['Flux', 'StableDiffusion3', 'HiDream', 'Lumina2', 'Chroma', 'Wan', 'Qwen', 'Anima']
 
 
 def load_unet_sdxl_nunchaku(repo_id):
     try:
         from nunchaku.models.unets.unet_sdxl import NunchakuSDXLUNet2DConditionModel
     except Exception:
-        shared.log.error(f'Load module: quant=Nunchaku module=unet repo="{repo_id}" low nunchaku version')
+        log.error(f'Load module: quant=Nunchaku module=unet repo="{repo_id}" low nunchaku version')
         return None
     if 'turbo' in repo_id.lower():
-        nunchaku_repo = 'nunchaku-tech/nunchaku-sdxl-turbo/svdq-int4_r32-sdxl-turbo.safetensors'
+        nunchaku_repo = 'nunchaku-ai/nunchaku-sdxl-turbo/svdq-int4_r32-sdxl-turbo.safetensors'
     else:
-        nunchaku_repo = 'nunchaku-tech/nunchaku-sdxl/svdq-int4_r32-sdxl.safetensors'
+        nunchaku_repo = 'nunchaku-ai/nunchaku-sdxl/svdq-int4_r32-sdxl.safetensors'
 
-    shared.log.debug(f'Load module: quant=Nunchaku module=unet repo="{nunchaku_repo}" offload={shared.opts.nunchaku_offload}')
+    if shared.opts.nunchaku_offload:
+        log.warning('Load module: quant=Nunchaku module=unet offload not supported for SDXL, ignoring')
+    log.debug(f'Load module: quant=Nunchaku module=unet repo="{nunchaku_repo}"')
     unet = NunchakuSDXLUNet2DConditionModel.from_pretrained(
         nunchaku_repo,
-        offload=shared.opts.nunchaku_offload,
         torch_dtype=devices.dtype,
         cache_dir=shared.opts.hfcache_dir,
     )
@@ -33,26 +35,32 @@ def load_unet_sdxl_nunchaku(repo_id):
     return unet
 
 
-def load_unet(model, repo_id:str=None):
-    global loaded_unet # pylint: disable=global-statement
+def load_unet(model, repo_id: str | None = None):
+    global loaded_unet  # pylint: disable=global-statement
 
-    if ("StableDiffusionXLPipeline" in model.__class__.__name__) and (('stable-diffusion-xl-base' in repo_id) or ('sdxl-turbo' in repo_id)):
-        if model_quant.check_nunchaku('Model'):
+    if ("StableDiffusionXLPipeline" in model.__class__.__name__) and repo_id is not None and (("stable-diffusion-xl-base" in repo_id) or ("sdxl-turbo" in repo_id)):
+        if model_quant.check_nunchaku("Model"):
             unet = load_unet_sdxl_nunchaku(repo_id)
             if unet is not None:
                 model.unet = unet
                 return
 
     if shared.opts.sd_unet == 'Default' or shared.opts.sd_unet == 'None':
+        # Switching back to Default reverts a previously-loaded custom transformer.
+        if loaded_unet in (None, 'Default', 'None'):
+            return
+        log.info(f'Load module: type=UNet name="Default" (was="{loaded_unet}") reverting to base transformer')
+        loaded_unet = shared.opts.sd_unet
+        sd_models.reload_model_weights(force=True)
         return
 
     if shared.opts.sd_unet not in list(unet_dict):
-        shared.log.error(f'Load module: type=UNet not found: {shared.opts.sd_unet}')
+        log.error(f'Load module: type=UNet not found: {shared.opts.sd_unet}')
         return
 
     config_file = os.path.splitext(unet_dict[shared.opts.sd_unet])[0] + '.json'
     if os.path.exists(config_file):
-        config = shared.readfile(config_file)
+        config = shared.readfile(config_file, as_type="dict")
     else:
         config = None
         config_file = 'default'
@@ -61,8 +69,8 @@ def load_unet(model, repo_id:str=None):
         if shared.opts.sd_unet == loaded_unet or shared.opts.sd_unet in failed_unet:
             pass
         elif "StableCascade" in model.__class__.__name__:
-            from pipelines.model_stablecascade import load_prior
-            prior_unet, prior_text_encoder = load_prior(unet_dict[shared.opts.sd_unet], config_file=config_file)
+            from pipelines.model_stablecascade import init_prior
+            prior_unet, prior_text_encoder = init_prior(unet_dict[shared.opts.sd_unet], config_file=config_file)
             loaded_unet = shared.opts.sd_unet
             if prior_unet is not None:
                 model.prior_pipe.prior = None # Prevent OOM
@@ -72,12 +80,12 @@ def load_unet(model, repo_id:str=None):
                 model.prior_pipe.text_encoder = prior_text_encoder.to(devices.device, dtype=devices.dtype)
         elif any([m in model.__class__.__name__ for m in dit_models]) or hasattr(model, 'transformer'): # noqa: C419 # pylint: disable=use-a-generator
             loaded_unet = shared.opts.sd_unet
-            sd_models.load_diffuser() # TODO model load: force-reloading entire model as loading transformers only leads to massive memory usage
+            sd_models.reload_model_weights(force=True) # full reload: in-place transformer swap leaks memory
         else:
             if not hasattr(model, 'unet') or model.unet is None:
-                shared.log.error('Load module: type=UNET not found in current model')
+                log.error('Load module: type=UNET not found in current model')
                 return
-            shared.log.info(f'Load module: type=UNet name="{shared.opts.sd_unet}" file="{unet_dict[shared.opts.sd_unet]}" config="{config_file}"')
+            log.info(f'Load module: type=UNet name="{shared.opts.sd_unet}" file="{unet_dict[shared.opts.sd_unet]}" config="{config_file}"')
             from diffusers import UNet2DConditionModel
             from safetensors.torch import load_file
             unet = UNet2DConditionModel.from_config(model.unet.config if config is None else config).to(devices.device, devices.dtype)
@@ -85,7 +93,7 @@ def load_unet(model, repo_id:str=None):
             unet.load_state_dict(state_dict)
             model.unet = unet.to(devices.device, devices.dtype_unet)
     except Exception as e:
-        shared.log.error(f'Failed to load UNet model: {e}')
+        log.error(f'Failed to load UNet model: {e}')
         if debug:
             from modules import errors
             errors.display(e, 'UNet load:')
@@ -99,4 +107,5 @@ def refresh_unet_list():
         basename = os.path.basename(file)
         name = os.path.splitext(basename)[0] if ".safetensors" in basename else basename
         unet_dict[name] = file
-    shared.log.info(f'Available UNets: path="{shared.opts.unet_dir}" items={len(unet_dict)}')
+    log.info(f'Available UNets: path="{shared.opts.unet_dir}" items={len(unet_dict)}')
+    return unet_dict

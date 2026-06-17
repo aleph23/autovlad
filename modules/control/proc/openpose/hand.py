@@ -32,7 +32,7 @@ class Hand(object):
         wsize = 128
         heatmap_avg = np.zeros((wsize, wsize, 22))
 
-        Hr, Wr, Cr = oriImgRaw.shape
+        Hr, Wr, _Cr = oriImgRaw.shape
 
         oriImg = cv2.GaussianBlur(oriImgRaw, (0, 0), 0.8)
 

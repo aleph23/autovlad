@@ -10,10 +10,10 @@ from modules.control.util import HWC3, img2mask, make_noise_disk, resize_image
 class ContentShuffleDetector:
     def __call__(self, input_image, h=None, w=None, f=None, detect_resolution=512, image_resolution=512, output_type="pil", **kwargs):
         if "return_pil" in kwargs:
-            warnings.warn("return_pil is deprecated. Use output_type instead.", DeprecationWarning)
+            warnings.warn("return_pil is deprecated. Use output_type instead.", DeprecationWarning, stacklevel=2)
             output_type = "pil" if kwargs["return_pil"] else "np"
         if type(output_type) is bool:
-            warnings.warn("Passing `True` or `False` to `output_type` is deprecated and will raise an error in future versions")
+            warnings.warn("Passing `True` or `False` to `output_type` is deprecated and will raise an error in future versions", stacklevel=2)
             if output_type:
                 output_type = "pil"
 
@@ -49,7 +49,7 @@ class ContentShuffleDetector:
 class ColorShuffleDetector:
     def __call__(self, img):
         H, W, C = img.shape
-        F = np.random.randint(64, 384) # noqa
+        F = np.random.randint(64, 384)
         A = make_noise_disk(H, W, 3, F)
         B = make_noise_disk(H, W, 3, F)
         C = (A + B) / 2.0
@@ -82,11 +82,11 @@ class DownSampleDetector:
     def __call__(self, img, level=3, k=16.0):
         h = img.astype(np.float32)
         for _ in range(level):
-            h += np.random.normal(loc=0.0, scale=k, size=h.shape) # noqa
+            h += np.random.normal(loc=0.0, scale=k, size=h.shape)
             h = cv2.pyrDown(h)
         for _ in range(level):
             h = cv2.pyrUp(h)
-            h += np.random.normal(loc=0.0, scale=k, size=h.shape) # noqa
+            h += np.random.normal(loc=0.0, scale=k, size=h.shape)
         return h.clip(0, 255).astype(np.uint8)
 
 

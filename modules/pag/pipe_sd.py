@@ -1034,20 +1034,20 @@ class StableDiffusionPAGPipeline(
         return self._interrupt
 
     @property
-    def pag_scale(self):
-        return self._pag_scale
+    def cfg_true(self):
+        return self._cfg_true
 
     @property
     def do_perturbed_attention_guidance(self):
-        return self._pag_scale > 0
+        return self._cfg_true > 0
 
     @property
-    def pag_adaptive_scaling(self):
-        return self._pag_adaptive_scaling
+    def cfg_adaptive_scaling(self):
+        return self._cfg_adaptive_scaling
 
     @property
-    def do_pag_adaptive_scaling(self):
-        return self._pag_adaptive_scaling > 0
+    def do_cfg_adaptive_scaling(self):
+        return self._cfg_adaptive_scaling > 0
 
     @property
     def pag_applied_layers_index(self):
@@ -1057,14 +1057,14 @@ class StableDiffusionPAGPipeline(
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 50,
-        timesteps: List[int] = None,
+        timesteps: List[int] | None = None,
         guidance_scale: float = 7.5,
-        pag_scale: float = 0.0,
-        pag_adaptive_scaling: float = 0.0,
+        cfg_true: float = 0.0,
+        cfg_adaptive_scaling: float = 0.0,
         pag_applied_layers_index: List[str] = ["d4"],  # ['d4', 'd5', 'm0']
         negative_prompt: Optional[Union[str, List[str]]] = None,
         num_images_per_prompt: Optional[int] = 1,
@@ -1202,8 +1202,8 @@ class StableDiffusionPAGPipeline(
         self._cross_attention_kwargs = cross_attention_kwargs
         self._interrupt = False
 
-        self._pag_scale = pag_scale
-        self._pag_adaptive_scaling = pag_adaptive_scaling
+        self._cfg_true = cfg_true
+        self._cfg_adaptive_scaling = cfg_adaptive_scaling
         self._pag_applied_layers_index = pag_applied_layers_index
 
         # 2. Define call parameters
@@ -1268,7 +1268,7 @@ class StableDiffusionPAGPipeline(
             latents,
         )
 
-        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        # 6. Prepare extra step kwargs.
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 6.1 Add image embeds for IP-Adapter
@@ -1321,10 +1321,10 @@ class StableDiffusionPAGPipeline(
                         up_layers[int(drop_layer[1])].processor = replace_processor
                     else:
                         raise ValueError(f"Invalid layer type: {drop_layer[0]}")
-                except IndexError:
+                except IndexError as e:
                     raise ValueError(
                         f"Invalid layer index: {drop_layer}. Available layers: {len(down_layers)} down layers, {len(mid_layers)} mid layers, {len(up_layers)} up layers."
-                    )
+                    ) from e
 
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
@@ -1372,9 +1372,9 @@ class StableDiffusionPAGPipeline(
                 elif not self.do_classifier_free_guidance and self.do_perturbed_attention_guidance:
                     noise_pred_original, noise_pred_perturb = noise_pred.chunk(2)
 
-                    signal_scale = self.pag_scale
-                    if self.do_pag_adaptive_scaling:
-                        signal_scale = self.pag_scale - self.pag_adaptive_scaling * (1000 - t)
+                    signal_scale = self.cfg_true
+                    if self.do_cfg_adaptive_scaling:
+                        signal_scale = self.cfg_true - self.cfg_adaptive_scaling * (1000 - t)
                         if signal_scale < 0:
                             signal_scale = 0
 
@@ -1384,9 +1384,9 @@ class StableDiffusionPAGPipeline(
                 elif self.do_classifier_free_guidance and self.do_perturbed_attention_guidance:
                     noise_pred_uncond, noise_pred_text, noise_pred_text_perturb = noise_pred.chunk(3)
 
-                    signal_scale = self.pag_scale
-                    if self.do_pag_adaptive_scaling:
-                        signal_scale = self.pag_scale - self.pag_adaptive_scaling * (1000 - t)
+                    signal_scale = self.cfg_true
+                    if self.do_cfg_adaptive_scaling:
+                        signal_scale = self.cfg_true - self.cfg_adaptive_scaling * (1000 - t)
                         if signal_scale < 0:
                             signal_scale = 0
 
@@ -1452,10 +1452,10 @@ class StableDiffusionPAGPipeline(
                         up_layers[int(drop_layer[1])].processor = AttnProcessor2_0()
                     else:
                         raise ValueError(f"Invalid layer type: {drop_layer[0]}")
-                except IndexError:
+                except IndexError as e:
                     raise ValueError(
                         f"Invalid layer index: {drop_layer}. Available layers: {len(down_layers)} down layers, {len(mid_layers)} mid layers, {len(up_layers)} up layers."
-                    )
+                    ) from e
 
         if not return_dict:
             return (image, has_nsfw_concept)

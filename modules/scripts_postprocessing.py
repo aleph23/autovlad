@@ -1,12 +1,18 @@
 import os
 import gradio as gr
 from modules import errors, shared
+from modules.logger import log
 
 
 class PostprocessedImage:
-    def __init__(self, image, info = {}):
+    def __init__(self, image, info = None):
+        if info is None:
+            info = {}
         self.image = image
         self.info = info
+
+    def __str__(self):
+        return f'PostprocessedImage(image={self.image} info={self.info})'
 
 
 class ScriptPostprocessing:
@@ -15,7 +21,7 @@ class ScriptPostprocessing:
     args_from = None
     args_to = None
     order = 1000 # scripts will be ordred by this value in postprocessing UI
-    name = None # this function should return the title of the script
+    name = 'unknown' # this function should return the title of the script
     group = None # A gr.Group component that has all script's UI inside it
 
     def ui(self):
@@ -36,6 +42,9 @@ class ScriptPostprocessing:
     def image_changed(self):
         pass
 
+    def __str__(self):
+        return f"ScriptPostprocessing(name={self.name} filename={self.filename})"
+
 
 def wrap_call(func, filename, funcname, *args, default=None, **kwargs):
     try:
@@ -49,7 +58,7 @@ def wrap_call(func, filename, funcname, *args, default=None, **kwargs):
 
 class ScriptPostprocessingRunner:
     def __init__(self):
-        self.scripts = None
+        self.scripts = []
         self.ui_created = False
 
     def initialize_scripts(self, scripts_data):
@@ -57,6 +66,9 @@ class ScriptPostprocessingRunner:
         for script_class, path, _basedir, _script_module in scripts_data:
             script: ScriptPostprocessing = script_class()
             script.filename = path
+            if script.name is None or script.name == "unknown":
+                log.warning(f'Script: path={path} cls={script_class} invalid')
+                continue
             if script.name == "Simple Upscale":
                 continue
             self.scripts.append(script)
@@ -65,13 +77,20 @@ class ScriptPostprocessingRunner:
         script.args_from = len(inputs)
         script.args_to = len(inputs)
         script.controls = wrap_call(script.ui, script.filename, "ui")
-        for control in script.controls.values() if script.controls is not None else []:
-            control.custom_script_source = os.path.basename(script.filename)
-        inputs += list(script.controls.values())
+        if script.controls is None:
+            script.controls = {}
+        if isinstance(script.controls, list) or isinstance(script.controls, tuple):
+            for control in script.controls:
+                control.custom_script_source = os.path.basename(script.filename)
+            inputs += script.controls
+        else:
+            for control in script.controls.values():
+                control.custom_script_source = os.path.basename(script.filename)
+            inputs += list(script.controls.values())
         script.args_to = len(inputs)
 
     def scripts_in_preferred_order(self):
-        if self.scripts is None:
+        if self.scripts is None or len(self.scripts) == 0:
             import modules.scripts_manager
             self.initialize_scripts(modules.scripts_manager.postprocessing_scripts_data)
         scripts_order = shared.opts.postprocessing_operation_order
@@ -98,11 +117,16 @@ class ScriptPostprocessingRunner:
         for script in self.scripts_in_preferred_order():
             jobid = shared.state.begin(script.name)
             script_args = args[script.args_from:script.args_to]
-            process_args = {}
-            for (name, _component), value in zip(script.controls.items(), script_args):
-                process_args[name] = value
-            shared.log.debug(f'Process: script={script.name} args={process_args}')
-            script.process(pp, **process_args)
+            process_args = []
+            process_kwargs = {}
+            if isinstance(script.controls, list) or isinstance(script.controls, tuple):
+                for _control, value in zip(script.controls, script_args, strict=False):
+                    process_args.append(value)
+            else:
+                for (name, _component), value in zip(script.controls.items(), script_args, strict=False):
+                    process_kwargs[name] = value
+            log.debug(f'Process: script="{script.name}" args={process_args} kwargs={process_kwargs}')
+            script.process(pp, *process_args, **process_kwargs)
             shared.state.end(jobid)
 
     def create_args_for_run(self, scripts_args):
@@ -110,7 +134,7 @@ class ScriptPostprocessingRunner:
             with gr.Blocks(analytics_enabled=False):
                 self.setup_ui()
         scripts = self.scripts_in_preferred_order()
-        args = [None] * max([x.args_to for x in scripts])
+        args = [None] * max([x.args_to for x in scripts], default=0)
         for script in scripts:
             script_args_dict = scripts_args.get(script.name, None)
             if script_args_dict is not None:
@@ -128,9 +152,14 @@ class ScriptPostprocessingRunner:
                 continue
             jobid = shared.state.begin(script.name)
             script_args = args[script.args_from:script.args_to]
-            process_args = {}
-            for (name, _component), value in zip(script.controls.items(), script_args):
-                process_args[name] = value
-            shared.log.debug(f'Postprocess: script={script.name} args={process_args}')
-            script.postprocess(filenames, **process_args)
+            process_args = []
+            process_kwargs = {}
+            if isinstance(script.controls, list) or isinstance(script.controls, tuple):
+                for _control, value in zip(script.controls, script_args, strict=False):
+                    process_args.append(value)
+            else:
+                for (name, _component), value in zip(script.controls.items(), script_args, strict=False):
+                    process_kwargs[name] = value
+            log.debug(f'Postprocess: script={script.name} args={process_args} kwargs={process_kwargs}')
+            script.postprocess(filenames, *process_args, **process_kwargs)
             shared.state.end(jobid)

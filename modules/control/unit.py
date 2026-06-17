@@ -1,13 +1,11 @@
-from typing import Union
 from PIL import Image
 import gradio as gr
-from installer import log
+from modules.logger import log
 from modules.control import processors
 from modules.control.units import controlnet
 from modules.control.units import xs
 from modules.control.units import lite
 from modules.control.units import t2iadapter
-from modules.control.units import reference # pylint: disable=unused-import
 
 
 default_device = None
@@ -16,7 +14,7 @@ unit_types = ['t2i adapter', 'controlnet', 'xs', 'lite', 'reference', 'ip']
 current = []
 
 
-class Unit(): # mashup of gradio controls and mapping to actual implementation classes
+class Unit: # mashup of gradio controls and mapping to actual implementation classes
     def update_choices(self, model_id=None):
         name = model_id or self.model_name
         if name == 'InstantX Union F1':
@@ -31,14 +29,14 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
             self.choices = ['default']
 
     def __str__(self):
-        return f'Unit(index={self.index} enabled={self.enabled} type="{self.type}" strength={self.strength} start={self.start} end={self.end}{self.process}{self.controlnet})'
+        return f'Unit(index={self.index} enabled={self.enabled} type="{self.type}" strength={self.strength} start={self.start} end={self.end}{self.process}{self.controlnet} override={self.override})'
 
     def __init__(self,
                  # values
-                 index: int = None,
-                 enabled: bool = None,
-                 strength: float = None,
-                 unit_type: str = None,
+                 index: int | None = None,
+                 enabled: bool | None = None,
+                 strength: float | None = None,
+                 unit_type: str | None = None,
                  start: float = 0,
                  end: float = 1,
                  # ui bindings
@@ -57,8 +55,10 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
                  control_mode = None,
                  control_tile = None,
                  result_txt = None,
-                 extra_controls: list = [],
+                 extra_controls: list | None = None,
         ):
+        if extra_controls is None:
+            extra_controls = []
         self.model_id = model_id
         self.process_id = process_id
         self.controls = [gr.Label(value=unit_type, visible=False)] # separator
@@ -71,15 +71,15 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
         self.end = end or 1
         self.start = min(self.start, self.end)
         self.end = max(self.start, self.end)
-        self.mode = None
+        self.mode: int | None = None
         # processor always exists, adapter and controlnet are optional
-        self.model_name = None
-        self.process_name = None
+        self.model_name: str | None = None
+        self.process_name: str | None = None
         self.process: processors.Processor = processors.Processor()
-        self.adapter: t2iadapter.Adapter = None
-        self.controlnet: Union[controlnet.ControlNet, xs.ControlNetXS] = None
+        self.adapter: t2iadapter.Adapter | None = None
+        self.controlnet: controlnet.ControlNet | xs.ControlNetXS | lite.ControlLLLite | None = None
         # map to input image
-        self.override: Image = None
+        self.override: Image.Image | None = None
         # global settings but passed per-unit
         self.factor = 1.0
         self.guess = False
@@ -88,6 +88,8 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
         self.fidelity = 0.5
         self.query_weight = 1.0
         self.adain_weight = 1.0
+        # preprocessor param overrides
+        self.process_params = {}
         # control mode
         self.choices = ['default']
         # control tile
@@ -134,15 +136,15 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
             if image_file is None:
                 self.process.override = None
                 self.override = None
-                log.debug('Control process clear image')
+                log.debug('Control image: clear')
                 return gr.update(value=None)
             try:
                 self.process.override = Image.open(image_file.name)
                 self.override = self.process.override
-                log.debug(f'Control process upload image: path="{image_file.name}" image={self.process.override}')
+                log.debug(f'Control image: upload={self.process.override} path="{image_file.name}"')
                 return gr.update(visible=self.process.override is not None, value=self.process.override)
             except Exception as e:
-                log.error(f'Control process upload image failed: path="{image_file.name}" error={e}')
+                log.error(f'Control image: upload path="{image_file.name}" error={e}')
                 return gr.update(visible=False, value=None)
 
         def reuse_image(image):
@@ -180,7 +182,7 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
                     self.adapter.load(model_id)
                 else:
                     self.controls.append(model_id)
-                    model_id.change(fn=self.adapter.load, inputs=[model_id], outputs=[result_txt], show_progress=True)
+                    model_id.change(fn=self.adapter.load, inputs=[model_id], outputs=[result_txt], show_progress='full')
             if extra_controls is not None and len(extra_controls) > 0:
                 extra_controls[0].change(fn=adapter_extra, inputs=extra_controls)
         elif self.type == 'controlnet':
@@ -189,8 +191,8 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
                     self.controlnet.load(model_id)
                 else:
                     self.controls.append(model_id)
-                    model_id.change(fn=self.controlnet.load, inputs=[model_id], outputs=[result_txt], show_progress=True)
-                    model_id.change(fn=control_choices, inputs=[model_id], outputs=[control_mode, control_tile], show_progress=False)
+                    model_id.change(fn=self.controlnet.load, inputs=[model_id], outputs=[result_txt], show_progress='full')
+                    model_id.change(fn=control_choices, inputs=[model_id], outputs=[control_mode, control_tile], show_progress='hidden')
             if extra_controls is not None and len(extra_controls) > 0:
                 extra_controls[0].change(fn=controlnet_extra, inputs=extra_controls)
         elif self.type == 'xs':
@@ -199,7 +201,7 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
                     self.controlnet.load(model_id)
                 else:
                     self.controls.append(model_id)
-                    model_id.change(fn=self.controlnet.load, inputs=[model_id, extra_controls[0]], outputs=[result_txt], show_progress=True)
+                    model_id.change(fn=self.controlnet.load, inputs=[model_id, extra_controls[0]], outputs=[result_txt], show_progress='full')
             if extra_controls is not None and len(extra_controls) > 0:
                 extra_controls[0].change(fn=controlnetxs_extra, inputs=extra_controls)
         elif self.type == 'lite':
@@ -208,7 +210,7 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
                     self.controlnet.load(model_id)
                 else:
                     self.controls.append(model_id)
-                    model_id.change(fn=self.controlnet.load, inputs=[model_id], outputs=[result_txt], show_progress=True)
+                    model_id.change(fn=self.controlnet.load, inputs=[model_id], outputs=[result_txt], show_progress='full')
             if extra_controls is not None and len(extra_controls) > 0:
                 extra_controls[0].change(fn=controlnetxs_extra, inputs=extra_controls)
         elif self.type == 'reference':
@@ -229,7 +231,7 @@ class Unit(): # mashup of gradio controls and mapping to actual implementation c
                 self.process.load(process_id)
             else:
                 self.controls.append(process_id)
-                process_id.change(fn=self.process.load, inputs=[process_id], outputs=[result_txt], show_progress=True)
+                process_id.change(fn=self.process.load, inputs=[process_id], outputs=[result_txt], show_progress='full')
         if reset_btn is not None:
             reset_btn.click(fn=self.reset, inputs=[], outputs=[enabled_cb, model_id, process_id, model_strength])
         if preview_btn is not None:

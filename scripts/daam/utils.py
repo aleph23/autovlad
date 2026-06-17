@@ -69,7 +69,7 @@ def cache_dir() -> Path:
         return Path(local, 'daam')
 
 
-def compute_token_merge_indices(tokenizer, prompt: str, word: str, word_idx: int = None, offset_idx: int = 0):
+def compute_token_merge_indices(tokenizer, prompt: str, word: str, word_idx: int | None = None, offset_idx: int = 0):
     merge_idxs = []
     tokens = tokenizer.tokenize(prompt.lower())
     tokens = [x.replace('</w>', '') for x in tokens]  # New tokenizer uses wordpiece markers.

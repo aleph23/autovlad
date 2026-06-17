@@ -444,7 +444,7 @@ class OmniGen2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
             if ref_img_sizes[i] is not None:
                 imgs = []
                 for ref_img in ref_image_hidden_states[i]:
-                    C, H, W = ref_img.size()
+                    _C, _H, _W = ref_img.size()
                     ref_img = rearrange(ref_img, 'c (h p1) (w p2) -> (h w) (p1 p2 c)', p1=p, p2=p)
                     imgs.append(ref_img)
 
@@ -457,7 +457,7 @@ class OmniGen2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
         flat_hidden_states = []
         for i in range(batch_size):
             img = hidden_states[i]
-            C, H, W = img.size()
+            _C, _H, _W = img.size()
 
             img = rearrange(img, 'c (h p1) (w p2) -> (h w) (p1 p2 c)', p1=p, p2=p)
             flat_hidden_states.append(img)
@@ -518,7 +518,7 @@ class OmniGen2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
 
         if is_hidden_states_tensor:
             assert hidden_states.ndim == 4
-            hidden_states = [_hidden_states for _hidden_states in hidden_states]
+            hidden_states = list(hidden_states)
 
         device = hidden_states[0].device
 
@@ -580,7 +580,7 @@ class OmniGen2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, From
 
         hidden_states = joint_hidden_states
 
-        for layer_idx, layer in enumerate(self.layers):
+        for _layer_idx, layer in enumerate(self.layers):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 hidden_states = self._gradient_checkpointing_func(
                     layer, hidden_states, attention_mask, rotary_emb, temb

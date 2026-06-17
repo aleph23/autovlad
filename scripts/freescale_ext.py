@@ -1,11 +1,12 @@
 import gradio as gr
 from modules import scripts_manager, processing, shared, sd_models
+from modules.logger import log
 
 
 registered = False
 
 
-class Script(scripts_manager.Script):
+class FreeScaleScript(scripts_manager.Script):
     def __init__(self):
         super().__init__()
         self.orig_pipe = None
@@ -50,15 +51,15 @@ class Script(scripts_manager.Script):
     def run(self, p: processing.StableDiffusionProcessing, cosine_scale, override_sampler, cosine_scale_bg, dilate_tau, s1_enable, s1_scale, s1_restart, s2_enable, s2_scale, s2_restart, s3_enable, s3_scale, s3_restart, s4_enable, s4_scale, s4_restart): # pylint: disable=arguments-differ
         supported_model_list = ['sdxl']
         if shared.sd_model_type not in supported_model_list:
-            shared.log.warning(f'FreeScale: class={shared.sd_model.__class__.__name__} model={shared.sd_model_type} required={supported_model_list}')
+            log.warning(f'FreeScale: class={shared.sd_model.__class__.__name__} model={shared.sd_model_type} required={supported_model_list}')
             return None
 
         if self.is_img2img:
             if p.init_images is None or len(p.init_images) == 0:
-                shared.log.warning('FreeScale: missing input image')
+                log.warning('FreeScale: missing input image')
                 return None
 
-        from scripts.freescale import StableDiffusionXLFreeScale, StableDiffusionXLFreeScaleImg2Img
+        from scripts.freescale import StableDiffusionXLFreeScale, StableDiffusionXLFreeScaleImg2Img # pylint: disable=no-name-in-module
         self.orig_pipe = shared.sd_model
         self.orig_slice = shared.opts.diffusers_vae_slicing
         self.orig_tile = shared.opts.diffusers_vae_tiling
@@ -66,7 +67,7 @@ class Script(scripts_manager.Script):
         def scale(x):
             if (p.width == 0 or p.height == 0) and p.init_images is not None:
                 p.width, p.height = p.init_images[0].width, p.init_images[0].height
-            resolution = [int(8 * p.width * x // 8), int(8 * p.height * x // 8)]
+            resolution = [8 * int(p.width * x // 8), 8 * int(p.height * x // 8)]
             return resolution
 
         scales = []
@@ -89,6 +90,10 @@ class Script(scripts_manager.Script):
             resolutions_list.append(scale(s4_scale))
             restart_steps.append(int(p.steps * s4_restart))
 
+        if p.width < 1024 or p.height < 1024:
+            log.error(f'FreeScale: width={p.width} height={p.height} minimum=1024')
+            return None
+
         p.task_args['resolutions_list'] = resolutions_list
         p.task_args['cosine_scale'] = cosine_scale
         p.task_args['restart_steps'] = [min(max(1, step), p.steps-1) for step in restart_steps]
@@ -100,10 +105,6 @@ class Script(scripts_manager.Script):
         if override_sampler:
             p.sampler_name = 'Euler a'
 
-        if p.width < 1024 or p.height < 1024:
-            shared.log.error(f'FreeScale: width={p.width} height={p.height} minimum=1024')
-            return None
-
         if not self.is_img2img:
             shared.sd_model = sd_models.switch_pipe(StableDiffusionXLFreeScale, shared.sd_model)
         else:
@@ -111,7 +112,7 @@ class Script(scripts_manager.Script):
         shared.sd_model.enable_vae_slicing()
         shared.sd_model.enable_vae_tiling()
 
-        shared.log.info(f'FreeScale: mode={"txt" if not self.is_img2img else "img"} cosine={cosine_scale} bg={cosine_scale_bg} tau={dilate_tau} scales={scales} resolutions={resolutions_list} steps={restart_steps} sampler={p.sampler_name}')
+        log.info(f'FreeScale: mode={"txt" if not self.is_img2img else "img"} cosine={cosine_scale} bg={cosine_scale_bg} tau={dilate_tau} scales={scales} resolutions={resolutions_list} steps={restart_steps} sampler={p.sampler_name}')
         resolutions = ','.join([f'{x[0]}x{x[1]}' for x in resolutions_list])
         steps = ','.join([str(x) for x in restart_steps])
         p.extra_generation_params["FreeScale"] = f'cosine {cosine_scale} resolutions {resolutions} steps {steps}'

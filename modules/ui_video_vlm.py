@@ -1,6 +1,6 @@
 import gradio as gr
 from PIL import Image
-from modules import shared
+from modules.logger import log
 
 
 models = [
@@ -21,8 +21,8 @@ system_prompts = {
 }
 
 
-def enhance_prompt(enable:bool, model:str=None, image=None, prompt:str='', system_prompt:str='', nsfw:bool=True):
-    from modules.interrogate import vqa
+def enhance_prompt(enable: bool, model: str | None = None, image=None, prompt: str = "", system_prompt: str = "", nsfw: bool = True):
+    from modules.caption import vqa
     if not enable:
         return prompt
     if model is None or len(model) < 4:
@@ -45,9 +45,9 @@ def enhance_prompt(enable:bool, model:str=None, image=None, prompt:str='', syste
         system_prompt = f"{system_prompts['prefix']} {core_prompt} {system_prompts['desc']}' "
         system_prompt += system_prompts['nsfw_ok'] if nsfw else system_prompts['nsfw_no']
         system_prompt += f" {system_prompts['suffix']} {system_prompts['example']}"
-    shared.log.debug(f'Video prompt enhance: model="{model}" image={image} nsfw={nsfw} prompt="{prompt}"')
-    answer = vqa.interrogate(question='', prompt=prompt, system_prompt=system_prompt, image=image, model_name=model, quiet=False)
-    shared.log.debug(f'Video prompt enhance: answer="{answer}"')
+    log.debug(f'Video prompt enhance: model="{model}" image={image} nsfw={nsfw} prompt="{prompt}"')
+    answer = vqa.caption(question='', prompt=prompt, system_prompt=system_prompt, image=image, model_name=model, quiet=False)
+    log.debug(f'Video prompt enhance: answer="{answer}"')
     return answer
 
 
@@ -58,13 +58,13 @@ def create_ui(prompt_element:gr.Textbox, image_element:gr.Image):
             nsfw = gr.Checkbox(label='NSFW allowed', value=True)
             btn_enhance = gr.Button(value='Enhance now', elem_id='btn_enhance')
         with gr.Row():
-            model = gr.Dropdown(label='Model', choices=models, value=models[0])
+            model = gr.Dropdown(label='LLM Model', choices=models, value=models[0])
         with gr.Row():
             system_prompt = gr.Textbox(label='System prompt', placeholder='override system prompt with user-provided prompt', lines=3)
         btn_enhance.click(
             fn=enhance_prompt,
             inputs=[enable, model, image_element, prompt_element, system_prompt, nsfw],
             outputs=prompt_element,
-            show_progress=True,
+            show_progress='full',
         )
     return enable, model, system_prompt

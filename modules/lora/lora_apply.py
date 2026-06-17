@@ -1,18 +1,22 @@
-from typing import Union
+from __future__ import annotations
+
 import re
 import time
+from typing import TYPE_CHECKING
 import torch
-import diffusers.models.lora
 from modules.lora import lora_common as l
-from modules import shared, devices, errors, model_quant
+from modules import shared, devices, errors
+from modules.logger import log
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    import diffusers.models.lora
 
 
-bnb = None
 re_network_name = re.compile(r"(.*)\s*\([0-9a-fA-F]+\)")
 
 
-def network_backup_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, diffusers.models.lora.LoRACompatibleLinear, diffusers.models.lora.LoRACompatibleConv], network_layer_name: str, wanted_names: tuple):
-    global bnb # pylint: disable=W0603
+def network_backup_weights(self: torch.nn.Conv2d | torch.nn.Linear | torch.nn.GroupNorm | torch.nn.LayerNorm | diffusers.models.lora.LoRACompatibleLinear | diffusers.models.lora.LoRACompatibleConv, network_layer_name: str, wanted_names: tuple):
     backup_size = 0
     if len(l.loaded_networks) > 0 and network_layer_name is not None and any([net.modules.get(network_layer_name, None) for net in l.loaded_networks]): # noqa: C419 # pylint: disable=R1729
         t0 = time.time()
@@ -20,7 +24,7 @@ def network_backup_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.n
         weights_backup = getattr(self, "network_weights_backup", None)
         bias_backup = getattr(self, "network_bias_backup", None)
         if weights_backup is not None or bias_backup is not None:
-            if (shared.opts.lora_fuse_diffusers and not isinstance(weights_backup, bool)) or (not shared.opts.lora_fuse_diffusers and isinstance(weights_backup, bool)): # invalidate so we can change direct/backup on-the-fly
+            if (shared.opts.lora_fuse_native and not isinstance(weights_backup, bool)) or (not shared.opts.lora_fuse_native and isinstance(weights_backup, bool)): # invalidate so we can change direct/backup on-the-fly
                 weights_backup = None
                 bias_backup = None
                 self.network_weights_backup = weights_backup
@@ -29,39 +33,27 @@ def network_backup_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.n
         if weights_backup is None and wanted_names != (): # pylint: disable=C1803
             weight = getattr(self, 'weight', None)
             self.network_weights_backup = None
-            if getattr(weight, "quant_type", None) in ['nf4', 'fp4']:
-                if bnb is None:
-                    bnb = model_quant.load_bnb('Network load: type=LoRA', silent=True)
-                if bnb is not None:
-                    if shared.opts.lora_fuse_diffusers:
-                        self.network_weights_backup = True
-                    else:
-                        self.network_weights_backup = bnb.functional.dequantize_4bit(weight, quant_state=weight.quant_state, quant_type=weight.quant_type, blocksize=weight.blocksize,)
-                    self.quant_state, self.quant_type, self.blocksize = weight.quant_state, weight.quant_type, weight.blocksize
-                else:
-                    self.network_weights_backup = weight.clone().to(devices.cpu) if not shared.opts.lora_fuse_diffusers else True
+            if shared.opts.lora_fuse_native:
+                self.network_weights_backup = True
             else:
-                if shared.opts.lora_fuse_diffusers:
-                    self.network_weights_backup = True
-                else:
-                    self.network_weights_backup = weight.clone().to(devices.cpu)
-                    if hasattr(self, "sdnq_dequantizer"):
-                        self.sdnq_dequantizer_backup = self.sdnq_dequantizer.to(devices.cpu)
-                        self.sdnq_scale_backup = self.scale.clone().to(devices.cpu)
-                        if self.zero_point is not None:
-                            self.sdnq_zero_point_backup = self.zero_point.clone().to(devices.cpu)
-                        else:
-                            self.sdnq_zero_point_backup = None
-                        if self.svd_up is not None:
-                            self.sdnq_svd_up_backup = self.svd_up.clone().to(devices.cpu)
-                            self.sdnq_svd_down_backup = self.svd_down.clone().to(devices.cpu)
-                        else:
-                            self.sdnq_svd_up_backup = None
-                            self.sdnq_svd_down_backup = None
+                self.network_weights_backup = weight.clone().to(devices.cpu)
+                if hasattr(self, "sdnq_dequantizer"):
+                    self.sdnq_dequantizer_backup = self.sdnq_dequantizer
+                    self.sdnq_scale_backup = self.scale.clone().to(devices.cpu)
+                    if self.zero_point is not None:
+                        self.sdnq_zero_point_backup = self.zero_point.clone().to(devices.cpu)
+                    else:
+                        self.sdnq_zero_point_backup = None
+                    if self.svd_up is not None:
+                        self.sdnq_svd_up_backup = self.svd_up.clone().to(devices.cpu)
+                        self.sdnq_svd_down_backup = self.svd_down.clone().to(devices.cpu)
+                    else:
+                        self.sdnq_svd_up_backup = None
+                        self.sdnq_svd_down_backup = None
 
         if bias_backup is None:
             if getattr(self, 'bias', None) is not None:
-                if shared.opts.lora_fuse_diffusers:
+                if shared.opts.lora_fuse_native:
                     self.network_bias_backup = True
                 else:
                     bias_backup = self.bias.clone()
@@ -75,7 +67,7 @@ def network_backup_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.n
     return backup_size
 
 
-def network_calc_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, diffusers.models.lora.LoRACompatibleLinear, diffusers.models.lora.LoRACompatibleConv], network_layer_name: str, use_previous: bool = False):
+def network_calc_weights(self: torch.nn.Conv2d | torch.nn.Linear | torch.nn.GroupNorm | torch.nn.LayerNorm | diffusers.models.lora.LoRACompatibleLinear | diffusers.models.lora.LoRACompatibleConv, network_layer_name: str, use_previous: bool = False, *, elimit: Callable[[], None] | None = None):
     if shared.opts.diffusers_offload_mode == "none":
         try:
             self.to(devices.device)
@@ -91,7 +83,7 @@ def network_calc_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.
         try:
             t0 = time.time()
             if hasattr(self, "sdnq_dequantizer_backup"):
-                weight = self.sdnq_dequantizer_backup.to(devices.device)(
+                weight = self.sdnq_dequantizer_backup(
                     self.weight.to(devices.device),
                     self.sdnq_scale_backup.to(devices.device),
                     self.sdnq_zero_point_backup.to(devices.device) if self.sdnq_zero_point_backup is not None else None,
@@ -100,7 +92,7 @@ def network_calc_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.
                     skip_quantized_matmul=self.sdnq_dequantizer_backup.use_quantized_matmul
                 )
             elif hasattr(self, "sdnq_dequantizer"):
-                weight = self.sdnq_dequantizer.to(devices.device)(
+                weight = self.sdnq_dequantizer(
                     self.weight.to(devices.device),
                     self.scale.to(devices.device),
                     self.zero_point.to(devices.device) if self.zero_point is not None else None,
@@ -120,7 +112,7 @@ def network_calc_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.
                 else:
                     batch_updown = updown.to(devices.device)
             if ex_bias is not None:
-                if batch_ex_bias:
+                if batch_ex_bias is not None:
                     batch_ex_bias += ex_bias.to(batch_ex_bias.device)
                 else:
                     batch_ex_bias = ex_bias.to(devices.device)
@@ -137,15 +129,17 @@ def network_calc_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.
         except RuntimeError as e:
             l.extra_network_lora.errors[net.name] = l.extra_network_lora.errors.get(net.name, 0) + 1
             module_name = net.modules.get(network_layer_name, None)
-            shared.log.error(f'Network: type=LoRA name="{net.name}" module="{module_name}" layer="{network_layer_name}" apply weight: {e}')
+            log.error(f'Network: type=LoRA name="{net.name}" module="{module_name}" layer="{network_layer_name}" apply weight: {e}')
             if l.debug:
                 errors.display(e, 'LoRA')
                 raise RuntimeError('LoRA apply weight') from e
+            if elimit is not None:
+                elimit()
         continue
     return batch_updown, batch_ex_bias
 
 
-def network_add_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, diffusers.models.lora.LoRACompatibleLinear, diffusers.models.lora.LoRACompatibleConv], model_weights: Union[None, torch.Tensor] = None, lora_weights: torch.Tensor = None, deactivate: bool = False, device: torch.device = None, bias: bool = False):
+def network_add_weights(self: torch.nn.Conv2d | torch.nn.Linear | torch.nn.GroupNorm | torch.nn.LayerNorm | diffusers.models.lora.LoRACompatibleLinear | diffusers.models.lora.LoRACompatibleConv, model_weights: None | torch.Tensor = None, lora_weights: torch.Tensor = None, deactivate: bool = False, device: torch.device = None, bias: bool = False):
     if lora_weights is None:
         return
     if deactivate:
@@ -153,72 +147,72 @@ def network_add_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.G
     if model_weights is None: # weights are used if provided-from-backup else use self.weight
         model_weights = self.weight
     weight, new_weight = None, None
-    # TODO lora: add other quantization types
-    if self.__class__.__name__ == 'Linear4bit' and bnb is not None:
+    if not bias and hasattr(self, "sdnq_dequantizer"):
         try:
-            dequant_weight = bnb.functional.dequantize_4bit(model_weights.to(devices.device), quant_state=self.quant_state, quant_type=self.quant_type, blocksize=self.blocksize)
-            new_weight = dequant_weight.to(devices.device) + lora_weights.to(devices.device)
-            weight = bnb.nn.Params4bit(new_weight.to(device), quant_state=self.quant_state, quant_type=self.quant_type, blocksize=self.blocksize, requires_grad=False)
-            # TODO lora: maybe force imediate quantization
-            # weight._quantize(devices.device) / weight.to(device=device)
-        except Exception as e:
-            shared.log.error(f'Network load: type=LoRA quant=bnb cls={self.__class__.__name__} type={self.quant_type} blocksize={self.blocksize} state={vars(self.quant_state)} weight={self.weight} bias={lora_weights} {e}')
-    elif not bias and hasattr(self, "sdnq_dequantizer"):
-        try:
-            from modules.sdnq import sdnq_quantize_layer
+            from modules.sdnq import SDNQConfig, sdnq_quantize_layer
             if hasattr(self, "sdnq_dequantizer_backup"):
-                weights_dtype = self.sdnq_dequantizer_backup.weights_dtype
-                dequant_weight = self.sdnq_dequantizer_backup.to(devices.device)(
+                use_svd = bool(self.sdnq_svd_up_backup is not None)
+                dequantize_fp32 = bool(self.sdnq_scale_backup.dtype == torch.float32)
+                sdnq_dequantizer = self.sdnq_dequantizer_backup
+                dequant_weight = self.sdnq_dequantizer_backup(
                     model_weights.to(devices.device),
                     self.sdnq_scale_backup.to(devices.device),
                     self.sdnq_zero_point_backup.to(devices.device) if self.sdnq_zero_point_backup is not None else None,
-                    self.sdnq_svd_up_backup.to(devices.device) if self.sdnq_svd_up_backup is not None else None,
-                    self.sdnq_svd_down_backup.to(devices.device) if self.sdnq_svd_down_backup is not None else None,
-                    skip_quantized_matmul=self.sdnq_dequantizer_backup.use_quantized_matmul
+                    self.sdnq_svd_up_backup.to(devices.device) if use_svd else None,
+                    self.sdnq_svd_down_backup.to(devices.device) if use_svd else None,
+                    skip_quantized_matmul=self.sdnq_dequantizer_backup.use_quantized_matmul,
+                    dtype=torch.float32,
                 )
             else:
-                weights_dtype = self.sdnq_dequantizer.weights_dtype
-                dequant_weight = self.sdnq_dequantizer.to(devices.device)(
+                use_svd = bool(self.svd_up is not None)
+                dequantize_fp32 = bool(self.scale.dtype == torch.float32)
+                sdnq_dequantizer = self.sdnq_dequantizer
+                dequant_weight = self.sdnq_dequantizer(
                     model_weights.to(devices.device),
                     self.scale.to(devices.device),
                     self.zero_point.to(devices.device) if self.zero_point is not None else None,
-                    self.svd_up.to(devices.device) if self.svd_up is not None else None,
-                    self.svd_down.to(devices.device) if self.svd_down is not None else None,
-                    skip_quantized_matmul=self.sdnq_dequantizer.use_quantized_matmul
+                    self.svd_up.to(devices.device) if use_svd else None,
+                    self.svd_down.to(devices.device) if use_svd else None,
+                    skip_quantized_matmul=self.sdnq_dequantizer.use_quantized_matmul,
+                    dtype=torch.float32,
                 )
 
             new_weight = dequant_weight.to(devices.device, dtype=torch.float32) + lora_weights.to(devices.device, dtype=torch.float32)
             self.weight = torch.nn.Parameter(new_weight, requires_grad=False)
-            del self.sdnq_dequantizer, self.scale, self.zero_point, self.svd_up, self.svd_down
+            self.sdnq_dequantizer = self.scale = self.zero_point = self.svd_up = self.svd_down = None
             self = sdnq_quantize_layer(
                 self,
-                weights_dtype=weights_dtype,
-                torch_dtype=devices.dtype,
-                group_size=shared.opts.sdnq_quantize_weights_group_size,
-                svd_rank=shared.opts.sdnq_svd_rank,
-                svd_steps=shared.opts.sdnq_svd_steps,
-                use_svd=shared.opts.sdnq_use_svd,
-                quant_conv=shared.opts.sdnq_quantize_conv_layers,
-                use_quantized_matmul=shared.opts.sdnq_use_quantized_matmul,
-                use_quantized_matmul_conv=shared.opts.sdnq_use_quantized_matmul_conv,
-                dequantize_fp32=shared.opts.sdnq_dequantize_fp32,
-                non_blocking=False,
-                quantization_device=devices.device,
-                return_device=device,
+                SDNQConfig(
+                    weights_dtype=sdnq_dequantizer.weights_dtype,
+                    quantized_matmul_dtype=sdnq_dequantizer.quantized_matmul_dtype,
+                    group_size=sdnq_dequantizer.group_size,
+                    hadamard_group_size=sdnq_dequantizer.hadamard_group_size,
+                    svd_rank=sdnq_dequantizer.svd_rank,
+                    use_quantized_matmul=sdnq_dequantizer.use_quantized_matmul,
+                    use_quantized_matmul_conv=sdnq_dequantizer.use_quantized_matmul,
+                    use_svd=use_svd,
+                    use_hadamard=sdnq_dequantizer.use_hadamard,
+                    dequantize_fp32=dequantize_fp32,
+                    svd_steps=shared.opts.sdnq_svd_steps,
+                    quant_conv=True, # quant_conv is True if conv layers ends up here
+                    non_blocking=False,
+                    quantization_device=devices.device,
+                    return_device=device,
+                ),
+                torch_dtype=sdnq_dequantizer.result_dtype,
                 param_name=getattr(self, 'network_layer_name', None),
-            )
-            self = self.to(device)
+            )[0].to(device)
             weight = None
             del dequant_weight
         except Exception as e:
-            shared.log.error(f'Network load: type=LoRA quant=sdnq cls={self.__class__.__name__} weight={self.weight} lora_weights={lora_weights} {e}')
+            log.error(f'Network load: type=LoRA quant=sdnq cls={self.__class__.__name__} weight={self.weight} lora_weights={lora_weights} {e}')
     else:
         try:
             new_weight = model_weights.to(devices.device) + lora_weights.to(devices.device)
         except Exception as e:
-            shared.log.warning(f'Network load: {e}')
+            log.warning(f'Network load: {e}')
             if 'The size of tensor' in str(e):
-                shared.log.error(f'Network load: type=LoRA model={shared.sd_model.__class__.__name__} incompatible lora shape')
+                log.error(f'Network load: type=LoRA model={shared.sd_model.__class__.__name__} incompatible lora shape')
                 new_weight = model_weights
             else:
                 new_weight = model_weights + lora_weights # try without device cast
@@ -231,7 +225,7 @@ def network_add_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.G
     del model_weights, lora_weights, new_weight, weight # required to avoid memory leak
 
 
-def network_apply_direct(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, diffusers.models.lora.LoRACompatibleLinear, diffusers.models.lora.LoRACompatibleConv], updown: torch.Tensor, ex_bias: torch.Tensor, deactivate: bool = False, device: torch.device = devices.device):
+def network_apply_direct(self: torch.nn.Conv2d | torch.nn.Linear | torch.nn.GroupNorm | torch.nn.LayerNorm | diffusers.models.lora.LoRACompatibleLinear | diffusers.models.lora.LoRACompatibleConv, updown: torch.Tensor, ex_bias: torch.Tensor, deactivate: bool = False, device: torch.device = devices.device):
     weights_backup = getattr(self, "network_weights_backup", False)
     bias_backup = getattr(self, "network_bias_backup", False)
     if not isinstance(weights_backup, bool): # remove previous backup if we switched settings
@@ -258,7 +252,7 @@ def network_apply_direct(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.
     l.timer.apply += time.time() - t0
 
 
-def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, diffusers.models.lora.LoRACompatibleLinear, diffusers.models.lora.LoRACompatibleConv], updown: torch.Tensor, ex_bias: torch.Tensor, device: torch.device, deactivate: bool = False):
+def network_apply_weights(self: torch.nn.Conv2d | torch.nn.Linear | torch.nn.GroupNorm | torch.nn.LayerNorm | diffusers.models.lora.LoRACompatibleLinear | diffusers.models.lora.LoRACompatibleConv, updown: torch.Tensor, ex_bias: torch.Tensor, device: torch.device, deactivate: bool = False):
     weights_backup = getattr(self, "network_weights_backup", None)
     bias_backup = getattr(self, "network_bias_backup", None)
     if weights_backup is None and bias_backup is None:
@@ -274,7 +268,7 @@ def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn
         else:
             self.weight = torch.nn.Parameter(weights_backup.to(device), requires_grad=False)
             if hasattr(self, "sdnq_dequantizer_backup"):
-                self.sdnq_dequantizer = self.sdnq_dequantizer_backup.to(device)
+                self.sdnq_dequantizer = self.sdnq_dequantizer_backup
                 self.scale = torch.nn.Parameter(self.sdnq_scale_backup.to(device), requires_grad=False)
                 if self.sdnq_zero_point_backup is not None:
                     self.zero_point = torch.nn.Parameter(self.sdnq_zero_point_backup.to(device), requires_grad=False)
@@ -285,7 +279,7 @@ def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn
                     self.svd_down = torch.nn.Parameter(self.sdnq_svd_down_backup.to(device), requires_grad=False)
                 else:
                     self.svd_up, self.svd_down = None, None
-                del self.sdnq_dequantizer_backup, self.sdnq_scale_backup, self.sdnq_zero_point_backup, self.sdnq_svd_up_backup, self.sdnq_svd_down_backup
+                # del self.sdnq_dequantizer_backup, self.sdnq_scale_backup, self.sdnq_zero_point_backup, self.sdnq_svd_up_backup, self.sdnq_svd_down_backup
 
     if bias_backup is not None:
         self.bias = None

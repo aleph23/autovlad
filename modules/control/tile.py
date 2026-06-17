@@ -1,6 +1,7 @@
 import time
 from PIL import Image
 from modules import shared, processing, images, sd_models, sd_vae
+from modules.logger import log
 
 
 def get_tile(image: Image.Image, x: int, y: int, sx: int, sy: int) -> Image.Image:
@@ -20,9 +21,11 @@ def set_tile(image: Image.Image, x: int, y: int, tiled: Image.Image):
 def run_tiling(p: processing.StableDiffusionProcessing, input_image: Image.Image) -> processing.Processed:
     t0 = time.time()
     # prepare images
-    sx, sy = p.control_tile.split('x')
-    sx = int(sx)
-    sy = int(sy)
+    tile_parts = p.control_tile.split('x')
+    if len(tile_parts) != 2:
+        raise ValueError('Control Tile: invalid format, expected "SxS"')
+    sx = int(tile_parts[0])
+    sy = int(tile_parts[1])
     vae_scale_factor = sd_vae.get_vae_scale_factor()
     if sx <= 0 or sy <= 0:
         raise ValueError('Control Tile: invalid tile size')
@@ -37,7 +40,7 @@ def run_tiling(p: processing.StableDiffusionProcessing, input_image: Image.Image
         w, h = vae_scale_factor * int(sx * init_image.width) // vae_scale_factor, vae_scale_factor * int(sy * init_image.height) // vae_scale_factor
         init_upscaled = images.resize_image(resize_mode=1 if sx==sy else 5, im=init_image, width=w, height=h, context='add with forward')
     t1 = time.time()
-    shared.log.debug(f'Control Tile: scale={sx}x{sy} resize={"fixed" if sx==sy else "context"} control={control_upscaled} init={init_upscaled} time={t1-t0:.3f}')
+    log.debug(f'Control Tile: scale={sx}x{sy} resize={"fixed" if sx==sy else "context"} control={control_upscaled} init={init_upscaled} time={t1-t0:.3f}')
 
     # stop processing from restoring pipeline on each iteration
     orig_restore_pipeline = getattr(shared.sd_model, 'restore_pipeline', None)
@@ -46,7 +49,7 @@ def run_tiling(p: processing.StableDiffusionProcessing, input_image: Image.Image
     # run tiling
     for x in range(sx):
         for y in range(sy):
-            shared.log.info(f'Control Tile: tile={x+1}-{sx}/{y+1}-{sy} target={control_upscaled}')
+            log.info(f'Control Tile: tile={x+1}-{sx}/{y+1}-{sy} target={control_upscaled}')
             shared.sd_model = sd_models.set_diffuser_pipe(shared.sd_model, sd_models.DiffusersTaskType.IMAGE_2_IMAGE)
             p.init_images = None
             p.task_args['control_mode'] = p.control_mode
@@ -70,5 +73,5 @@ def run_tiling(p: processing.StableDiffusionProcessing, input_image: Image.Image
     if hasattr(shared.sd_model, 'restore_pipeline') and shared.sd_model.restore_pipeline is not None:
         shared.sd_model.restore_pipeline()
     t2 = time.time()
-    shared.log.debug(f'Control Tile: image={control_upscaled} time={t2-t0:.3f}')
+    log.debug(f'Control Tile: image={control_upscaled} time={t2-t0:.3f}')
     return processed

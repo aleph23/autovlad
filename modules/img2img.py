@@ -4,12 +4,14 @@ import numpy as np
 import filetype
 from PIL import Image, ImageOps, ImageFilter, ImageEnhance, ImageChops, UnidentifiedImageError
 from modules import scripts_manager, shared, processing, images, errors
+from modules.logger import log
 from modules.generation_parameters_copypaste import create_override_settings_dict
 from modules.ui_common import plaintext_to_html
 from modules.memstats import memory_stats
+from modules.paths import resolve_output_path
 
 
-debug = shared.log.trace if os.environ.get('SD_PROCESS_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.trace if os.environ.get('SD_PROCESS_DEBUG', None) is not None else lambda *args, **kwargs: None
 debug('Trace: PROCESS')
 
 
@@ -19,45 +21,45 @@ def validate_inputs(inputs):
         if filetype.is_image(image):
             outputs.append(image)
         else:
-            shared.log.warning(f'Input skip: file="{image}" filetype={filetype.guess(image)}')
+            log.warning(f'Input skip: file="{image}" filetype={filetype.guess(image)}')
     return outputs
 
 
 def process_batch(p, input_files, input_dir, output_dir, inpaint_mask_dir, args):
-    # shared.log.debug(f'batch: {input_files}|{input_dir}|{output_dir}|{inpaint_mask_dir}')
+    # log.debug(f'batch: {input_files}|{input_dir}|{output_dir}|{inpaint_mask_dir}')
     processing.fix_seed(p)
     image_files = []
     if input_files is not None and len(input_files) > 0:
         image_files = [f.name for f in input_files]
         image_files = validate_inputs(image_files)
-        shared.log.info(f'Process batch: input images={len(image_files)}')
+        log.info(f'Process batch: input images={len(image_files)}')
     elif os.path.isdir(input_dir):
         image_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir)]
         image_files = validate_inputs(image_files)
-        shared.log.info(f'Process batch: input folder="{input_dir}" images={len(image_files)}')
+        log.info(f'Process batch: input folder="{input_dir}" images={len(image_files)}')
     is_inpaint_batch = False
     if inpaint_mask_dir and os.path.isdir(inpaint_mask_dir):
         inpaint_masks = [os.path.join(inpaint_mask_dir, f) for f in os.listdir(inpaint_mask_dir)]
         inpaint_masks = validate_inputs(inpaint_masks)
         is_inpaint_batch = len(inpaint_masks) > 0
-        shared.log.info(f'Process batch: mask folder="{input_dir}" images={len(inpaint_masks)}')
+        log.info(f'Process batch: mask folder="{input_dir}" images={len(inpaint_masks)}')
     p.do_not_save_grid = True
     p.do_not_save_samples = True
     p.default_prompt = p.prompt
     if p.n_iter > 1:
         p.n_iter = 1
-        shared.log.warning(f'Process batch: batch_count={p.n_iter} forced to 1')
+        log.warning(f'Process batch: batch_count={p.n_iter} forced to 1')
     shared.state.job_count = len(image_files) * p.n_iter
     if shared.opts.batch_frame_mode: # SBM Frame mode is on, process each image in batch with same seed
         window_size = p.batch_size
         btcrept = 1
         p.seed = [p.seed] * window_size # SBM MONKEYPATCH: Need to change processing to support a fixed seed value.
         p.subseed = [p.subseed] * window_size # SBM MONKEYPATCH
-        shared.log.info(f"Process batch: inputs={len(image_files)} outputs={p.n_iter}x{len(image_files)} parallel={window_size}")
+        log.info(f"Process batch: inputs={len(image_files)} outputs={p.n_iter}x{len(image_files)} parallel={window_size}")
     else: # SBM Frame mode is off, standard operation of repeating same images with sequential seed.
         window_size = 1
         btcrept = p.batch_size
-        shared.log.info(f"Process batch: inputs={len(image_files)} outputs={p.n_iter*p.batch_size}x{len(image_files)}")
+        log.info(f"Process batch: inputs={len(image_files)} outputs={p.n_iter*p.batch_size}x{len(image_files)}")
     for i in range(0, len(image_files), window_size):
         if shared.state.skipped:
             shared.state.skipped = False
@@ -76,7 +78,7 @@ def process_batch(p, input_files, input_dir, output_dir, inpaint_mask_dir, args)
                 caption_file = os.path.splitext(image_file)[0] + '.txt'
                 prompt_type='default'
                 if os.path.exists(caption_file):
-                    with open(caption_file, 'r', encoding='utf8') as f:
+                    with open(caption_file, encoding='utf8') as f:
                         p.prompt = f.read()
                         prompt_type='file'
                 else:
@@ -85,11 +87,11 @@ def process_batch(p, input_files, input_dir, output_dir, inpaint_mask_dir, args)
                 p.all_negative_prompts = None
                 p.all_seeds = None
                 p.all_subseeds = None
-                shared.log.debug(f'Process batch: image="{image_file}" prompt={prompt_type} i={i+1}/{len(image_files)}')
+                log.debug(f'Process batch: image="{image_file}" prompt={prompt_type} i={i+1}/{len(image_files)}')
             except UnidentifiedImageError as e:
-                shared.log.error(f'Process batch: image="{image_file}" {e}')
+                log.error(f'Process batch: image="{image_file}" {e}')
         if len(batch_images) == 0:
-            shared.log.warning("Process batch: no images found in batch")
+            log.warning("Process batch: no images found in batch")
             continue
         batch_images = batch_images * btcrept # Standard mode sends the same image per batchsize.
         p.init_images = batch_images
@@ -114,12 +116,12 @@ def process_batch(p, input_files, input_dir, output_dir, inpaint_mask_dir, args)
             if processed is None:
                 processed = processing.process_images(p)
         except Exception as e:
-            shared.log.error(f'Process batch: {e}')
+            log.error(f'Process batch: {e}')
             errors.display(e, 'batch')
             processed = None
 
         if processed is None or len(processed.images) == 0:
-            shared.log.warning(f'Process batch: i={i+1}/{len(image_files)} no images processed')
+            log.warning(f'Process batch: i={i+1}/{len(image_files)} no images processed')
             continue
 
         for n, (image, image_file) in enumerate(itertools.zip_longest(processed.images, batch_image_files)):
@@ -143,7 +145,7 @@ def process_batch(p, input_files, input_dir, output_dir, inpaint_mask_dir, args)
                 image.info[k] = v
             images.save_image(image, path=output_dir, basename=basename, seed=None, prompt=None, extension=ext, info=info, grid=False, pnginfo_section_name="extras", existing_info=image.info, forced_filename=forced_filename)
         processed = scripts_manager.scripts_img2img.after(p, processed, *args)
-        shared.log.debug(f'Processed: images={len(batch_image_files)} memory={memory_stats()} batch')
+        log.debug(f'Processed: images={len(batch_image_files)} memory={memory_stats()} batch')
 
 
 def img2img(id_task: str, state: str, mode: int,
@@ -162,7 +164,7 @@ def img2img(id_task: str, state: str, mode: int,
             detailer_enabled, detailer_prompt, detailer_negative, detailer_steps, detailer_strength, detailer_resolution,
             n_iter, batch_size,
             guidance_name, guidance_scale, guidance_rescale, guidance_start, guidance_stop,
-            cfg_scale, image_cfg_scale, diffusers_guidance_rescale, pag_scale, pag_adaptive, cfg_end,
+            cfg_scale, cfg_image, cfg_rescale, cfg_true, cfg_adaptive, cfg_end,
             refiner_start,
             clip_skip,
             denoising_strength,
@@ -173,7 +175,11 @@ def img2img(id_task: str, state: str, mode: int,
             resize_mode, resize_name, resize_context,
             inpaint_full_res, inpaint_full_res_padding, inpainting_mask_invert,
             img2img_batch_files, img2img_batch_input_dir, img2img_batch_output_dir, img2img_batch_inpaint_mask_dir,
-            hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundary, hdr_color_picker, hdr_tint_ratio,
+            hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundary, hdr_color_picker, hdr_tint_ratio, hdr_apply_hires,
+            grading_brightness, grading_contrast, grading_saturation, grading_hue, grading_gamma, grading_sharpness, grading_color_temp,
+            grading_shadows, grading_midtones, grading_highlights, grading_clahe_clip, grading_clahe_grid,
+            grading_shadows_tint, grading_highlights_tint, grading_split_tone_balance,
+            grading_vignette, grading_grain, grading_lut_file, grading_lut_strength,
             enable_hr, hr_sampler_index, hr_denoising_strength, hr_resize_mode, hr_resize_context, hr_upscaler, hr_force, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, refiner_steps, hr_refiner_start, refiner_prompt, refiner_negative,
             override_settings_texts,
             *args):
@@ -182,11 +188,11 @@ def img2img(id_task: str, state: str, mode: int,
     debug(f'img2img: {id_task}')
 
     if shared.sd_model is None:
-        shared.log.warning('Aborted: op=img model not loaded')
+        log.warning('Aborted: op=img model not loaded')
         return [], '', '', 'Error: model not loaded'
 
     if sampler_index is None:
-        shared.log.warning('Sampler: invalid')
+        log.warning('Sampler: invalid')
         sampler_index = 0
 
     mode = int(mode)
@@ -229,7 +235,7 @@ def img2img(id_task: str, state: str, mode: int,
     elif mode == 5: # process batch
         pass # handled later
     else:
-        shared.log.error(f'Image processing unknown mode: {mode}')
+        log.error(f'Image processing unknown mode: {mode}')
 
     if image is not None:
         image = ImageOps.exif_transpose(image)
@@ -239,8 +245,8 @@ def img2img(id_task: str, state: str, mode: int,
 
     p = processing.StableDiffusionProcessingImg2Img(
         sd_model=shared.sd_model,
-        outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_img2img_samples,
-        outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_img2img_grids,
+        outpath_samples=resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_img2img_samples),
+        outpath_grids=resolve_output_path(shared.opts.outdir_grids, shared.opts.outdir_img2img_grids),
         prompt=prompt,
         negative_prompt=negative_prompt,
         styles=prompt_styles,
@@ -280,16 +286,23 @@ def img2img(id_task: str, state: str, mode: int,
         resize_context=resize_context,
         scale_by=scale_by,
         denoising_strength=denoising_strength,
-        image_cfg_scale=image_cfg_scale,
-        diffusers_guidance_rescale=diffusers_guidance_rescale,
-        pag_scale=pag_scale,
-        pag_adaptive=pag_adaptive,
+        cfg_image=cfg_image,
+        cfg_rescale=cfg_rescale,
+        cfg_true=cfg_true,
+        cfg_adaptive=cfg_adaptive,
         refiner_start=refiner_start,
         inpaint_full_res=inpaint_full_res != 0,
         inpaint_full_res_padding=inpaint_full_res_padding,
         inpainting_mask_invert=inpainting_mask_invert,
         hdr_mode=hdr_mode, hdr_brightness=hdr_brightness, hdr_color=hdr_color, hdr_sharpen=hdr_sharpen, hdr_clamp=hdr_clamp,
-        hdr_boundary=hdr_boundary, hdr_threshold=hdr_threshold, hdr_maximize=hdr_maximize, hdr_max_center=hdr_max_center, hdr_max_boundary=hdr_max_boundary, hdr_color_picker=hdr_color_picker, hdr_tint_ratio=hdr_tint_ratio,
+        hdr_boundary=hdr_boundary, hdr_threshold=hdr_threshold, hdr_maximize=hdr_maximize, hdr_max_center=hdr_max_center, hdr_max_boundary=hdr_max_boundary, hdr_color_picker=hdr_color_picker, hdr_tint_ratio=hdr_tint_ratio, hdr_apply_hires=hdr_apply_hires,
+        grading_brightness=grading_brightness, grading_contrast=grading_contrast, grading_saturation=grading_saturation, grading_hue=grading_hue,
+        grading_gamma=grading_gamma, grading_sharpness=grading_sharpness, grading_color_temp=grading_color_temp,
+        grading_shadows=grading_shadows, grading_midtones=grading_midtones, grading_highlights=grading_highlights,
+        grading_clahe_clip=grading_clahe_clip, grading_clahe_grid=grading_clahe_grid,
+        grading_shadows_tint=grading_shadows_tint, grading_highlights_tint=grading_highlights_tint, grading_split_tone_balance=grading_split_tone_balance,
+        grading_vignette=grading_vignette, grading_grain=grading_grain,
+        grading_lut_file=grading_lut_file.name if grading_lut_file is not None else '', grading_lut_strength=grading_lut_strength,
         # refiner
         enable_hr=enable_hr,
         hr_denoising_strength=hr_denoising_strength,

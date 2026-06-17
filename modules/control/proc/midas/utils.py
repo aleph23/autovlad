@@ -75,7 +75,7 @@ def write_pfm(path, image, scale=1):
         if len(image.shape) == 3 and image.shape[2] == 3:  # color image
             color = True
         elif (
-            len(image.shape) == 2 or len(image.shape) == 3 and image.shape[2] == 1
+            len(image.shape) == 2 or (len(image.shape) == 3 and image.shape[2] == 1)
         ):  # greyscale
             color = False
         else:
@@ -86,7 +86,7 @@ def write_pfm(path, image, scale=1):
 
         endian = image.dtype.byteorder
 
-        if endian == "<" or endian == "=" and sys.byteorder == "little":
+        if endian == "<" or (endian == "=" and sys.byteorder == "little"):
             scale = -scale
 
         file.write("%f\n".encode() % scale)

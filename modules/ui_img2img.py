@@ -1,39 +1,44 @@
 import gradio as gr
 from modules import timer, shared, call_queue, generation_parameters_copypaste, processing_vae
 from modules import ui_common, ui_sections, ui_guidance
+from modules.logger import log
 
 
-def process_interrogate(mode, ii_input_files, ii_input_dir, ii_output_dir, *ii_singles):
+def process_caption(mode, ii_input_files, ii_input_dir, ii_output_dir, *ii_singles):
     import os
     from PIL import Image
-    from modules.interrogate.interrogate import interrogate
+    from modules.caption.caption import caption
     mode = int(mode)
     if mode in {0, 1, 3, 4}:
-        return [interrogate(ii_singles[mode]), None]
+        return [caption(ii_singles[mode]), None]
     if mode == 2:
-        return [interrogate(ii_singles[mode]["image"]), None]
+        return [caption(ii_singles[mode]["image"]), None]
     if mode == 5:
         if len(ii_input_files) > 0:
-            images = [f.name for f in ii_input_files]
+            image_paths = [f.name for f in ii_input_files]
         else:
             if not os.path.isdir(ii_input_dir):
-                shared.log.error(f"Interrogate: Input directory not found: {ii_input_dir}")
+                log.error(f"Caption: Input directory not found: {ii_input_dir}")
                 return [gr.update(), None]
-            images = os.listdir(ii_input_dir)
+            image_paths = [os.path.join(ii_input_dir, f) for f in os.listdir(ii_input_dir)]
         if ii_output_dir != "":
             os.makedirs(ii_output_dir, exist_ok=True)
-        else:
+        elif os.path.isdir(ii_input_dir):
             ii_output_dir = ii_input_dir
-        for image in images:
-            img = Image.open(image)
-            filename = os.path.basename(image)
+        else:
+            log.error('Caption: Output directory not provided for uploaded files')
+            return [gr.update(), None]
+        for image_path in image_paths:
+            img = Image.open(image_path)
+            filename = os.path.basename(image_path)
             left, _ = os.path.splitext(filename)
-            print(interrogate(img), file=open(os.path.join(ii_output_dir, f"{left}.txt"), 'a', encoding='utf-8')) # pylint: disable=consider-using-with
+            with open(os.path.join(ii_output_dir, f"{left}.txt"), 'a', encoding='utf-8') as f:
+                print(caption(img), file=f)
     return [gr.update(), None]
 
 
 def create_ui():
-    shared.log.debug('UI initialize: tab=img2img')
+    log.debug('UI initialize: tab=img2img')
     import modules.img2img # pylint: disable=redefined-outer-name
     modules.scripts_manager.scripts_current = modules.scripts_manager.scripts_img2img
     modules.scripts_manager.scripts_img2img.initialize_scripts(is_img2img=True, is_control=False)
@@ -57,7 +62,7 @@ def create_ui():
 
                 def add_copy_image_controls(tab_name, elem):
                     with gr.Row(variant="compact", elem_id=f"img2img_copy_{tab_name}_row"):
-                        for title, name in zip(['➠ Image', '➠ Inpaint', '➠ Sketch', '➠ Composite'], ['img2img', 'inpaint', 'sketch', 'composite']):
+                        for title, name in zip(['➠ Image', '➠ Inpaint', '➠ Sketch', '➠ Composite'], ['img2img', 'inpaint', 'sketch', 'composite'], strict=False):
                             if name == tab_name:
                                 gr.Button(title, elem_id=f'{tab_name}_copy_to_{name}', interactive=False)
                                 copy_image_destinations[name] = elem
@@ -70,7 +75,7 @@ def create_ui():
                     state = gr.Textbox(value='', visible=False)
                     with gr.TabItem('Image', id='img2img_image', elem_id="img2img_image_tab") as tab_img2img:
                         img_init = gr.Image(label="", elem_id="img2img_image", show_label=False, interactive=True, type="pil", tool="editor", image_mode="RGBA", height=512)
-                        interrogate_btn = ui_sections.create_interrogate_button(tab='img2img', what='input')
+                        caption_btn = ui_sections.create_caption_button(tab='img2img', what='input')
                         add_copy_image_controls('img2img', img_init)
 
                     with gr.TabItem('Inpaint', id='img2img_inpaint', elem_id="img2img_inpaint_tab") as tab_inpaint:
@@ -132,9 +137,10 @@ def create_ui():
                             denoising_strength = gr.Slider(minimum=0.00, maximum=0.99, step=0.01, label='Denoising strength', value=0.30, elem_id="img2img_denoising_strength")
                             refiner_start = gr.Slider(minimum=0.0, maximum=1.0, step=0.05, label='Denoise start', value=0.0, elem_id="img2img_refiner_start")
 
-                    guidance_name, guidance_scale, guidance_rescale, guidance_start, guidance_stop, cfg_scale, image_cfg_scale, diffusers_guidance_rescale, pag_scale, pag_adaptive, cfg_end = ui_guidance.create_guidance_inputs('img2img')
+                    guidance_name, guidance_scale, guidance_rescale, guidance_start, guidance_stop, cfg_scale, cfg_image, cfg_rescale, cfg_true, cfg_adaptive, cfg_end = ui_guidance.create_guidance_inputs('img2img')
                     vae_type, tiling, hidiffusion, clip_skip = ui_sections.create_advanced_inputs('img2img')
-                    hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundary, hdr_color_picker, hdr_tint_ratio = ui_sections.create_correction_inputs('img2img')
+                    grading_brightness, grading_contrast, grading_saturation, grading_hue, grading_gamma, grading_sharpness, grading_color_temp, grading_shadows, grading_midtones, grading_highlights, grading_clahe_clip, grading_clahe_grid, grading_shadows_tint, grading_highlights_tint, grading_split_tone_balance, grading_vignette, grading_grain, grading_lut_file, grading_lut_strength = ui_sections.create_color_inputs('img2img')
+                    hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundary, hdr_color_picker, hdr_tint_ratio, hdr_apply_hires = ui_sections.create_latent_inputs('img2img')
                     enable_hr, hr_sampler_index, hr_denoising_strength, hr_resize_mode, hr_resize_context, hr_upscaler, hr_force, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, refiner_steps, hr_refiner_start, refiner_prompt, refiner_negative = ui_sections.create_hires_inputs('img2img')
                     detailer_enabled, detailer_prompt, detailer_negative, detailer_steps, detailer_strength, detailer_resolution = shared.yolo.ui('img2img')
 
@@ -178,7 +184,7 @@ def create_ui():
                 detailer_enabled, detailer_prompt, detailer_negative, detailer_steps, detailer_strength, detailer_resolution,
                 batch_count, batch_size,
                 guidance_name, guidance_scale, guidance_rescale, guidance_start, guidance_stop,
-                cfg_scale, image_cfg_scale, diffusers_guidance_rescale, pag_scale, pag_adaptive, cfg_end,
+                cfg_scale, cfg_image, cfg_rescale, cfg_true, cfg_adaptive, cfg_end,
                 refiner_start,
                 clip_skip,
                 denoising_strength,
@@ -189,7 +195,11 @@ def create_ui():
                 resize_mode, resize_name, resize_context,
                 inpaint_full_res, inpaint_full_res_padding, inpainting_mask_invert,
                 img2img_batch_files, img2img_batch_input_dir, img2img_batch_output_dir, img2img_batch_inpaint_mask_dir,
-                hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundary, hdr_color_picker, hdr_tint_ratio,
+                hdr_mode, hdr_brightness, hdr_color, hdr_sharpen, hdr_clamp, hdr_boundary, hdr_threshold, hdr_maximize, hdr_max_center, hdr_max_boundary, hdr_color_picker, hdr_tint_ratio, hdr_apply_hires,
+                grading_brightness, grading_contrast, grading_saturation, grading_hue, grading_gamma, grading_sharpness, grading_color_temp,
+                grading_shadows, grading_midtones, grading_highlights, grading_clahe_clip, grading_clahe_grid,
+                grading_shadows_tint, grading_highlights_tint, grading_split_tone_balance,
+                grading_vignette, grading_grain, grading_lut_file, grading_lut_strength,
                 enable_hr, hr_sampler_index, hr_denoising_strength, hr_resize_mode, hr_resize_context, hr_upscaler, hr_force, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, refiner_steps, hr_refiner_start, refiner_prompt, refiner_negative,
                 override_settings,
             ]
@@ -203,7 +213,7 @@ def create_ui():
                     img2img_html_info,
                     img2img_html_log,
                 ],
-                show_progress=False,
+                show_progress='hidden',
             )
             img2img_prompt.submit(**img2img_dict)
             img2img_negative_prompt.submit(**img2img_dict)
@@ -215,7 +225,7 @@ def create_ui():
             img2img_reprocess[2].click(**img2img_dict) # hires-refine
             img2img_reprocess[3].click(**img2img_dict) # face-restore
 
-            interrogate_args = dict(
+            caption_args = dict(
                 _js="get_img2img_tab_index",
                 inputs=[
                     dummy_component,
@@ -227,16 +237,18 @@ def create_ui():
                 ],
                 outputs=[img2img_prompt, dummy_component],
             )
-            interrogate_btn.click(fn=lambda *args: process_interrogate(*args), **interrogate_args)
+            caption_btn.click(fn=lambda *args: process_caption(*args), **caption_args)
 
-            img2img_token_button.click(fn=call_queue.wrap_queued_call(ui_common.update_token_counter), inputs=[img2img_prompt], outputs=[img2img_token_counter], show_progress = False)
-            img2img_negative_token_button.click(fn=call_queue.wrap_queued_call(ui_common.update_token_counter), inputs=[img2img_negative_prompt], outputs=[img2img_negative_token_counter], show_progress = False)
+            img2img_token_button.click(fn=call_queue.wrap_queued_call(ui_common.update_token_counter), inputs=[img2img_prompt], outputs=[img2img_token_counter], show_progress = 'hidden')
+            img2img_negative_token_button.click(fn=call_queue.wrap_queued_call(ui_common.update_token_counter), inputs=[img2img_negative_prompt], outputs=[img2img_negative_token_counter], show_progress = 'hidden')
 
             ui_extra_networks.setup_ui(extra_networks_ui_img2img, img2img_gallery)
             img2img_paste_fields = [
                 # prompt
                 (img2img_prompt, "Prompt"),
                 (img2img_negative_prompt, "Negative prompt"),
+                (img2img_prompt, "Template"), # override prompt with template if available
+                (img2img_negative_prompt, "Negative template"),
                 (img2img_prompt_styles, "Styles"),
                 # sampler
                 (sampler_index, "Sampler"),
@@ -263,10 +275,10 @@ def create_ui():
                 # advanced
                 (cfg_scale, "CFG scale"),
                 (cfg_end, "CFG end"),
-                (image_cfg_scale, "Image CFG scale"),
-                (image_cfg_scale, "Hires CFG scale"),
-                (clip_skip, "Clip skip"),
-                (diffusers_guidance_rescale, "CFG rescale"),
+                (cfg_image, "Image CFG scale"),
+                (cfg_image, "Hires CFG scale"),
+                (clip_skip, "CLiP-skip"),
+                (cfg_rescale, "CFG rescale"),
                 (vae_type, "VAE type"),
                 (tiling, "Tiling"),
                 (hidiffusion, "HiDiffusion"),
@@ -281,7 +293,7 @@ def create_ui():
                 (enable_hr, "Second pass"),
                 (enable_hr, "Refine"),
                 (denoising_strength, "Denoising strength"),
-                (denoising_strength, "Hires strength"),
+                (hr_denoising_strength, "Hires strength"),
                 (hr_sampler_index, "Hires sampler"),
                 (hr_resize_mode, "Hires mode"),
                 (hr_resize_context, "Hires context"),
@@ -298,8 +310,8 @@ def create_ui():
                 (refiner_prompt, "refiner prompt"),
                 (refiner_negative, "Refiner negative"),
                 # pag
-                (pag_scale, "CFG true"),
-                (pag_adaptive, "CFG adaptive"),
+                (cfg_true, "CFG true"),
+                (cfg_adaptive, "CFG adaptive"),
                 # inpaint
                 (mask_blur, "Mask blur"),
                 (mask_alpha, "Mask alpha"),

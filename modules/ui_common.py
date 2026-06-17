@@ -1,16 +1,21 @@
 import json
 import html
 import os
+import re
 import shutil
 import platform
 import subprocess
+from weakref import WeakSet
 import gradio as gr
-from modules import call_queue, shared, errors, ui_sections, ui_symbols, ui_components, generation_parameters_copypaste, images, scripts_manager, script_callbacks, infotext, processing
+from modules import paths, call_queue, shared, errors, ui_sections, ui_symbols, ui_components, generation_parameters_copypaste, images, scripts_manager, script_callbacks, infotext, processing
+from modules.logger import log
 
 
 folder_symbol = ui_symbols.folder
-debug = shared.log.trace if os.environ.get('SD_PASTE_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.trace if os.environ.get('SD_PASTE_DEBUG', None) is not None else lambda *args, **kwargs: None
 debug('Trace: PASTE')
+
+warn_once_set = WeakSet()
 
 
 def gr_show(visible=True):
@@ -34,11 +39,13 @@ def update_generation_info(generation_info, html_info, img_index):
         html_info_formatted = infotext_to_html(info)
         return html_info, html_info_formatted
     except Exception as e:
-        shared.log.trace(f'Update info: info="{generation_info}" {e}')
+        log.trace(f'Update info: info="{generation_info}" {e}')
     return html_info, html_info
 
 
-def plaintext_to_html(text, elem_classes=[]):
+def plaintext_to_html(text, elem_classes=None):
+    if elem_classes is None:
+        elem_classes = []
     res = f'<p class="plaintext {" ".join(elem_classes)}">' + '<br>\n'.join([f"{html.escape(x)}" for x in text.split('\n')]) + '</p>'
     return res
 
@@ -46,17 +53,42 @@ def plaintext_to_html(text, elem_classes=[]):
 def infotext_to_html(text):
     res = infotext.parse(text)
     prompt = res.get('Prompt', '')
-    negative = res.get('Negative prompt', '')
     res.pop('Prompt', None)
+    negative = res.get('Negative prompt', '')
     res.pop('Negative prompt', None)
+    template = res.get('Template', '')
+    res.pop('Template', None)
+    negative_template = res.get('Negative template', '')
+    res.pop('Negative template', None)
+
+    runtime = {}
+    runtime['App'] = res.get('App', '')
+    res.pop('App', None)
+    runtime['Version'] = res.get('Version', '')
+    res.pop('Version', None)
+    runtime['Pipeline'] = res.get('Pipeline', '')
+    res.pop('Pipeline', None)
+    runtime['Operations'] = res.get('Operations', '')
+    res.pop('Operations', None)
+
     params = [f'{k}: {v}' for k, v in res.items() if v is not None and not k.endswith('-1') and not k.endswith('-2')]
     params = '| '.join(params) if len(params) > 0 else ''
+
+    runtime = [f'{k}: {v}' for k, v in runtime.items() if v is not None and not k.endswith('-1') and not k.endswith('-2')]
+    runtime = '| '.join(runtime) if len(runtime) > 0 else ''
+
     code = ''
-    if len(prompt) > 0:
+    if prompt is not None and len(prompt) > 0:
         code += f'<p><b>Prompt:</b> {html.escape(prompt)}</p>'
-    if len(negative) > 0:
+    if negative is not None and len(negative) > 0:
         code += f'<p><b>Negative:</b> {html.escape(negative)}</p>'
-    if len(params) > 0:
+    if template is not None and len(template) > 0:
+        code += f'<p><b>Template:</b> {html.escape(template)}</p>'
+    if negative_template is not None and len(negative_template) > 0:
+        code += f'<p><b>Negative Template:</b> {html.escape(negative_template)}</p>'
+    if runtime is not None and len(runtime) > 0:
+        code += f'<p><b>Runtime:</b> {html.escape(runtime)}</p>'
+    if params is not None and len(params) > 0:
         code += f'<p><b>Parameters:</b> {html.escape(params)}</p>'
     return code
 
@@ -67,9 +99,14 @@ def delete_files(js_data, files, all_files, index):
     except Exception:
         data = { 'index_of_first_image': 0 }
     start_index = 0
-    if index > -1 and shared.opts.save_selected_only and (index >= data['index_of_first_image']):
-        files = [files[index]]
-        start_index = index
+    first_index = data['index_of_first_image']
+    if (index > -1) and shared.opts.save_selected_only and (index >= first_index):  # ensures we are looking at a specific non-grid picture, and we have save_selected_only # pylint: disable=no-member
+        if index < len(files):
+            files = [files[index]]
+            start_index = index
+        else:
+            log.error(f'Delete: index={index} first={first_index} files={len(files)} out of range')
+            files = []
     deleted = []
     all_files = [f.split('/file=')[1] if 'file=' in f else f for f in all_files] if isinstance(all_files, list) else []
     all_files = [os.path.normpath(f) for f in all_files]
@@ -78,29 +115,29 @@ def delete_files(js_data, files, all_files, index):
         try:
             fn = os.path.normpath(filedata['name'])
             if reference_dir in fn:
-                shared.log.warning(f'Delete: file="{fn}" not allowed')
+                log.warning(f'Delete: file="{fn}" not allowed')
                 continue
             if os.path.exists(fn) and os.path.isfile(fn):
                 deleted.append(fn)
                 os.remove(fn)
                 if fn in all_files:
                     all_files.remove(fn)
-                    shared.log.info(f'Delete: image="{fn}"')
+                    log.warning(f'Delete: image="{fn}"')
                 else:
-                    shared.log.warning(f'Delete: image="{fn}" ui mismatch')
+                    log.warning(f'Delete: image="{fn}" ui mismatch')
             base, _ext = os.path.splitext(fn)
             desc = f'{base}.txt'
             if os.path.exists(desc) and os.path.isfile(desc):
                 os.remove(desc)
-                shared.log.info(f'Delete: text="{fn}"')
+                log.warning(f'Delete: text="{fn}"')
         except Exception as e:
-            shared.log.error(f'Delete: file="{fn}" {e}')
+            log.error(f'Delete: file="{fn}" {e}')
     deleted = ', '.join(deleted) if len(deleted) > 0 else 'none'
     return all_files, plaintext_to_html(f"Deleted: {deleted}", ['performance'])
 
 
 def save_files(js_data, files, html_info, index):
-    os.makedirs(shared.opts.outdir_save, exist_ok=True)
+    os.makedirs(paths.resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_save), exist_ok=True)
 
     class PObject: # pylint: disable=too-few-public-methods
         def __init__(self, d=None):
@@ -108,36 +145,44 @@ def save_files(js_data, files, html_info, index):
                 for k, v in d.items():
                     setattr(self, k, v)
             self.prompt = getattr(self, 'prompt', None) or getattr(self, 'Prompt', None) or ''
-            self.negative_prompt = getattr(self, 'negative_prompt', None) or getattr(self, 'Negative_prompt', None) or ''
+            self.negative_prompt = getattr(self, 'negative_prompt', None) or getattr(self, 'Negative prompt', None) or ''
             self.sampler = getattr(self, 'sampler', None) or getattr(self, 'Sampler', None) or ''
+            self.sampler_name = self.sampler
             self.seed = getattr(self, 'seed', None) or getattr(self, 'Seed', None) or 0
             self.steps = getattr(self, 'steps', None) or getattr(self, 'Steps', None) or 0
             self.width = getattr(self, 'width', None) or getattr(self, 'Width', None) or getattr(self, 'Size-1', None) or 0
             self.height = getattr(self, 'height', None) or getattr(self, 'Height', None) or getattr(self, 'Size-2', None) or 0
             self.cfg_scale = getattr(self, 'cfg_scale', None) or getattr(self, 'CFG scale', None) or 0
-            self.clip_skip = getattr(self, 'clip_skip', None) or getattr(self, 'Clip skip', None) or 1
+            self.clip_skip = getattr(self, 'clip_skip', None) or getattr(self, 'CLiP-skip', None) or 1
             self.denoising_strength = getattr(self, 'denoising_strength', None) or getattr(self, 'Denoising', None) or 0
             self.index_of_first_image = getattr(self, 'index_of_first_image', 0)
-            self.subseed = getattr(self, 'subseed', None) or getattr(self, 'Subseed', None)
+            self.subseed = getattr(self, 'subseed', None) or getattr(self, 'Variation seed', None)
             self.styles = getattr(self, 'styles', None) or getattr(self, 'Styles', None) or []
             self.styles = [s.strip() for s in self.styles.split(',')] if isinstance(self.styles, str) else self.styles
 
-            self.outpath_grids = shared.opts.outdir_grids or shared.opts.outdir_txt2img_grids
+            self.outpath_grids = paths.resolve_output_path(shared.opts.outdir_grids, shared.opts.outdir_txt2img_grids)
             self.infotexts = getattr(self, 'infotexts', [html_info])
             self.infotext = self.infotexts[0] if len(self.infotexts) > 0 else html_info
             self.all_negative_prompt = getattr(self, 'all_negative_prompts', [self.negative_prompt])
             self.all_prompts = getattr(self, 'all_prompts', [self.prompt])
             self.all_seeds = getattr(self, 'all_seeds', [self.seed])
             self.all_subseeds = getattr(self, 'all_subseeds', [self.subseed])
+
+            self.n_iter = 1
+            self.batch_size = 1
     try:
         data = json.loads(js_data)
     except Exception:
         data = {}
     p = PObject(data)
     start_index = 0
-    if index > -1 and shared.opts.save_selected_only and (index >= p.index_of_first_image):  # ensures we are looking at a specific non-grid picture, and we have save_selected_only # pylint: disable=no-member
-        files = [files[index]]
-        start_index = index
+    if (index > -1) and shared.opts.save_selected_only and (index >= p.index_of_first_image):  # ensures we are looking at a specific non-grid picture, and we have save_selected_only # pylint: disable=no-member
+        if index < len(files):
+            files = [files[index]]
+            start_index = index
+        else:
+            log.error(f'Save: index={index} first={p.index_of_first_image} files={len(files)} out of range')
+            files = []
     filenames = []
     fullfns = []
     for image_index, filedata in enumerate(files, start_index):
@@ -149,24 +194,24 @@ def save_files(js_data, files, html_info, index):
             p.all_prompts.append(p.prompt)
         while len(p.infotexts) <= i:
             p.infotexts.append(p.infotext)
-        if 'name' in filedata and ('tmp' not in filedata['name']) and os.path.isfile(filedata['name']):
+        if 'name' in filedata and (paths.temp_dir not in filedata['name']) and os.path.isfile(filedata['name']):
             fullfn = filedata['name']
             fullfns.append(fullfn)
-            destination = shared.opts.outdir_save
+            destination = paths.resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_save)
             namegen = images.FilenameGenerator(p, seed=p.all_seeds[i], prompt=p.all_prompts[i], image=None)  # pylint: disable=no-member
             dirname = namegen.apply(shared.opts.directories_filename_pattern or "[prompt_words]").lstrip(' ').rstrip('\\ /')
             destination = os.path.join(destination, dirname)
             destination = namegen.sanitize(destination)
             os.makedirs(destination, exist_ok = True)
             tgt_filename = os.path.join(destination, os.path.basename(fullfn))
-            relfn = os.path.relpath(tgt_filename, shared.opts.outdir_save)
+            relfn = os.path.relpath(tgt_filename, paths.resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_save))
             filenames.append(relfn)
             if not os.path.exists(tgt_filename):
                 try:
                     shutil.copy(fullfn, destination)
-                    shared.log.info(f'Copying image: file="{fullfn}" folder="{destination}"')
+                    log.info(f'Copying image: file="{fullfn}" folder="{destination}"')
                 except Exception as e:
-                    shared.log.error(f'Copying image: {fullfn} {e}')
+                    log.error(f'Copying image: {fullfn} {e}')
             if shared.opts.save_txt:
                 try:
                     from PIL import Image
@@ -175,9 +220,9 @@ def save_files(js_data, files, html_info, index):
                     filename_txt = f"{os.path.splitext(tgt_filename)[0]}.txt"
                     with open(filename_txt, "w", encoding="utf8") as file:
                         file.write(f"{info}\n")
-                    shared.log.debug(f'Save: text="{filename_txt}"')
+                    log.debug(f'Save: text="{filename_txt}"')
                 except Exception as e:
-                    shared.log.warning(f'Image description save failed: {filename_txt} {e}')
+                    log.warning(f'Image description save failed: {filename_txt} {e}')
             script_callbacks.image_save_btn_callback(tgt_filename)
         else:
             image = generation_parameters_copypaste.image_from_url_text(filedata)
@@ -185,21 +230,20 @@ def save_files(js_data, files, html_info, index):
             if len(info) == 0:
                 info = None
             if (js_data is None or len(js_data) == 0) and image is not None and image.info is not None:
-                info = image.info.pop('parameters', None) or image.info.pop('UserComment', None)
-                geninfo, _ = images.read_info_from_image(image)
-                items = infotext.parse(geninfo)
+                info, _items = images.read_info_from_image(image)
+                items = infotext.parse(info)
                 p = PObject(items)
             try:
                 seed = p.all_seeds[i] if i < len(p.all_seeds) else p.seed
                 prompt = p.all_prompts[i] if i < len(p.all_prompts) else p.prompt
-                fullfn, txt_fullfn, _exif = images.save_image(image, shared.opts.outdir_save, "", seed=seed, prompt=prompt, info=info, extension=shared.opts.samples_format, grid=is_grid, p=p)
+                fullfn, txt_fullfn, _exif = images.save_image(image, paths.resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_save), "", seed=seed, prompt=prompt, info=info, extension=shared.opts.samples_format, grid=is_grid, p=p)
             except Exception as e:
                 fullfn, txt_fullfn = None, None
-                shared.log.error(f'Save: image={image} i={i} seeds={p.all_seeds} prompts={p.all_prompts}')
+                log.error(f'Save: image={image} i={i} seeds={p.all_seeds} prompts={p.all_prompts}')
                 errors.display(e, 'save')
             if fullfn is None:
                 continue
-            filename = os.path.relpath(fullfn, shared.opts.outdir_save)
+            filename = os.path.relpath(fullfn, paths.resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_save))
             filenames.append(filename)
             fullfns.append(fullfn)
             if txt_fullfn:
@@ -207,7 +251,7 @@ def save_files(js_data, files, html_info, index):
                 # fullfns.append(txt_fullfn)
             script_callbacks.image_save_btn_callback(filename)
     if shared.opts.samples_save_zip and len(fullfns) > 1:
-        zip_filepath = os.path.join(shared.opts.outdir_save, "images.zip")
+        zip_filepath = os.path.join(paths.resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_save), "images.zip")
         from zipfile import ZipFile
         with ZipFile(zip_filepath, "w") as zip_file:
             for i in range(len(fullfns)):
@@ -220,26 +264,30 @@ def save_files(js_data, files, html_info, index):
 
 def open_folder(result_gallery, gallery_index = 0):
     try:
+        if gallery_index >= len(result_gallery):
+            gallery_index = 0
         folder = os.path.dirname(result_gallery[gallery_index]['name'])
     except Exception:
         folder = shared.opts.outdir_samples
     if not os.path.exists(folder):
-        shared.log.warning(f'Folder open: folder="{folder}" does not exist')
+        log.warning(f'Folder open: folder="{folder}" does not exist')
         return
     elif not os.path.isdir(folder):
-        shared.log.warning(f'Folder open: folder="{folder}" not a folder')
+        log.warning(f'Folder open: folder="{folder}" not a folder')
         return
 
     if not shared.cmd_opts.hide_ui_dir_config:
         path = os.path.normpath(folder)
         if platform.system() == "Windows":
             os.startfile(path) # pylint: disable=no-member
-        elif platform.system() == "Darwin":
-            subprocess.Popen(["open", path]) # pylint: disable=consider-using-with
+            return
+        if platform.system() == "Darwin":
+            opener = "open"
         elif "microsoft-standard-WSL2" in platform.uname().release:
-            subprocess.Popen(["wsl-open", path]) # pylint: disable=consider-using-with
+            opener = "wslview" if shutil.which("wslview") is not None else "wsl-open"
         else:
-            subprocess.Popen(["xdg-open", path]) # pylint: disable=consider-using-with
+            opener = "xdg-open"
+        subprocess.Popen([opener, path])  # pylint: disable=consider-using-with
 
 
 def create_output_panel(tabname, preview=True, prompt=None, height=None, transfer=True, scale=1, result_info=None):
@@ -261,7 +309,7 @@ def create_output_panel(tabname, preview=True, prompt=None, height=None, transfe
                                         elem_classes=["gallery_main"],
                                        )
             if prompt is not None:
-                ui_sections.create_interrogate_button(tab=tabname, inputs=result_gallery, outputs=prompt, what='output')
+                ui_sections.create_caption_button(tab=tabname, inputs=result_gallery, outputs=prompt, what='output')
             button_image_fit = gr.Button(ui_symbols.resize, elem_id=f"{tabname}_image_fit", elem_classes=['image-fit'])
             button_image_fit.click(fn=None, _js="cycleImageFit", inputs=[], outputs=[])
 
@@ -277,32 +325,40 @@ def create_output_panel(tabname, preview=True, prompt=None, height=None, transfe
                 save = gr.Button('Save', elem_id=f'save_{tabname}')
                 delete = gr.Button('Delete', elem_id=f'delete_{tabname}')
                 if transfer:
-                    buttons = generation_parameters_copypaste.create_buttons(["txt2img", "img2img", "control", "extras", "caption"])
+                    buttons = generation_parameters_copypaste.create_buttons(["control", "txt2img", "img2img", "extras", "caption"])
+                    if tabname in ("gallery", "txt2img", "img2img", "extras"):
+                        prompt_buttons = generation_parameters_copypaste.create_buttons(["control"], label_prefix="✎", label_override="prompt", id_suffix="_prompt")
+                        params_buttons = generation_parameters_copypaste.create_buttons(["control"], label_prefix="⚙", label_override="params", id_suffix="_params")
+                    else:
+                        prompt_buttons = None
+                        params_buttons = None
                 else:
                     buttons = None
+                    prompt_buttons = None
+                    params_buttons = None
 
             download_files = gr.File(None, file_count="multiple", interactive=False, show_label=False, visible=False, elem_id=f'download_files_{tabname}')
             with gr.Group():
                 html_info = gr.HTML(elem_id=f'html_info_{tabname}', elem_classes="infotext", visible=False) # contains raw infotext as returned by wrapped call
                 html_info_formatted = gr.HTML(elem_id=f'html_info_formatted_{tabname}', elem_classes="infotext", visible=True) # contains html formatted infotext
-                html_info.change(fn=infotext_to_html, inputs=[html_info], outputs=[html_info_formatted], show_progress=False)
+                html_info.change(fn=infotext_to_html, inputs=[html_info], outputs=[html_info_formatted], show_progress='hidden')
                 html_log = gr.HTML(elem_id=f'html_log_{tabname}')
                 generation_info = gr.Textbox(visible=False, elem_id=f'generation_info_{tabname}')
                 generation_info_button = gr.Button(visible=False, elem_id=f"{tabname}_generation_info_button")
 
                 result_field = result_info or html_info_formatted
-                generation_info_button.click(fn=update_generation_info, show_progress=False,
+                generation_info_button.click(fn=update_generation_info, show_progress='hidden',
                     _js="(x, y, z) => [x, y, selected_gallery_index()]", # triggered on gallery change from js
                     inputs=[generation_info, html_info, html_info],
                     outputs=[html_info, result_field],
                 )
-                save.click(fn=call_queue.wrap_gradio_call(save_files), show_progress=False,
+                save.click(fn=call_queue.wrap_gradio_call(save_files), show_progress='hidden',
                     _js="(x, y, z, i) => [x, y, z, selected_gallery_index()]",
                     inputs=[generation_info, result_gallery, html_info, html_info],
                     outputs=[download_files, html_log],
                 )
-                delete.click(fn=call_queue.wrap_gradio_call(delete_files), show_progress=False,
-                    _js="(x, y, i, j) => [x, y, ...selected_gallery_files()]",
+                delete.click(fn=call_queue.wrap_gradio_call(delete_files), show_progress='hidden',
+                    _js=f'(x, y, i, j) => [x, y, ...selected_gallery_files("{tabname}")]',
                     inputs=[generation_info, result_gallery, html_info, html_info],
                     outputs=[result_gallery, html_log],
                 )
@@ -328,6 +384,31 @@ def create_output_panel(tabname, preview=True, prompt=None, height=None, transfe
                         source_text_component=prompt or generation_info
                     )
                     generation_parameters_copypaste.register_paste_params_button(bindings)
+            if prompt_buttons is not None:
+                for paste_tabname, paste_button in prompt_buttons.items():
+                    debug(f'Create output panel prompt-only: source={tabname} target={paste_tabname} button={paste_button}')
+                    generation_parameters_copypaste.register_paste_params_button(generation_parameters_copypaste.ParamBinding(
+                        paste_button=paste_button,
+                        tabname=paste_tabname,
+                        source_tabname=tabname,
+                        source_image_component=result_gallery,
+                        paste_field_names=paste_field_names,
+                        source_text_component=prompt or generation_info,
+                        skip_image=True,
+                        only_prompt=True,
+                    ))
+            if params_buttons is not None:
+                for paste_tabname, paste_button in params_buttons.items():
+                    debug(f'Create output panel params-only: source={tabname} target={paste_tabname} button={paste_button}')
+                    generation_parameters_copypaste.register_paste_params_button(generation_parameters_copypaste.ParamBinding(
+                        paste_button=paste_button,
+                        tabname=paste_tabname,
+                        source_tabname=tabname,
+                        source_image_component=result_gallery,
+                        paste_field_names=paste_field_names,
+                        source_text_component=prompt or generation_info,
+                        skip_image=True,
+                    ))
             return result_gallery, generation_info, html_info, html_info_formatted, html_log
 
 
@@ -345,13 +426,14 @@ def create_refresh_button(refresh_component, refresh_method, refreshed_args = No
         return gr.update(**args)
 
     refresh_button = ui_components.ToolButton(value=ui_symbols.refresh, elem_id=elem_id, visible=visible)
-    refresh_button.click(fn=refresh, inputs=[], outputs=[refresh_component], show_progress=False)
+    refresh_button.click(fn=refresh, inputs=[], outputs=[refresh_component], show_progress='hidden')
     return refresh_button
 
 
 def create_override_inputs(tab): # pylint: disable=unused-argument
     with gr.Row(elem_id=f"{tab}_override_settings_row"):
-        override_settings = gr.Dropdown([], value=None, label="Override settings", visible=False, elem_id=f"{tab}_override_settings", multiselect=True)
+        visible = tab == 'control'
+        override_settings = gr.Dropdown([], value=None, label="Override settings", visible=visible, elem_id=f"{tab}_override_settings", multiselect=True)
         override_settings.change(fn=lambda x: gr.Dropdown.update(visible=len(x) > 0), inputs=[override_settings], outputs=[override_settings])
     return override_settings
 
@@ -370,10 +452,10 @@ def reuse_seed(seed_component: gr.Number, reuse_button: gr.Button, subseed:bool=
             seed = processing.processed.all_seeds[0] if not subseed else processing.processed.all_subseeds[0]
         else:
             seed = -1
-        shared.log.debug(f'Reuse seed: index={selected_gallery_index} seed={seed} subseed={subseed}')
+        log.debug(f'Reuse seed: index={selected_gallery_index} seed={seed} subseed={subseed}')
         return seed
 
-    reuse_button.click(fn=reuse_click, _js="selected_gallery_index", inputs=[seed_component], outputs=[seed_component], show_progress=False)
+    reuse_button.click(fn=reuse_click, _js="selected_gallery_index", inputs=[seed_component], outputs=[seed_component], show_progress='hidden')
 
 
 def connect_reuse_seed(seed: gr.Number, reuse_seed_btn: gr.Button, generation_info: gr.Textbox, is_subseed, subseed_strength=None):
@@ -385,7 +467,7 @@ def connect_reuse_seed(seed: gr.Number, reuse_seed_btn: gr.Button, generation_in
         restore_strength = -1
         try:
             gen_info = json.loads(gen_info_string)
-            shared.log.debug(f'Reuse: info={gen_info}')
+            log.debug(f'Reuse: info={gen_info}')
             index -= gen_info.get('index_of_first_image', 0)
             index = int(index)
             if is_subseed:
@@ -397,33 +479,76 @@ def connect_reuse_seed(seed: gr.Number, reuse_seed_btn: gr.Button, generation_in
                 restore_seed = all_seeds[index if 0 <= index < len(all_seeds) else 0]
         except json.decoder.JSONDecodeError:
             if gen_info_string != '':
-                shared.log.error(f"Error parsing JSON generation info: {gen_info_string}")
+                log.error(f"Error parsing JSON generation info: {gen_info_string}")
         if is_subseed is not None:
             return [restore_seed, gr_show(False), restore_strength]
         else:
             return [restore_seed, gr_show(False)]
     dummy_component = gr.Number(visible=False, value=0)
     if subseed_strength is None:
-        reuse_seed_btn.click(fn=copy_seed, _js="(x, y) => [x, selected_gallery_index()]", show_progress=False, inputs=[generation_info, dummy_component], outputs=[seed, dummy_component])
+        reuse_seed_btn.click(fn=copy_seed, _js="(x, y) => [x, selected_gallery_index()]", show_progress='hidden', inputs=[generation_info, dummy_component], outputs=[seed, dummy_component])
     else:
-        reuse_seed_btn.click(fn=copy_seed, _js="(x, y) => [x, selected_gallery_index()]", show_progress=False, inputs=[generation_info, dummy_component], outputs=[seed, dummy_component, subseed_strength])
+        reuse_seed_btn.click(fn=copy_seed, _js="(x, y) => [x, selected_gallery_index()]", show_progress='hidden', inputs=[generation_info, dummy_component], outputs=[seed, dummy_component, subseed_strength])
 
 
-def update_token_counter(text):
-    token_count = 0
-    max_length = 75
+def tokens_outer(*inner: str):
+    return f"""<div class='gr-box gr-text-input token-counter-contents'>{"".join(inner)}</div>"""
+
+
+def tokens_details(counts: list[int]):
+    return f"""[<div class='token-counter-detailed'>{', '.join([str(t) for t in counts])}</div>]"""  # Note: "[" and "]" are outside of the div tag
+
+
+def tokens_summary(total: int | str, max_length: int | str):
+    return f"""<div class='token-counter-totals'>{total}/{max_length}</div>"""
+
+
+def update_token_counter(text: str):
     if shared.state.job_count > 0:
-        shared.log.info('Tokenizer busy')
-        return f"<span class='gr-box gr-text-input'>{token_count}/{max_length}</span>"
-    from modules import extra_networks
-    prompt, _ = extra_networks.parse_prompt(text)
+        log.debug('Tokenizer busy')
+        return gr.update(value=tokens_outer(tokens_summary("--", "--")), visible=True)
+
+    from modules.extra_networks import parse_prompt
+
+    max_length = 0
+    prompt, _ = parse_prompt(text)
+    prompt_list = [prompt]
+    ids = []
     if shared.sd_loaded and hasattr(shared.sd_model, 'tokenizer') and shared.sd_model.tokenizer is not None:
-        has_bos_token = shared.sd_model.tokenizer.bos_token_id is not None
-        has_eos_token = shared.sd_model.tokenizer.eos_token_id is not None
-        ids = shared.sd_model.tokenizer(prompt)
-        ids = getattr(ids, 'input_ids', [])
-        token_count = len(ids) - int(has_bos_token) - int(has_eos_token)
-        max_length = shared.sd_model.tokenizer.model_max_length - int(has_bos_token) - int(has_eos_token)
+        if shared.opts.prompt_attention == 'native':
+            p_split = re.compile(r'\bBREAK\b|\n' if shared.opts.sd_textencder_linebreak else r'\bBREAK\b')
+            prompt_list = re.split(p_split, prompt)
+
+        tokenizer = shared.sd_model.tokenizer
+        # For multi-modal processors (e.g., PixtralProcessor), use the underlying text tokenizer
+        if hasattr(tokenizer, 'tokenizer') and tokenizer.tokenizer is not None:
+            tokenizer = tokenizer.tokenizer
+        has_bos_token = getattr(tokenizer, 'bos_token_id', None) is not None
+        has_eos_token = getattr(tokenizer, 'eos_token_id', None) is not None
+        model_max_length = getattr(tokenizer, 'model_max_length', 77)
+        max_length = model_max_length - int(has_bos_token) - int(has_eos_token)
         if max_length is None or max_length < 0 or max_length > 10000:
             max_length = 0
-    return gr.update(value=f"<span class='gr-box gr-text-input'>{token_count}/{max_length}</span>", visible=token_count > 0)
+
+        try:
+            try:
+                ids: list = getattr(tokenizer(prompt_list), 'input_ids', [])
+            except TypeError:
+                for p in prompt_list:
+                    ids.append(getattr(tokenizer(p), 'input_ids', []))
+        except Exception as e:
+            if tokenizer not in warn_once_set:
+                log.warning(f"Token counter: {e}")
+                warn_once_set.add(tokenizer)
+            return gr.update(value=tokens_outer(tokens_summary("??", max_length)), visible=True)
+
+        token_counts = [len(group) - int(has_bos_token) - int(has_eos_token) for group in ids]
+        token_counts = [tc for tc in token_counts if tc > 0]
+        if len(token_counts) > 1:
+            details_html = tokens_details(token_counts)
+            totals_html = tokens_summary(sum(token_counts), max_length)
+            return gr.update(value=tokens_outer(details_html, totals_html), visible=True)
+        elif len(token_counts) == 1 and token_counts[0] > 0:
+            totals_html = tokens_summary(token_counts[0], max_length)
+            return gr.update(value=tokens_outer(totals_html), visible=True)
+    return gr.update(value=tokens_outer(tokens_summary(0, max_length)), visible=False)

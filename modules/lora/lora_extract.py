@@ -7,6 +7,7 @@ from safetensors.torch import save_file
 import gradio as gr
 from rich import progress as rp
 from modules import shared, devices
+from modules.logger import log, console
 from modules.ui_common import create_refresh_button
 from modules.call_queue import wrap_gradio_gpu_call
 
@@ -118,30 +119,29 @@ def make_meta(fn, maxrank, rank_ratio):
 def make_lora(fn, maxrank, auto_rank, rank_ratio, modules, overwrite):
     if not shared.sd_loaded:
         msg = "LoRA extract: model not loaded"
-        shared.log.warning(msg)
+        log.warning(msg)
         yield msg
         return
-    if loaded_lora() == "":
+    if not loaded_lora():
         msg = "LoRA extract: no LoRA detected"
-        shared.log.warning(msg)
+        log.warning(msg)
         yield msg
         return
     if not fn:
         msg = "LoRA extract: target filename required"
-        shared.log.warning(msg)
+        log.warning(msg)
         yield msg
         return
     t0 = time.time()
     maxrank = int(maxrank)
     rank_ratio = 1 if not auto_rank else rank_ratio
-    shared.log.debug(f'LoRA extract: modules={modules} maxrank={maxrank} auto={auto_rank} ratio={rank_ratio} fn="{fn}"')
+    log.debug(f'LoRA extract: modules={modules} maxrank={maxrank} auto={auto_rank} ratio={rank_ratio} fn="{fn}"')
     jobid = shared.state.begin('LoRA extract')
 
-    with rp.Progress(rp.TextColumn('[cyan]LoRA extract'), rp.BarColumn(), rp.TaskProgressColumn(), rp.TimeRemainingColumn(), rp.TimeElapsedColumn(), rp.TextColumn('[cyan]{task.description}'), console=shared.console) as progress:
+    with rp.Progress(rp.TextColumn('[cyan]LoRA extract'), rp.BarColumn(), rp.TaskProgressColumn(), rp.TimeRemainingColumn(), rp.TimeElapsedColumn(), rp.TextColumn('[cyan]{task.description}'), console=console) as progress:
 
         if 'te' in modules and getattr(shared.sd_model, 'text_encoder', None) is not None:
-            modules = shared.sd_model.text_encoder.named_modules()
-            task = progress.add_task(description="te1 decompose", total=len(list(modules)))
+            task = progress.add_task(description="te1 decompose", total=len(list(shared.sd_model.text_encoder.named_modules())))
             for name, module in shared.sd_model.text_encoder.named_modules():
                 progress.update(task, advance=1)
                 weights_backup = getattr(module, "network_weights_backup", None)
@@ -156,8 +156,7 @@ def make_lora(fn, maxrank, auto_rank, rank_ratio, modules, overwrite):
         t1 = time.time()
 
         if 'te' in modules and getattr(shared.sd_model, 'text_encoder_2', None) is not None:
-            modules = shared.sd_model.text_encoder_2.named_modules()
-            task = progress.add_task(description="te2 decompose", total=len(list(modules)))
+            task = progress.add_task(description="te2 decompose", total=len(list(shared.sd_model.text_encoder_2.named_modules())))
             for name, module in shared.sd_model.text_encoder_2.named_modules():
                 progress.update(task, advance=1)
                 weights_backup = getattr(module, "network_weights_backup", None)
@@ -171,8 +170,7 @@ def make_lora(fn, maxrank, auto_rank, rank_ratio, modules, overwrite):
         t2 = time.time()
 
         if 'unet' in modules and getattr(shared.sd_model, 'unet', None) is not None:
-            modules = shared.sd_model.unet.named_modules()
-            task = progress.add_task(description="unet decompose", total=len(list(modules)))
+            task = progress.add_task(description="unet decompose", total=len(list(shared.sd_model.unet.named_modules())))
             for name, module in shared.sd_model.unet.named_modules():
                 progress.update(task, advance=1)
                 weights_backup = getattr(module, "network_weights_backup", None)
@@ -185,25 +183,12 @@ def make_lora(fn, maxrank, auto_rank, rank_ratio, modules, overwrite):
             progress.remove_task(task)
         t3 = time.time()
 
-        # TODO: lora: support pre-quantized flux
-        # if 'te' in modules and getattr(shared.sd_model, 'transformer', None) is not None:
-        #     for name, module in shared.sd_model.transformer.named_modules():
-        #         if "norm" in name and "linear" not in name:
-        #             continue
-        #         weights_backup = getattr(module, "network_weights_backup", None)
-        #         if weights_backup is None:
-        #             continue
-        #         module.svdhandler = SVDHandler()
-        #         module.svdhandler.network_name = "lora_transformer_" + name.replace(".", "_")
-        #         module.svdhandler.decompose(module.weight, weights_backup)
-        #         module.svdhandler.findrank(rank, rank_ratio)
-
         lora_state_dict = {}
         for sub in ['text_encoder', 'text_encoder_2', 'unet', 'transformer']:
             submodel = getattr(shared.sd_model, sub, None)
             if submodel is not None:
                 modules = submodel.named_modules()
-                task = progress.add_task(description=f"{sub} exctract", total=len(list(modules)))
+                task = progress.add_task(description=f"{sub} extract", total=len(list(modules)))
                 for _name, module in submodel.named_modules():
                     progress.update(task, advance=1)
                     if not hasattr(module, "svdhandler"):
@@ -222,25 +207,25 @@ def make_lora(fn, maxrank, auto_rank, rank_ratio, modules, overwrite):
             os.remove(fn)
         else:
             msg = f'LoRA extract: fn="{fn}" file exists'
-            shared.log.warning(msg)
+            log.warning(msg)
             yield msg
             return
 
     shared.state.end(jobid)
     meta = make_meta(fn, maxrank, rank_ratio)
-    shared.log.debug(f'LoRA metadata: {meta}')
+    log.debug(f'LoRA metadata: {meta}')
     try:
         save_file(tensors=lora_state_dict, metadata=meta, filename=fn)
     except Exception as e:
         msg = f'LoRA extract error: fn="{fn}" {e}'
-        shared.log.error(msg)
+        log.error(msg)
         yield msg
         return
     t5 = time.time()
-    shared.log.debug(f'LoRA extract: time={t5-t0:.2f} te1={t1-t0:.2f} te2={t2-t1:.2f} unet={t3-t2:.2f} save={t5-t4:.2f}')
+    log.debug(f'LoRA extract: time={t5-t0:.2f} te1={t1-t0:.2f} te2={t2-t1:.2f} unet={t3-t2:.2f} save={t5-t4:.2f}')
     keys = list(lora_state_dict.keys())
     msg = f'LoRA extract: fn="{fn}" keys={len(keys)}'
-    shared.log.info(msg)
+    log.info(msg)
     yield msg
 
 
@@ -250,7 +235,7 @@ def create_ui():
 
     with gr.Tab(label="Extract LoRA"):
         with gr.Row():
-            gr.HTML('<h2>&nbspExtract currently loaded LoRA(s)<br></h2>')
+            gr.HTML('<h3>&nbspExtract currently loaded LoRA(s)<br></h3>')
         with gr.Row():
             loaded = gr.Textbox(placeholder="Press refresh to query loaded LoRA", label="Loaded LoRA", interactive=False)
             create_refresh_button(loaded, lambda: None, lambda: {'value': loaded_lora_str()}, "lora_extract_refresh")

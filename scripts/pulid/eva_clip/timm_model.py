@@ -91,8 +91,8 @@ class TimmModel(nn.Module):
             try:
                 # FIXME import here until API stable and in an official release
                 from timm.models.helpers import group_parameters, group_modules
-            except ImportError:
-                raise RuntimeError('Please install latest timm `pip install git+https://github.com/rwightman/pytorch-image-models`')
+            except ImportError as e:
+                raise RuntimeError('Please install latest timm `pip install git+https://github.com/rwightman/pytorch-image-models`') from e
             matcher = self.trunk.group_matcher()
             gparams = group_parameters(self.trunk, matcher)
             max_layer_id = max(gparams.keys())
@@ -110,7 +110,7 @@ class TimmModel(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         try:
             self.trunk.set_grad_checkpointing(enable)
-        except Exception as e:
+        except Exception:
             logging.warning('grad checkpointing not supported for this timm image tower, continuing without...')
 
     def forward(self, x):

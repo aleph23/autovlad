@@ -3,6 +3,7 @@ import html
 import json
 from datetime import datetime
 from modules import shared, extra_networks, ui_extra_networks, styles
+from modules.logger import log
 
 
 class ExtraNetworksPageStyles(ui_extra_networks.ExtraNetworksPage):
@@ -13,7 +14,9 @@ class ExtraNetworksPageStyles(ui_extra_networks.ExtraNetworksPage):
         shared.prompt_styles.reload()
 
     def parse_desc(self, desc):
-        lines = desc.strip().split("\n")
+        if not isinstance(desc, str):
+            desc = ''
+        lines = desc.strip().split("\n") if desc else []
         params = { 'name': '', 'description': '', 'prompt': '', 'negative': '', 'extra': '', 'wildcards': ''}
         found = ''
         for line in lines:
@@ -95,7 +98,7 @@ class ExtraNetworksPageStyles(ui_extra_networks.ExtraNetworksPage):
                 "size": os.path.getsize(style.filename),
             }
         except Exception as e:
-            shared.log.debug(f'Networks error: type=style file="{k}" {e}')
+            log.debug(f'Networks error: type=style file="{k}" {e}')
         return item
 
     def list_items(self):
@@ -113,7 +116,7 @@ class ExtraNetworkStyles(extra_networks.ExtraNetwork):
         super().__init__('style')
         self.indexes = {}
 
-    def activate(self, p, params_list):
+    def activate(self, p, params_list, *args, **kwargs):
         for param in params_list:
             if len(param.items) > 0:
                 style = None
@@ -135,5 +138,5 @@ class ExtraNetworkStyles(extra_networks.ExtraNetwork):
                     styles.apply_styles_to_extra(p, style)
 
 
-    def deactivate(self, p):
+    def deactivate(self, p, force=False):
         pass

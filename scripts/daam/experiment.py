@@ -137,7 +137,7 @@ class GenerationExperiment:
 
         (path / 'generation.pt').unlink(missing_ok=True)
 
-    def save(self, path: str = None, heat_maps: bool = True, tokenizer: AutoTokenizer = None):
+    def save(self, path: str | None = None, heat_maps: bool = True, tokenizer: AutoTokenizer = None):
         if path is None:
             path = self.path
         else:
@@ -166,7 +166,7 @@ class GenerationExperiment:
 
         self.save_annotations()
 
-    def save_annotations(self, path: Path = None):
+    def save_annotations(self, path: Path | None = None):
         if path is None:
             path = self.path
 
@@ -225,7 +225,7 @@ class GenerationExperiment:
             self,
             word: str,
             tokenizer: PreTrainedTokenizer = None,
-            crop: int = None,
+            crop: int | None = None,
             output_prefix: str = '',
             absolute: bool = False
     ) -> Path:
@@ -241,7 +241,7 @@ class GenerationExperiment:
 
         return path
 
-    def save_all_heat_maps(self, tokenizer: PreTrainedTokenizer = None, crop: int = None) -> Dict[str, Path]:
+    def save_all_heat_maps(self, tokenizer: PreTrainedTokenizer = None, crop: int | None = None) -> Dict[str, Path]:
         path_map = {}
 
         if tokenizer is None:
@@ -257,14 +257,14 @@ class GenerationExperiment:
         return path_map
 
     @staticmethod
-    def contains_truth_mask(path: Union[str, Path], prompt_id: str = None) -> bool:
+    def contains_truth_mask(path: Union[str, Path], prompt_id: str | None = None) -> bool:
         if prompt_id is None:
             return any(Path(path).glob('*.gt.png'))
         else:
             return any((Path(path) / prompt_id).glob('*.gt.png'))
 
     @staticmethod
-    def read_seed(path: Union[str, Path], prompt_id: str = None) -> int:
+    def read_seed(path: Union[str, Path], prompt_id: str | None = None) -> int:
         if prompt_id is None:
             return int(Path(path).joinpath('seed.txt').read_text())
         else:
@@ -279,7 +279,7 @@ class GenerationExperiment:
         return (Path(path) / prompt_id / 'generation.pt').exists()
 
     @staticmethod
-    def read_prompt(path: Union[str, Path], prompt_id: str = None) -> str:
+    def read_prompt(path: Union[str, Path], prompt_id: str | None = None) -> str:
         if prompt_id is None:
             prompt_id = '.'
 

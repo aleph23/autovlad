@@ -2,6 +2,7 @@ import os
 import torch
 import diffusers
 from modules import shared, devices, sd_models
+from modules.logger import log
 
 
 def get_timestep_ratio_conditioning(t, alphas_cumprod):
@@ -15,7 +16,7 @@ def get_timestep_ratio_conditioning(t, alphas_cumprod):
     return ratio
 
 
-def load_text_encoder(path):
+def init_text_encoder(path):
     from transformers import CLIPTextConfig, CLIPTextModelWithProjection
     from accelerate.utils.modeling import set_module_tensor_to_device
     from accelerate import init_empty_weights
@@ -43,7 +44,7 @@ def load_text_encoder(path):
             vocab_size=49408
         )
 
-        shared.log.info(f'Load Text Encoder: name="{os.path.basename(os.path.splitext(path)[0])}" file="{path}"')
+        log.info(f'Load Text Encoder: name="{os.path.basename(os.path.splitext(path)[0])}" file="{path}"')
 
         with init_empty_weights():
             text_encoder = CLIPTextModelWithProjection(config)
@@ -57,11 +58,11 @@ def load_text_encoder(path):
 
     except Exception as e:
         text_encoder = None
-        shared.log.error(f'Failed to load Text Encoder model: {e}')
+        log.error(f'Failed to load Text Encoder model: {e}')
         return None
 
 
-def load_prior(path, config_file="default"):
+def init_prior(path, config_file="default"):
     from diffusers.models.unets import StableCascadeUNet
     prior_text_encoder = None
 
@@ -73,25 +74,35 @@ def load_prior(path, config_file="default"):
         else:
             config_file = "configs/stable-cascade/prior/config.json"
 
-    shared.log.info(f'Load UNet: name="{os.path.basename(os.path.splitext(path)[0])}" file="{path}" config="{config_file}"')
-    prior_unet = StableCascadeUNet.from_single_file(path, config=config_file, torch_dtype=devices.dtype_unet, cache_dir=shared.opts.diffusers_dir)
+    log.info(f'Load UNet: name="{os.path.basename(os.path.splitext(path)[0])}" file="{path}" config="{config_file}"')
+    prior_unet = StableCascadeUNet.from_single_file(path, config=config_file, torch_dtype=devices.dtype_unet, cache_dir=shared.opts.hfcache_dir)
 
     if os.path.isfile(os.path.splitext(path)[0] + "_text_encoder.safetensors"): # OneTrainer
-        prior_text_encoder = load_text_encoder(os.path.splitext(path)[0] + "_text_encoder.safetensors")
+        prior_text_encoder = init_text_encoder(os.path.splitext(path)[0] + "_text_encoder.safetensors")
     elif os.path.isfile(os.path.splitext(path)[0] + "_text_model.safetensors"): # KohyaSS
-        prior_text_encoder = load_text_encoder(os.path.splitext(path)[0] + "_text_model.safetensors")
+        prior_text_encoder = init_text_encoder(os.path.splitext(path)[0] + "_text_model.safetensors")
 
     return prior_unet, prior_text_encoder
 
 
-def load_cascade_combined(checkpoint_info, diffusers_load_config):
+def load_cascade_combined(checkpoint_info, diffusers_load_config=None):
     from diffusers import StableCascadeDecoderPipeline, StableCascadePriorPipeline, StableCascadeCombinedPipeline
     from diffusers.models.unets import StableCascadeUNet
     from modules.sd_unet import unet_dict
 
+    if diffusers_load_config is None:
+        diffusers_load_config = {}
+    diffusers_load_config = diffusers_load_config.copy()
+    diffusers_load_config.pop('cache_dir', None)
+
     diffusers_load_config.pop("vae", None)
     if 'cascade' in checkpoint_info.name.lower():
         diffusers_load_config["variant"] = 'bf16'
+
+    repo_id = sd_models.path_to_repo(checkpoint_info)
+    sd_models.hf_auth_check(checkpoint_info)
+    if repo_id is None or repo_id.lower() == 'none':
+        return None
 
     if shared.opts.sd_unet != "Default" or 'stabilityai' in checkpoint_info.name.lower():
         if 'cascade' in checkpoint_info.name and ('lite' in checkpoint_info.name or (checkpoint_info.hash is not None and 'abc818bb0d' in checkpoint_info.hash)):
@@ -101,21 +112,21 @@ def load_cascade_combined(checkpoint_info, diffusers_load_config):
             decoder_folder = 'decoder'
             prior_folder = 'prior'
         if 'cascade' in checkpoint_info.name.lower():
-            decoder_unet = StableCascadeUNet.from_pretrained("stabilityai/stable-cascade", subfolder=decoder_folder, cache_dir=shared.opts.diffusers_dir, **diffusers_load_config)
+            decoder_unet = StableCascadeUNet.from_pretrained("stabilityai/stable-cascade", subfolder=decoder_folder, cache_dir=shared.opts.hfcache_dir, **diffusers_load_config)
             decoder = StableCascadeDecoderPipeline.from_pretrained("stabilityai/stable-cascade", cache_dir=shared.opts.diffusers_dir, decoder=decoder_unet, text_encoder=None, **diffusers_load_config)
         else:
             decoder = StableCascadeDecoderPipeline.from_pretrained(checkpoint_info.path, cache_dir=shared.opts.diffusers_dir, text_encoder=None, **diffusers_load_config)
-        # shared.log.debug(f'StableCascade {decoder_folder}: scale={decoder.latent_dim_scale}')
+        # log.debug(f'StableCascade {decoder_folder}: scale={decoder.latent_dim_scale}')
         prior_text_encoder = None
         if shared.opts.sd_unet != "Default":
-            prior_unet, prior_text_encoder = load_prior(unet_dict[shared.opts.sd_unet])
+            prior_unet, prior_text_encoder = init_prior(unet_dict[shared.opts.sd_unet])
         else:
-            prior_unet = StableCascadeUNet.from_pretrained("stabilityai/stable-cascade-prior", subfolder=prior_folder, cache_dir=shared.opts.diffusers_dir, **diffusers_load_config)
+            prior_unet = StableCascadeUNet.from_pretrained("stabilityai/stable-cascade-prior", subfolder=prior_folder, cache_dir=shared.opts.hfcache_dir, **diffusers_load_config)
         if prior_text_encoder is not None:
             prior = StableCascadePriorPipeline.from_pretrained("stabilityai/stable-cascade-prior", cache_dir=shared.opts.diffusers_dir, prior=prior_unet, text_encoder=prior_text_encoder, image_encoder=None, feature_extractor=None, **diffusers_load_config)
         else:
             prior = StableCascadePriorPipeline.from_pretrained("stabilityai/stable-cascade-prior", cache_dir=shared.opts.diffusers_dir, prior=prior_unet, image_encoder=None, feature_extractor=None, **diffusers_load_config)
-        # shared.log.debug(f'StableCascade {prior_folder}: scale={prior.resolution_multiple}')
+        # log.debug(f'StableCascade {prior_folder}: scale={prior.resolution_multiple}')
         sd_model = StableCascadeCombinedPipeline(
             tokenizer=decoder.tokenizer,
             text_encoder=None,
@@ -156,16 +167,16 @@ def load_cascade_combined(checkpoint_info, diffusers_load_config):
     )
 
     devices.torch_gc(force=True, reason='load')
-    shared.log.debug(f'StableCascade combined: {sd_model.__class__.__name__}')
+    log.debug(f'StableCascade combined: {sd_model.__class__.__name__}')
     return sd_model
 
 
 # Balanced offload hooks:
 class StableCascadeDecoderPipelineFixed(diffusers.StableCascadeDecoderPipeline):
-    def guidance_scale(self): # pylint: disable=invalid-overridden-method
+    def guidance_scale(self): # pylint: disable=invalid-overridden-method,method-hidden
         return self._guidance_scale
 
-    def do_classifier_free_guidance(self): # pylint: disable=invalid-overridden-method
+    def do_classifier_free_guidance(self): # pylint: disable=invalid-overridden-method,method-hidden
         return self._guidance_scale > 1
 
     @torch.no_grad()
@@ -329,8 +340,8 @@ class StableCascadeDecoderPipelineFixed(diffusers.StableCascadeDecoderPipeline):
             if output_type == "np":
                 images = images.permute(0, 2, 3, 1).cpu().float().numpy()  # float() as bfloat16-> numpy doesnt work
             elif output_type == "pil":
-                images = images.permute(0, 2, 3, 1).cpu().float().numpy()  # float() as bfloat16-> numpy doesnt work
-                images = self.numpy_to_pil(images)
+                from modules.image import convert
+                images = [convert.to_pil(images[i]) for i in range(images.shape[0])]
             shared.sd_model = sd_models.apply_balanced_offload(shared.sd_model)
         else:
             images = latents

@@ -19,6 +19,7 @@ class NetworkModuleGLora(network.NetworkModule): # pylint: disable=abstract-meth
         self.w1b = weights.w["b1.weight"]
         self.w2a = weights.w["a2.weight"]
         self.w2b = weights.w["b2.weight"]
+        self.dim = self.w1b.shape[0]
 
     def calc_updown(self, target): # pylint: disable=arguments-differ
         w1a = self.w1a.to(target.device, dtype=target.dtype)

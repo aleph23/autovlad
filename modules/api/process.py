@@ -1,11 +1,10 @@
-from typing import Optional, List
 from threading import Lock
 from pydantic import BaseModel, Field # pylint: disable=no-name-in-module
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
 from modules.api.helpers import decode_base64_to_image, encode_pil_to_base64
-from modules import errors, shared
-from modules.api import models
+from modules import errors, shared, postprocessing
+from modules.api import models, helpers
 
 
 processor = None # cached instance of processor
@@ -15,7 +14,7 @@ errors.install()
 class ReqPreprocess(BaseModel):
     image: str = Field(title="Image", description="The base64 encoded image")
     model: str = Field(title="Model", description="The model to use for preprocessing")
-    params: Optional[dict] = Field(default={}, title="Settings", description="Preprocessor settings")
+    params: dict | None = Field(default={}, title="Settings", description="Preprocessor settings")
 
 class ResPreprocess(BaseModel):
     model: str = Field(default='', title="Model", description="The processor model used")
@@ -24,47 +23,50 @@ class ResPreprocess(BaseModel):
 class ReqMask(BaseModel):
     image: str = Field(title="Image", description="The base64 encoded image")
     type: str = Field(title="Mask type", description="Type of masking image to return")
-    mask: Optional[str] = Field(title="Mask", description="If optional maks image is not provided auto-masking will be performed")
-    model: Optional[str] = Field(title="Model", description="The model to use for preprocessing")
-    params: Optional[dict] = Field(default={}, title="Settings", description="Preprocessor settings")
+    mask: str | None = Field(title="Mask", description="If optional mask image is not provided auto-masking will be performed")
+    model: str | None = Field(title="Model", description="The model to use for preprocessing")
+    params: dict | None = Field(default={}, title="Settings", description="Preprocessor settings")
 
 class ReqFace(BaseModel):
     image: str = Field(title="Image", description="The base64 encoded image")
-    model: Optional[str] = Field(title="Model", description="The model to use for detection")
+    model: str | None = Field(title="Model", description="The model to use for detection")
 
 class ResFace(BaseModel):
-    classes: List[int] = Field(title="Class", description="The class of detected item")
-    labels: List[str] = Field(title="Label", description="The label of detected item")
-    boxes: List[List[int]] = Field(title="Box", description="The bounding box of detected item")
-    images: List[str] = Field(title="Image", description="The base64 encoded images of detected faces")
-    scores: List[float] = Field(title="Scores", description="The scores of the detected faces")
+    classes: list[int] = Field(title="Class", description="The class of detected item")
+    labels: list[str] = Field(title="Label", description="The label of detected item")
+    boxes: list[list[int]] = Field(title="Box", description="The bounding box of detected item")
+    images: list[str] = Field(title="Image", description="The base64 encoded images of detected faces")
+    scores: list[float] = Field(title="Scores", description="The scores of the detected faces")
 
 class ResMask(BaseModel):
     mask: str = Field(default='', title="Image", description="The processed image in base64 format")
 
 class ItemPreprocess(BaseModel):
-    name: str = Field(title="Name")
-    params: dict = Field(title="Params")
+    name: str = Field(title="Name", description="Preprocessor name")
+    group: str = Field(default="Other", title="Group", description="Category group")
+    params: dict = Field(title="Params", description="Configurable parameters for this preprocessor")
 
 class ItemMask(BaseModel):
-    models: List[str] = Field(title="Models")
-    colormaps: List[str] = Field(title="Color maps")
-    params: dict = Field(title="Params")
-    types: List[str] = Field(title="Types")
+    models: list[str] = Field(title="Models", description="Available segmentation model names")
+    colormaps: list[str] = Field(title="Color maps", description="Available color map options for mask visualization")
+    params: dict = Field(title="Params", description="Current masking parameters")
+    types: list[str] = Field(title="Types", description="Available mask return types")
 
 
-class APIProcess():
+class APIProcess:
     def __init__(self, queue_lock: Lock):
         self.queue_lock = queue_lock
 
     def get_preprocess(self):
+        """List available image preprocessors with their configurable parameters."""
         from modules.control import processors
         items = []
         for k, v in processors.config.items():
-            items.append(ItemPreprocess(name=k, params=v.get('params', {})))
+            items.append(ItemPreprocess(name=k, group=v.get('group', 'Other'), params=v.get('params', {})))
         return items
 
     def post_preprocess(self, req: ReqPreprocess):
+        """Run an image preprocessor (e.g., canny, depth, pose) on the input image and return the processed result."""
         global processor # pylint: disable=global-statement
         from modules.control import processors
         processors_list = list(processors.config)
@@ -74,20 +76,22 @@ class APIProcess():
         if processor is None or processor.processor_id != req.model:
             with self.queue_lock:
                 processor = processors.Processor(req.model)
-        for k, v in req.params.items():
+        for k, v in (req.params or {}).items():
             if k not in processors.config[processor.processor_id]['params']:
                 return JSONResponse(status_code=400, content={"error": f"Processor invalid parameter: id={req.model} {k}={v}"})
         jobid = shared.state.begin('API-PRE', api=True)
         processed = processor(image, local_config=req.params)
         image = encode_pil_to_base64(processed)
-        shared.state.end(jobid)
+        shared.state.end(jobid, api=False)
         return ResPreprocess(model=processor.processor_id, image=image)
 
     def get_mask(self):
+        """List available masking models, color maps, parameters, and mask types."""
         from modules import masking
         return ItemMask(models=list(masking.MODELS), colormaps=masking.COLORMAP, params=vars(masking.opts), types=masking.TYPES)
 
     def post_mask(self, req: ReqMask):
+        """Generate a segmentation mask for the input image. Auto-masks if no mask is provided."""
         from modules import masking
         if req.model:
             if req.model not in masking.MODELS:
@@ -98,7 +102,7 @@ class APIProcess():
             return JSONResponse(status_code=400, content={"error": f"Mask type not found: id={req.type}"})
         image = decode_base64_to_image(req.image)
         mask = decode_base64_to_image(req.mask) if req.mask else None
-        for k, v in req.params.items():
+        for k, v in (req.params or {}).items():
             if not hasattr(masking.opts, k):
                 return JSONResponse(status_code=400, content={"error": f"Mask invalid parameter: {k}={v}"})
             else:
@@ -106,13 +110,14 @@ class APIProcess():
         jobid = shared.state.begin('API-MASK', api=True)
         with self.queue_lock:
             processed = masking.run_mask(input_image=image, input_mask=mask, return_type=req.type)
-        shared.state.end(jobid)
+        shared.state.end(jobid, api=False)
         if processed is None:
             return JSONResponse(status_code=400, content={"error": "Mask is none"})
         image = encode_pil_to_base64(processed)
         return ResMask(mask=image)
 
     def post_detect(self, req: ReqFace):
+        """Detect faces/objects in an image using YOLO. Returns bounding boxes, labels, scores, and cropped images."""
         from modules.shared import yolo # pylint: disable=no-name-in-module
         image = decode_base64_to_image(req.image)
         jobid = shared.state.begin('API-FACE', api=True)
@@ -129,36 +134,119 @@ class APIProcess():
                 classes.append(item.cls)
                 labels.append(item.label)
                 boxes.append(item.box)
-        shared.state.end(jobid)
+        shared.state.end(jobid, api=False)
         return ResFace(classes=classes, labels=labels, scores=scores, boxes=boxes, images=images)
 
+    def post_detail(self, req: models.ReqDetail):
+        """Run the YOLO detailer on a single image as a standalone operation; no base generation pass.
+
+        Per-request fields override shared.opts.detailer_* via detailer_opt(p, attr) precedence
+        in modules/postprocess/yolo.py. Fields left as None fall through to the global setting.
+        """
+        import numpy as np
+        from PIL import Image
+        from modules.shared import yolo # pylint: disable=no-name-in-module
+
+        if shared.sd_model is None or not hasattr(shared.sd_model, 'sd_checkpoint_info'):
+            return JSONResponse(status_code=400, content={"error": "no base model selected"})
+        image = decode_base64_to_image(req.image)
+        if image is None:
+            return JSONResponse(status_code=400, content={"error": "invalid image"})
+
+        # Per-request overrides for the non-primary detailer fields; None values fall through to opts
+        # via detailer_opt(p, attr) -> shared.opts.<attr>.
+        overrides = {attr: getattr(req, attr) for attr in (
+            'detailer_models', 'detailer_classes', 'detailer_conf',
+            'detailer_iou', 'detailer_max', 'detailer_min_size',
+            'detailer_max_size', 'detailer_blur', 'detailer_padding',
+            'detailer_segmentation', 'detailer_merge', 'detailer_sort',
+            'detailer_sigma_adjust', 'detailer_sigma_adjust_max',
+            'detailer_include_detections',
+        ) if getattr(req, attr, None) is not None}
+
+        # Sampler block: request field names differ from the p attributes they set, so map explicitly.
+        # schedulers_* become per-job overrides (need a named sampler to take effect); cfg/sampler apply directly.
+        for req_attr, p_attr in (
+            ('detailer_sampler', 'hr_sampler_name'),
+            ('detailer_prediction', 'schedulers_prediction_type'),
+            ('detailer_shift', 'schedulers_shift'),
+            ('detailer_cfg_scale', 'cfg_scale'),
+            ('detailer_loworder', 'schedulers_use_loworder'),
+            ('detailer_thresholding', 'schedulers_use_thresholding'),
+            ('detailer_dynamic', 'schedulers_dynamic_shift'),
+            ('detailer_rescale', 'schedulers_rescale_betas'),
+        ):
+            val = getattr(req, req_attr, None)
+            if val is not None:
+                overrides[p_attr] = val
+
+        jobid = shared.state.begin('API-DETAIL', api=True)
+        try:
+            p = yolo.make_processing(
+                image,
+                prompt=req.detailer_prompt or '',
+                negative=req.detailer_negative or '',
+                steps=req.detailer_steps if req.detailer_steps is not None else 10,
+                strength=req.detailer_strength if req.detailer_strength is not None else 0.3,
+                resolution=req.detailer_resolution if req.detailer_resolution is not None else 1024,
+                seed=req.seed if req.seed is not None else -1,
+                overrides=overrides,
+            )
+
+            with self.queue_lock:
+                result = yolo.restore(np.array(image), p)
+
+            annotated_b64 = None
+            if isinstance(result, list) and len(result) > 0:
+                out_image = Image.fromarray(result[0])
+                if len(result) > 1 and result[1] is not None:
+                    annotated = result[1] if isinstance(result[1], Image.Image) else Image.fromarray(result[1])
+                    annotated_b64 = encode_pil_to_base64(annotated)
+            elif isinstance(result, np.ndarray):
+                out_image = Image.fromarray(result)
+            else:
+                return JSONResponse(status_code=500, content={"error": "detailer produced no result"})
+
+            return models.ResDetail(image=encode_pil_to_base64(out_image), detections=annotated_b64, seed=p.all_seeds[0])
+        finally:
+            shared.state.end(jobid, api=False)
+
     def post_prompt_enhance(self, req: models.ReqPromptEnhance):
+        """Enhance a prompt using an LLM. Supports text, image-conditioned, and video prompt enhancement modes."""
         from modules import processing_helpers
         seed = req.seed or -1
         seed = processing_helpers.get_fixed_seed(seed)
         prompt = ''
-        if req.type == 'text':
+        if req.type in ('text', 'image'):
             from modules.scripts_manager import scripts_txt2img
-            model = 'google/gemma-3-1b-it' if req.model is None or len(req.model) < 4 else req.model
+            default_model = 'google/gemma-3-4b-it' if req.type == 'image' else 'google/gemma-3-1b-it'
+            model = default_model if req.model is None or len(req.model) < 4 else req.model
             instance = [s for s in scripts_txt2img.scripts if 'prompt_enhance.py' in s.filename][0]
             prompt = instance.enhance(
                 model=model,
                 prompt=req.prompt,
                 system=req.system_prompt,
+                prefix=req.prefix,
+                suffix=req.suffix,
+                sample=req.do_sample,
+                min_tokens=req.min_tokens,
+                max_tokens=req.max_tokens,
+                temperature=req.temperature,
+                penalty=req.repetition_penalty,
+                top_k=req.top_k,
+                top_p=req.top_p,
+                thinking=req.thinking,
+                keep_thinking=req.keep_thinking,
+                use_vision=req.use_vision,
+                prefill=req.prefill or '',
+                keep_prefill=req.keep_prefill,
+                image=decode_base64_to_image(req.image) if req.image else None,
                 seed=seed,
                 nsfw=req.nsfw,
-            )
-        elif req.type == 'image':
-            from modules.scripts_manager import scripts_txt2img
-            model = 'google/gemma-3-4b-it' if req.model is None or len(req.model) < 4 else req.model
-            instance = [s for s in scripts_txt2img.scripts if 'prompt_enhance.py' in s.filename][0]
-            prompt = instance.enhance(
-                model=model,
-                prompt=req.prompt,
-                system=req.system_prompt,
-                image=decode_base64_to_image(req.image),
-                seed=seed,
-                nsfw=req.nsfw,
+                custom_args=req.custom_args,
+                process_words=req.process_words,
+                semantic_threshold=req.semantic_threshold,
+                embedding_similarity=req.embedding_similarity,
             )
         elif req.type == 'video':
             from modules.ui_video_vlm import enhance_prompt
@@ -175,3 +263,44 @@ class APIProcess():
             raise HTTPException(status_code=400, detail="prompt enhancement: invalid type")
         res = models.ResPromptEnhance(prompt=prompt, seed=seed)
         return res
+
+    def get_prompt_enhance_models(self):
+        """
+        List available prompt enhancement models.
+
+        Returns model repository IDs with capability flags indicating vision
+        (image-conditioned enhancement) and thinking (reasoning mode) support.
+        """
+        from scripts.prompt_enhance import Options, is_vision_model, is_thinking_model # pylint: disable=no-name-in-module
+        result = []
+        for repo in Options.models.keys():
+            result.append({
+                "name": repo,
+                "vision": is_vision_model(repo),
+                "thinking": is_thinking_model(repo),
+            })
+        return result
+
+    def set_upscalers(self, req: dict):
+        reqDict = vars(req)
+        script_args = reqDict.pop('script_args', None)
+        reqDict['extras_upscaler_1'] = reqDict.pop('upscaler_1', None)
+        reqDict['extras_upscaler_2'] = reqDict.pop('upscaler_2', None)
+        return reqDict, script_args
+
+    def extras_single_image_api(self, req: models.ReqProcessImage):
+        """Upscale or postprocess a single image using the configured upscaler pipeline."""
+        reqDict, script_args = self.set_upscalers(req)
+        reqDict['image'] = helpers.decode_base64_to_image(reqDict['image'])
+        with self.queue_lock:
+            result = postprocessing.run_extras(extras_mode=0, image_folder="", input_dir="", output_dir="", save_output=False, script_args=script_args, **reqDict)
+        return models.ResProcessImage(image=helpers.encode_pil_to_base64(result[0][0]), html_info=result[1])
+
+    def extras_batch_images_api(self, req: models.ReqProcessBatch):
+        """Upscale or postprocess a batch of images using the configured upscaler pipeline."""
+        reqDict, script_args = self.set_upscalers(req)
+        image_list = reqDict.pop('imageList', [])
+        image_folder = [helpers.decode_base64_to_image(x.data) for x in image_list]
+        with self.queue_lock:
+            result = postprocessing.run_extras(extras_mode=1, image_folder=image_folder, image="", input_dir="", output_dir="", save_output=False, script_args=script_args, **reqDict)
+        return models.ResProcessBatch(images=list(map(helpers.encode_pil_to_base64, result[0])), html_info=result[1])

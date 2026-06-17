@@ -105,7 +105,7 @@ class MarigoldPipeline(DiffusionPipeline):
     @torch.no_grad()
     def __call__(
         self,
-        input_image: Image,
+        input_image: Image.Image,
         denoising_steps: int = 10,
         ensemble_size: int = 10,
         processing_res: int = 768,
@@ -113,7 +113,7 @@ class MarigoldPipeline(DiffusionPipeline):
         batch_size: int = 0,
         color_map: str = "Spectral",
         show_progress_bar: bool = True,
-        ensemble_kwargs: Dict = None,
+        ensemble_kwargs: Dict | None = None,
     ) -> MarigoldDepthOutput:
         """
         Function invoked when calling the pipeline.
@@ -228,7 +228,7 @@ class MarigoldPipeline(DiffusionPipeline):
         depth_pred = (depth_pred - min_d) / (max_d - min_d)
 
         # Convert to numpy
-        depth_pred = depth_pred.cpu().numpy().astype(np.float32)
+        depth_pred = depth_pred.to(torch.float32).cpu().numpy()
 
         # Resize back to original resolution
         if match_input_res:

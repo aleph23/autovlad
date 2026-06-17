@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 import math
 import torch
 import torch.nn.functional as F
@@ -38,10 +37,10 @@ class RASLuminaAttnProcessor2_0:
         attn: Attention,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        query_rotary_emb: Optional[torch.Tensor] = None,
-        key_rotary_emb: Optional[torch.Tensor] = None,
-        base_sequence_length: Optional[int] = None,
+        attention_mask: torch.Tensor | None = None,
+        query_rotary_emb: torch.Tensor | None = None,
+        key_rotary_emb: torch.Tensor | None = None,
+        base_sequence_length: int | None = None,
     ) -> torch.Tensor:
         from diffusers.models.embeddings import apply_rotary_emb
 
@@ -126,7 +125,7 @@ class RASLuminaAttnProcessor2_0:
             else:
                 softmax_scale = attn.scale
 
-        # perform Grouped-qurey Attention (GQA)   # TODO replace with GQA
+        # perform Grouped-qurey Attention (GQA)
         n_rep = attn.heads // kv_heads
         if n_rep >= 1:
             key = key.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)
@@ -165,7 +164,7 @@ class RASJointAttnProcessor2_0:
         attn: Attention,
         hidden_states: torch.FloatTensor,
         encoder_hidden_states: torch.FloatTensor = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
+        attention_mask: torch.FloatTensor | None = None,
         *args,
         **kwargs,
     ) -> torch.FloatTensor:

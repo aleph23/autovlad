@@ -6,11 +6,14 @@ from modules.shared import opts, log
 import modules.sd_samplers
 
 
-class Script(scripts_manager.Script):
+class PromptMatrixScript(scripts_manager.Script):
     def title(self):
         return "Prompt matrix"
 
-    def ui(self, is_img2img):
+    def show(self, is_img2img): # pylint: disable=unused-argument
+        return True
+
+    def ui(self, _is_img2img):
         with gr.Row():
             gr.HTML('<span">&nbsp Prompt matrix</span><br>')
         with gr.Row():

@@ -1,30 +1,30 @@
 import os
 import re
-import json # pylint: disable=unused-import
 import inspect
 import gradio as gr
 import torch
 import diffusers
 from huggingface_hub import hf_hub_download
 from modules import shared, errors, shared_items, sd_models, sd_checkpoint, devices, model_quant, modelloader
+from modules.logger import log
 
 
 debug_enabled = os.environ.get('SD_LOAD_DEBUG', None)
-debug_log = shared.log.trace if debug_enabled else lambda *args, **kwargs: None
+debug_log = log.trace if debug_enabled else lambda *args, **kwargs: None
 components = []
 
 
 def load_model(model: str, cls: str, repo: str, dataframes: list):
     if cls is None:
-        shared.log.error('Model load: class is None')
+        log.error('Model load: class is None')
         return 'Model load: class is None'
     if repo is None:
-        shared.log.error('Model load: repo is None')
+        log.error('Model load: repo is None')
         return 'Model load: repo is None'
     cls = getattr(diffusers, cls, None)
     if cls is None:
         cls = diffusers.AutoPipelineForText2Image
-    shared.log.info(f'Model load: name="{model}" cls={cls.__name__} repo="{repo}"')
+    log.info(f'Model load: name="{model}" cls={cls.__name__} repo="{repo}"')
     kwargs = {}
     for df in dataframes:
         c = [x for x in components if x.id == df[0]]
@@ -44,8 +44,8 @@ def load_model(model: str, cls: str, repo: str, dataframes: list):
         instance = c.load()
         if instance is not None:
             kwargs[c.name] = instance
-            shared.log.info(f'Model component: instance={instance.__class__.__name__}')
-    shared.log.info(f'Model load: name="{model}" cls={cls.__name__} repo="{repo}" preload={kwargs.keys()}')
+            log.info(f'Model component: instance={instance.__class__.__name__}')
+    log.info(f'Model load: name="{model}" cls={cls.__name__} repo="{repo}" preload={kwargs.keys()}')
     pipe = None
     if model == 'Current':
         for k, v in kwargs.items():
@@ -62,11 +62,11 @@ def load_model(model: str, cls: str, repo: str, dataframes: list):
                 **kwargs,
             )
         except Exception as e:
-            shared.log.error(f'Model load: name="{model}" {e}')
+            log.error(f'Model load: name="{model}" {e}')
             errors.display(e, 'Model load')
             return f'Model load failed: {e}'
         if pipe is not None:
-            shared.log.info(f'Model load: name="{model}" cls={cls.__name__} repo="{repo}" instance={pipe.__class__.__name__}')
+            log.info(f'Model load: name="{model}" cls={cls.__name__} repo="{repo}" instance={pipe.__class__.__name__}')
             shared.sd_model = pipe
             shared.sd_model.sd_checkpoint_info = sd_checkpoint.CheckpointInfo(repo)
             shared.sd_model.sd_model_hash = None
@@ -101,7 +101,7 @@ def process_huggingface_url(url):
     return repo, subfolder, fn, download
 
 
-class Component():
+class Component:
     def __init__(self, signature, name=None, cls=None, val=None, local=None, remote=None, typ=None, dtype=None, quant=False, loadable=None):
         self.id = len(components) + 1
         self.name = signature.name if signature else name
@@ -193,7 +193,7 @@ class Component():
                 elif os.path.isfile(self.local) and self.local.endswith('.gguf'):
                     debug_log(f'Model load component: local="{self.local}" type=gguf args={load_args} quant={quant_type}')
                     from modules import ggml
-                    return ggml.load_gguf(self.local, cls=self.cls, compute_dtype=self.dtype)
+                    return ggml.load_gguf_diffusers(self.local, cls=self.cls, compute_dtype=self.dtype)
                 else:
                     debug_log(f'Model load component: local="{self.local}" type=folder args={load_args} quant={quant_type}')
                     return self.cls.from_pretrained(self.local, **load_args, **quant_args, cache_dir=shared.opts.hfcache_dir)
@@ -207,7 +207,7 @@ class Component():
                 debug_log(f'Model load component: name="{self.name}" cls={self.cls} no handler')
                 return None
         except Exception as e:
-            shared.log.error(f'Model load component: name="{self.name}" {e}')
+            log.error(f'Model load component: name="{self.name}" {e}')
             errors.display(e, 'Model load component')
         return None
 
@@ -238,7 +238,7 @@ def create_ui(gr_status, gr_file):
         link = f'Link<br><br><a href="https://huggingface.co/{repo}" target="_blank">{repo}</a>' if repo else ''
         get_components(cls)
         dataframes = [c.dataframe() for c in components]
-        shared.log.debug(f'Model select: name="{model}" cls={name} repo="{repo}" link={link} components={len(components)}')
+        log.debug(f'Model select: name="{model}" cls={name} repo="{repo}" link={link} components={len(components)}')
         return [name, repo, link, dataframes]
 
     def update_component(dataframes):
@@ -258,7 +258,7 @@ def create_ui(gr_status, gr_file):
     def load_receipe(file_select):
         if file_select is not None and 'name' in file_select:
             fn = file_select['name']
-            shared.log.debug(f'Load receipe: fn={fn}')
+            log.debug(f'Load receipe: fn={fn}')
         return ['Load receipe not implemented yet', gr.update(label='Receipe .json file', file_types=['json'], visible=True)]
 
     # TODO loader: save receipe
@@ -276,7 +276,7 @@ def create_ui(gr_status, gr_file):
         return 'Save receipe not implemented yet'
 
     with gr.Row():
-        gr.HTML('<h2>&nbsp<a href="https://vladmandic.github.io/sdnext-docs/Loader" target="_blank">Custom model loader</a><br></h2>')
+        gr.HTML('<h3>&nbsp<a href="https://vladmandic.github.io/sdnext-docs/Loader" target="_blank">Custom model loader</a><br></h2>')
     with gr.Row():
         choices = list(shared_items.pipelines)
         choices = ['Current' if x.startswith('Custom') else x for x in choices]

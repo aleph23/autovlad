@@ -1,11 +1,12 @@
 import os
 import time
 import gradio as gr
+from installer import install
 from modules import ui_symbols, ui_components
-from installer import install, log
+from modules.logger import log
 
 
-class Page():
+class Page:
     def __init__(self, fn, full: bool = True):
         self.fn = fn
         self.title = ''
@@ -21,7 +22,7 @@ class Page():
         try:
             self.title = ' ' + os.path.basename(self.fn).replace('.md', '').replace('-', ' ') + ' '
             self.mtime = time.localtime(os.path.getmtime(self.fn))
-            with open(self.fn, 'r', encoding='utf-8') as f:
+            with open(self.fn, encoding='utf-8') as f:
                 content = f.read()
             self.size = len(content)
             self.lines = [line.strip().lower() + ' ' for line in content.splitlines() if len(line)>1]
@@ -80,7 +81,7 @@ class Page():
             log.error(f'Search docs: page="{self.fn}" does not exist')
             return f'page="{self.fn}" does not exist'
         try:
-            with open(self.fn, 'r', encoding='utf-8') as f:
+            with open(self.fn, encoding='utf-8') as f:
                 content = f.read()
                 return content
         except Exception as e:
@@ -91,7 +92,7 @@ class Page():
         return f'Page(title="{self.title.strip()}" fn="{self.fn}" mtime={self.mtime} h1={[h.strip() for h in self.h1]} h2={len(self.h2)} h3={len(self.h3)} lines={len(self.lines)} size={self.size})'
 
 
-class Pages():
+class Pages:
     def __init__(self):
         self.time = time.time()
         self.size = 0
@@ -117,7 +118,7 @@ class Pages():
             text = text.lower()
             scores = [page.search(text) for page in self.pages]
             mtimes = [page.mtime for page in self.pages]
-            found = sorted(zip(scores, mtimes, self.pages), key=lambda x: (x[0], x[1]), reverse=True)
+            found = sorted(zip(scores, mtimes, self.pages, strict=False), key=lambda x: (x[0], x[1]), reverse=True)
             found = [item for item in found if item[0] > 0]
             return [(item[0], item[2]) for item in found][:topk]
         except Exception as e:
@@ -177,7 +178,7 @@ def search_docs(search_term):
 
 def get_github_page(page):
     try:
-        with open(os.path.join('wiki', f'{page}.md'), 'r', encoding='utf-8') as f:
+        with open(os.path.join('wiki', f'{page}.md'), encoding='utf-8') as f:
             content = f.read()
             log.debug(f'Search wiki: page="{page}" size={len(content)}')
     except Exception as e:
@@ -230,7 +231,7 @@ def search_github(search_term):
 
 def create_ui_logs():
     def get_changelog():
-        with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+        with open('CHANGELOG.md', encoding='utf-8') as f:
             content = f.read()
             content = content.replace('# Change Log for SD.Next', '  ')
         return content
@@ -242,7 +243,7 @@ def create_ui_logs():
         _changelog_result = gr.HTML(elem_id="changelog_result")
 
     changelog_markdown = gr.Markdown('', elem_id="changelog_markdown")
-    get_changelog_btn.click(fn=get_changelog, outputs=[changelog_markdown], show_progress=True)
+    get_changelog_btn.click(fn=get_changelog, outputs=[changelog_markdown], show_progress='full')
 
 
 def create_ui_github():
@@ -254,9 +255,9 @@ def create_ui_github():
     with gr.Row():
         github_md_btn = gr.Button(value='html2md', elem_id="github_md_btn", visible=False)
         github_md = gr.Markdown(elem_id="github_md", value='', elem_classes="github-md")
-    github_search.submit(fn=search_github, inputs=[github_search], outputs=[github_result], show_progress=True)
-    github_search_btn.click(fn=search_github, inputs=[github_search], outputs=[github_result], show_progress=True)
-    github_md_btn.click(fn=get_github_page, _js='getGitHubWikiPage', inputs=[github_search], outputs=[github_md], show_progress=True)
+    github_search.submit(fn=search_github, inputs=[github_search], outputs=[github_result], show_progress='full')
+    github_search_btn.click(fn=search_github, inputs=[github_search], outputs=[github_result], show_progress='full')
+    github_md_btn.click(fn=get_github_page, _js='getGitHubWikiPage', inputs=[github_search], outputs=[github_md], show_progress='full')
 
 
 def create_ui_docs():
@@ -268,10 +269,10 @@ def create_ui_docs():
     with gr.Row():
         docs_md_btn = gr.Button(value='html2md', elem_id="docs_md_btn", visible=False)
         docs_md = gr.Markdown(elem_id="docs_md", value='', elem_classes="docs-md")
-    docs_search.submit(fn=search_docs, inputs=[docs_search], outputs=[docs_result], show_progress=False)
-    docs_search.change(fn=search_docs, inputs=[docs_search], outputs=[docs_result], show_progress=False)
-    docs_search_btn.click(fn=search_docs, inputs=[docs_search], outputs=[docs_result], show_progress=False)
-    docs_md_btn.click(fn=get_docs_page, _js='getDocsPage', inputs=[docs_search], outputs=[docs_md], show_progress=False)
+    docs_search.submit(fn=search_docs, inputs=[docs_search], outputs=[docs_result], show_progress='hidden')
+    docs_search.change(fn=search_docs, inputs=[docs_search], outputs=[docs_result], show_progress='hidden')
+    docs_search_btn.click(fn=search_docs, inputs=[docs_search], outputs=[docs_result], show_progress='hidden')
+    docs_md_btn.click(fn=get_docs_page, _js='getDocsPage', inputs=[docs_search], outputs=[docs_md], show_progress='hidden')
 
 
 def create_ui():

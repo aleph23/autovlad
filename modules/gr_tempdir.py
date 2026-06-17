@@ -3,11 +3,12 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 from PIL import Image, PngImagePlugin
-from modules import shared, errors, paths
+from modules import shared, paths
+from modules.logger import log
 
 
 Savedfile = namedtuple("Savedfile", ["name"])
-debug = errors.log.trace if os.environ.get('SD_PATH_DEBUG', None) is not None else lambda *args, **kwargs: None
+debug = log.trace if os.environ.get('SD_PATH_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
 def register_tmp_file(gradio, filename):
@@ -19,23 +20,36 @@ def check_tmp_file(gradio, filename):
     ok = False
     if hasattr(gradio, 'temp_file_sets'):
         ok = ok or any(filename in fileset for fileset in gradio.temp_file_sets)
-    if shared.opts.outdir_samples != '':
-        ok = ok or Path(shared.opts.outdir_samples).resolve() in Path(filename).resolve().parents
-    else:
-        ok = ok or Path(shared.opts.outdir_txt2img_samples).resolve() in Path(filename).resolve().parents
-        ok = ok or Path(shared.opts.outdir_img2img_samples).resolve() in Path(filename).resolve().parents
-        ok = ok or Path(shared.opts.outdir_extras_samples).resolve() in Path(filename).resolve().parents
-    if shared.opts.outdir_grids != '':
-        ok = ok or Path(shared.opts.outdir_grids).resolve() in Path(filename).resolve().parents
-    else:
-        ok = ok or Path(shared.opts.outdir_txt2img_grids).resolve() in Path(filename).resolve().parents
-        ok = ok or Path(shared.opts.outdir_img2img_grids).resolve() in Path(filename).resolve().parents
-    ok = ok or Path(shared.opts.outdir_save).resolve() in Path(filename).resolve().parents
-    ok = ok or Path(shared.opts.outdir_init_images).resolve() in Path(filename).resolve().parents
+    # Check resolved output paths (base + specific)
+    base_samples = shared.opts.outdir_samples
+    base_grids = shared.opts.outdir_grids
+    resolved_paths = [
+        paths.resolve_output_path(base_samples, shared.opts.outdir_txt2img_samples),
+        paths.resolve_output_path(base_samples, shared.opts.outdir_img2img_samples),
+        paths.resolve_output_path(base_samples, shared.opts.outdir_extras_samples),
+        paths.resolve_output_path(base_samples, shared.opts.outdir_control_samples),
+        paths.resolve_output_path(base_samples, shared.opts.outdir_save),
+        paths.resolve_output_path(base_samples, shared.opts.outdir_video),
+        paths.resolve_output_path(base_samples, shared.opts.outdir_init_images),
+        paths.resolve_output_path(base_grids, shared.opts.outdir_txt2img_grids),
+        paths.resolve_output_path(base_grids, shared.opts.outdir_img2img_grids),
+        paths.resolve_output_path(base_grids, shared.opts.outdir_control_grids),
+    ]
+    # Also check base folders directly if set
+    if base_samples:
+        resolved_paths.append(base_samples)
+    if base_grids:
+        resolved_paths.append(base_grids)
+    for path in resolved_paths:
+        if path:
+            try:
+                ok = ok or Path(path).resolve() in Path(filename).resolve().parents
+            except Exception:
+                pass
     return ok
 
 
-def pil_to_temp_file(self, img: Image, dir: str, format="png") -> str: # pylint: disable=redefined-builtin,unused-argument
+def pil_to_temp_file(self, img: Image.Image, dir: str, format="png") -> str: # pylint: disable=redefined-builtin,unused-argument
     """
     # original gradio implementation
     bytes_data = gr.processing_utils.encode_pil_to_bytes(img, format)
@@ -54,6 +68,13 @@ def pil_to_temp_file(self, img: Image, dir: str, format="png") -> str: # pylint:
         name = file_obj.name
         debug(f'Image registered: {name}')
         return name
+
+    mp = round(img.width * img.height / 1000 / 1000, 2)
+    if mp > shared.opts.img_max_size_mp:
+        log.warning(f'Save temp: width={img.width} height={img.height} mp={mp} max={shared.opts.img_max_size_mp} image too large')
+        scale = shared.opts.img_max_size_mp * 1000 / mp
+        img = img.resize((int(img.width * scale), int(img.height * scale)), resample=Image.Resampling.NEAREST)
+
     if shared.opts.temp_dir != "":
         folder = shared.opts.temp_dir
     use_metadata = False
@@ -64,13 +85,13 @@ def pil_to_temp_file(self, img: Image, dir: str, format="png") -> str: # pylint:
             use_metadata = True
     if not os.path.exists(folder):
         os.makedirs(folder, exist_ok=True)
-        shared.log.debug(f'Created temp folder: path="{folder}"')
+        log.debug(f'Created temp folder: path="{folder}"')
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png", dir=folder) as tmp:
         name = tmp.name
         img.save(name, pnginfo=(metadata if use_metadata else None))
         img.already_saved_as = name
         size = os.path.getsize(name)
-        shared.log.debug(f'Save temp: image="{name}" width={img.width} height={img.height} size={size}')
+        log.debug(f'Save temp: image="{name}" width={img.width} height={img.height} size={size}')
         shared.state.image_history += 1
     params = ', '.join([f'{k}: {v}' for k, v in img.info.items()])
     params = params[12:] if params.startswith('parameters: ') else params
@@ -91,6 +112,9 @@ def on_tmpdir_changed():
 def cleanup_tmpdr():
     temp_dir = shared.opts.temp_dir
     if temp_dir == "" or not os.path.isdir(temp_dir):
+        temp_dir = os.path.join(paths.temp_dir, "gradio")
+    log.debug(f'Temp folder: path="{temp_dir}"')
+    if not os.path.isdir(temp_dir):
         return
     for root, _dirs, files in os.walk(temp_dir, topdown=False):
         for name in files:

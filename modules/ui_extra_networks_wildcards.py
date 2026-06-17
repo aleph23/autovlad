@@ -1,9 +1,24 @@
 import os
 import json
 from modules import shared, ui_extra_networks, modelstats, files_cache
+from modules.logger import log
 
 
 wildcards_list = []
+
+
+def list_wildcard_names() -> list[str]:
+    """Enumerate wildcard basenames (relative path, `.txt` stripped). Shared with the autocomplete API."""
+    wildcards_dir = shared.opts.wildcards_dir
+    if not wildcards_dir or not os.path.isdir(wildcards_dir):
+        return []
+    files = files_cache.list_files(wildcards_dir, ext_filter=[".txt"], recursive=True)
+    names = []
+    for filename in files:
+        relname = os.path.relpath(filename, wildcards_dir)
+        names.append(os.path.splitext(relname)[0])
+    names.sort()
+    return names
 
 
 class ExtraNetworksPageWildcards(ui_extra_networks.ExtraNetworksPage):
@@ -44,7 +59,7 @@ class ExtraNetworksPageWildcards(ui_extra_networks.ExtraNetworksPage):
                 }
                 yield record
             except Exception as e:
-                shared.log.debug(f'Networks error: type=wildcard file="{filename}" {e}')
+                log.debug(f'Networks error: type=wildcard file="{filename}" {e}')
 
     def allowed_directories_for_previews(self):
         return [v for v in [shared.opts.wildcards_dir] if v is not None]

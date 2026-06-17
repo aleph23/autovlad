@@ -1,7 +1,7 @@
 from dataclasses import field
 from typing import List, Union
 from pydantic.dataclasses import dataclass
-from ..base import BaseConditionerConfig
+from lbm.embedders.base import BaseConditionerConfig
 
 
 @dataclass

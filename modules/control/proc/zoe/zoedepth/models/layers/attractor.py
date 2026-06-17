@@ -100,7 +100,7 @@ class AttractorLayer(nn.Module):
         A = self._net(x)
         eps = 1e-3
         A = A + eps
-        n, c, h, w = A.shape
+        n, _c, h, w = A.shape
         A = A.view(n, self.n_attractors, 2, h, w)
         A_normed = A / A.sum(dim=2, keepdim=True)  # n, a, 2, h, w
         A_normed = A[:, :, 0, ...]  # n, na, h, w
@@ -177,7 +177,7 @@ class AttractorLayerUnnormed(nn.Module):
             x = x + prev_b_embedding
 
         A = self._net(x)
-        n, c, h, w = A.shape
+        _n, _c, h, w = A.shape
 
         b_prev = nn.functional.interpolate(
             b_prev, (h, w), mode='bilinear', align_corners=True)

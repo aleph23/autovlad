@@ -1,17 +1,24 @@
+from __future__ import annotations
+
 import re
 import inspect
 from collections import defaultdict
+from typing import TYPE_CHECKING, cast
 from modules import errors, shared
+from modules.logger import log
+
+if TYPE_CHECKING:
+    from modules.processing_class import StableDiffusionProcessing
 
 
-extra_network_registry = {}
+extra_network_registry: dict[str, ExtraNetwork] = {}
 
 
 def initialize():
     extra_network_registry.clear()
 
 
-def register_extra_network(extra_network):
+def register_extra_network(extra_network: ExtraNetwork):
     extra_network_registry[extra_network.name] = extra_network
 
 
@@ -25,10 +32,10 @@ def register_default_extra_networks():
 
 
 class ExtraNetworkParams:
-    def __init__(self, items=None):
-        self.items = items or []
-        self.positional = []
-        self.named = {}
+    def __init__(self, items: list[str] | None = None):
+        self.items: list[str] = items or []
+        self.positional: list[str] = []
+        self.named: dict[str, str] = {}
         for item in self.items:
             parts = item.split('=', 2) if isinstance(item, str) else [item]
             if len(parts) == 2:
@@ -36,17 +43,26 @@ class ExtraNetworkParams:
             else:
                 self.positional.append(item)
 
+    def __eq__(self, other):
+        if not isinstance(other, ExtraNetworkParams):
+            return False
+        same = self.positional == other.positional and self.named == other.named
+        return same
+
+    def __repr__(self):
+        return f"NetworkParams(positional={self.positional} named={self.named})"
+
 
 class ExtraNetwork:
-    def __init__(self, name):
+    def __init__(self, name: str):
         self.name = name
 
-    def activate(self, p, params_list):
+    def activate(self, p: StableDiffusionProcessing, params_list: list[ExtraNetworkParams], *args, **kwargs):
         """
         Called by processing on every run. Whatever the extra network is meant to do should be activated here. Passes arguments related to this extra network in params_list. User passes arguments by specifying this in his prompt:
         <name:arg1:arg2:arg3>
         Where name matches the name of this ExtraNetwork object, and arg1:arg2:arg3 are any natural number of text arguments separated by colon.
-        Even if the user does not mention this ExtraNetwork in his prompt, the call will stil be made, with empty params_list - in this case, all effects of this extra networks should be disabled.
+        Even if the user does not mention this ExtraNetwork in his prompt, the call will still be made, with empty params_list - in this case, all effects of this extra networks should be disabled.
         Can be called multiple times before deactivate() - each new call should override the previous call completely.
         For example, if this ExtraNetwork's name is 'hypernet' and user's prompt is:
         > "1girl, <hypernet:agm:1.1> <extrasupernet:master:12:13:14> <hypernet:ray>"
@@ -58,41 +74,27 @@ class ExtraNetwork:
         """
         raise NotImplementedError
 
-    def deactivate(self, p):
+    def deactivate(self, p: StableDiffusionProcessing, force=False):
         """
         Called at the end of processing for housekeeping. No need to do anything here.
         """
         raise NotImplementedError
 
 
-def is_stepwise(en_obj):
-    all_args = []
-    for en in en_obj:
-        all_args.extend(en.positional[1:])
-        all_args.extend(en.named.values())
-    return any([len(str(x).split("@")) > 1 for x in all_args]) # noqa C419 # pylint: disable=use-a-generator
-
-
-def activate(p, extra_network_data=None, step=0, include=[], exclude=[]):
+def activate(p: StableDiffusionProcessing, extra_network_data: defaultdict[str, list[ExtraNetworkParams]] | None = None, step=0, include: list | None = None, exclude: list | None = None):
     """call activate for extra networks in extra_network_data in specified order, then call activate for all remaining registered networks with an empty argument list"""
+    if exclude is None:
+        exclude = []
+    if include is None:
+        include = []
     if p.disable_extra_networks:
         return
     extra_network_data = extra_network_data or p.network_data
-    # if extra_network_data is None or len(extra_network_data) == 0:
-        # return
-    stepwise = False
-    for extra_network_args in extra_network_data.values():
-        stepwise = stepwise or is_stepwise(extra_network_args)
-    functional = shared.opts.lora_functional
-    if shared.opts.lora_force_diffusers and stepwise:
-        shared.log.warning("Network load: type=LoRA method=composable loader=diffusers not compatible")
-        stepwise = False
-    shared.opts.data['lora_functional'] = stepwise or functional
 
     for extra_network_name, extra_network_args in extra_network_data.items():
         extra_network = extra_network_registry.get(extra_network_name, None)
         if extra_network is None:
-            errors.log.warning(f"Skipping unknown extra network: {extra_network_name}")
+            log.warning(f"Skipping unknown extra network: {extra_network_name}")
             continue
         try:
             signature = list(inspect.signature(extra_network.activate).parameters)
@@ -108,7 +110,6 @@ def activate(p, extra_network_data=None, step=0, include=[], exclude=[]):
         if args is not None:
             continue
         try:
-            # extra_network.activate(p, [])
             signature = list(inspect.signature(extra_network.activate).parameters)
             if 'include' in signature and 'exclude' in signature:
                 extra_network.activate(p, [], include=include, exclude=exclude)
@@ -118,24 +119,22 @@ def activate(p, extra_network_data=None, step=0, include=[], exclude=[]):
             errors.display(e, f"Activating network: type={extra_network_name}")
 
     p.network_data = extra_network_data
-    if stepwise:
-        p.stepwise_lora = True
-        shared.opts.data['lora_functional'] = functional
 
 
-def deactivate(p, extra_network_data=None):
+def deactivate(p: StableDiffusionProcessing, extra_network_data: defaultdict[str, list[ExtraNetworkParams]] | None = None, force: bool | None = None):
     """call deactivate for extra networks in extra_network_data in specified order, then call deactivate for all remaining registered networks"""
     if p.disable_extra_networks:
         return
+    if force is None:
+        force = cast("bool", shared.opts.lora_force_reload)
     extra_network_data = extra_network_data or p.network_data
-    # if extra_network_data is None or len(extra_network_data) == 0:
-    #    return
+
     for extra_network_name in extra_network_data:
         extra_network = extra_network_registry.get(extra_network_name, None)
         if extra_network is None:
             continue
         try:
-            extra_network.deactivate(p)
+            extra_network.deactivate(p, force=force)
         except Exception as e:
             errors.display(e, f"deactivating extra network {extra_network_name}")
 
@@ -144,7 +143,7 @@ def deactivate(p, extra_network_data=None):
         if args is not None:
             continue
         try:
-            extra_network.deactivate(p)
+            extra_network.deactivate(p, force=force)
         except Exception as e:
             errors.display(e, f"deactivating unmentioned extra network {extra_network_name}")
 
@@ -152,29 +151,33 @@ def deactivate(p, extra_network_data=None):
 re_extra_net = re.compile(r"<(\w+):([^>]+)>")
 
 
-def parse_prompt(prompt):
-    res = defaultdict(list)
+def parse_prompt(prompt: str | None) -> tuple[str, defaultdict[str, list[ExtraNetworkParams]]]:
+    res: defaultdict[str, list[ExtraNetworkParams]] = defaultdict(list)
+    if prompt is None:
+        return "", res
+    if isinstance(prompt, list):
+        return parse_prompts(prompt)  # type: ignore --- Fallback for incorrect function calls
 
-    def found(m):
-        name = m.group(1)
-        args = m.group(2)
+    def found(m: re.Match[str]):
+        name, args = m.group(1, 2)
         res[name].append(ExtraNetworkParams(items=args.split(":")))
         return ""
-    if isinstance(prompt, list):
-        prompt = [re.sub(re_extra_net, found, p) for p in prompt]
-    else:
-        prompt = re.sub(re_extra_net, found, prompt)
-    return prompt, res
+
+    updated_prompt = re.sub(re_extra_net, found, prompt)
+    return updated_prompt, res
 
 
-def parse_prompts(prompts):
-    res = []
-    extra_data = None
-
+def parse_prompts(prompts: list[str], extra_data: defaultdict[str, list[ExtraNetworkParams]] | None = None):
+    updated_prompt_list: list[str] = []
+    extra_data = extra_data or defaultdict(list)
     for prompt in prompts:
         updated_prompt, parsed_extra_data = parse_prompt(prompt)
-        if extra_data is None:
+        if not extra_data:
             extra_data = parsed_extra_data
-        res.append(updated_prompt)
+        elif parsed_extra_data:
+            extra_data = parsed_extra_data
+        else:
+            pass
+        updated_prompt_list.append(updated_prompt)
 
-    return res, extra_data
+    return updated_prompt_list, extra_data

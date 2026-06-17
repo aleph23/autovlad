@@ -10,11 +10,15 @@ from diffusers.models import ControlNetModel
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionOutput
 
 
+controlnet_apply_steps_rate = 0.6
+
+
 def make_diffusers_unet_2d_condition(block_class):
 
     class unet_2d_condition(block_class):
         # Save for unpatching later
         _parent = block_class
+
         def forward(
             self,
             sample: torch.FloatTensor,
@@ -268,7 +272,7 @@ def make_diffusers_sdxl_contrtolnet_ppl(block_class):
         @torch.no_grad()
         def __call__(
             self,
-            prompt: Union[str, List[str]] = None,
+            prompt: Union[str, List[str]] | None = None,
             prompt_2: Optional[Union[str, List[str]]] = None,
             image: PipelineImageInput = None,
             control_image: PipelineImageInput = None,
@@ -294,9 +298,9 @@ def make_diffusers_sdxl_contrtolnet_ppl(block_class):
             guess_mode: bool = False,
             control_guidance_start: Union[float, List[float]] = 0.0,
             control_guidance_end: Union[float, List[float]] = 1.0,
-            original_size: Tuple[int, int] = None,
+            original_size: Tuple[int, int] | None = None,
             crops_coords_top_left: Tuple[int, int] = (0, 0),
-            target_size: Tuple[int, int] = None,
+            target_size: Tuple[int, int] | None = None,
             negative_original_size: Optional[Tuple[int, int]] = None,
             negative_crops_coords_top_left: Tuple[int, int] = (0, 0),
             negative_target_size: Optional[Tuple[int, int]] = None,
@@ -549,7 +553,7 @@ def make_diffusers_sdxl_contrtolnet_ppl(block_class):
                 # # scale the initial noise by the standard deviation required by the scheduler
                 # latents = latents * self.scheduler.init_noise_sigma
 
-            # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+            # 7. Prepare extra step kwargs.
             extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
             # 7.1 Create tensor stating which controlnets to keep
@@ -705,7 +709,7 @@ def make_diffusers_sdxl_contrtolnet_ppl(block_class):
                         )
 
                     if guess_mode and self.do_classifier_free_guidance:
-                        # Infered ControlNet only for the conditional batch.
+                        # Inferred ControlNet only for the conditional batch.
                         # To apply the output of ControlNet to both the unconditional and conditional batches,
                         # add 0 to the unconditional batch to keep it unchanged.
                         down_block_res_samples = [torch.cat([torch.zeros_like(d), d]) for d in down_block_res_samples]

@@ -146,16 +146,16 @@ class LinearSplitter(nn.Module):
         S = self._net(x)
         eps = 1e-3
         S = S + eps
-        n, c, h, w = S.shape
+        n, _c, h, w = S.shape
         S = S.view(n, self.prev_nbins, self.split_factor, h, w)
         S_normed = S / S.sum(dim=2, keepdim=True)  # fractional splits
 
         b_prev = nn.functional.interpolate(b_prev, (h,w), mode='bilinear', align_corners=True)
 
 
-        b_prev = b_prev / b_prev.sum(dim=1, keepdim=True)  # renormalize for gurantees
+        b_prev = b_prev / b_prev.sum(dim=1, keepdim=True)  # renormalize for guarantees
         # print(b_prev.shape, S_normed.shape)
-        # if is_for_query:(1).expand(-1, b_prev.size(0)//n, -1, -1, -1, -1).flatten(0,1)  # TODO ? can replace all this with a single torch.repeat?
+        # if is_for_query:(1).expand(-1, b_prev.size(0)//n, -1, -1, -1, -1).flatten(0,1)
         b = b_prev.unsqueeze(2) * S_normed
         b = b.flatten(1,2)  # .shape n, prev_nbins * split_factor, h, w
 

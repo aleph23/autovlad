@@ -384,7 +384,7 @@ class SenceUnderstand(nn.Module):
         self.initial_params()
 
     def forward(self, x):
-        n, c, h, w = x.size()
+        n, _c, h, w = x.size()
         x = self.conv1(x)
         x = self.pool(x)
         x = x.view(n, -1)

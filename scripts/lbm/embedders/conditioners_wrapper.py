@@ -35,7 +35,7 @@ class ConditionerWrapper(nn.Module):
         for conditioner in self.conditioners:
             cond_input_keys.append(conditioner.input_key)
 
-        assert all([key in set(cond_input_keys) for key in self.ucg_keys])
+        assert all(key in set(cond_input_keys) for key in self.ucg_keys)
 
     def on_fit_start(self, device: torch.device = None, *args, **kwargs):
         for conditioner in self.conditioners:
@@ -44,7 +44,7 @@ class ConditionerWrapper(nn.Module):
     def forward(
         self,
         batch: Dict[str, Any],
-        ucg_keys: List[str] = None,
+        ucg_keys: List[str] | None = None,
         set_ucg_rate_zero=False,
         *args,
         **kwargs,

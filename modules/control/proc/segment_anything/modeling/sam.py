@@ -25,8 +25,8 @@ class Sam(nn.Module):
         image_encoder: Union[ImageEncoderViT, TinyViT],
         prompt_encoder: PromptEncoder,
         mask_decoder: MaskDecoder,
-        pixel_mean: List[float] = None,
-        pixel_std: List[float] = None,
+        pixel_mean: List[float] | None = None,
+        pixel_std: List[float] | None = None,
     ) -> None:
         """
         SAM predicts object masks from an image and input prompts.

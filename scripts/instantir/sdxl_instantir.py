@@ -166,11 +166,11 @@ PREVIEWER_LORA_MODULES = [
 
 def remove_attn2(model):
     def recursive_find_module(name, module):
-        if not "up_blocks" in name and not "down_blocks" in name and not "mid_block" in name: return
-        elif "resnets" in name: return
+        if "up_blocks" not in name and "down_blocks" not in name and "mid_block" not in name: return  # noqa: E701
+        elif "resnets" in name: return  # noqa: E701
         if hasattr(module, "attn2"):
-            setattr(module, "attn2", None)
-            setattr(module, "norm2", None)
+            module.attn2 = None
+            module.norm2 = None
             return
         for sub_name, sub_module in module.named_children():
             recursive_find_module(f"{name}.{sub_name}", sub_module)
@@ -388,7 +388,7 @@ class InstantIRPipeline(
         if incompatible_keys is not None:
             # check only for unexpected keys
             unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-            missing_keys = getattr(incompatible_keys, "missing_keys", None)
+            getattr(incompatible_keys, "missing_keys", None)
             if unexpected_keys:
                 raise ValueError(
                     f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
@@ -834,12 +834,12 @@ class InstantIRPipeline(
         )
         if (
             isinstance(self.aggregator, Aggregator)
-            or is_compiled
-            and isinstance(self.aggregator._orig_mod, Aggregator)
+            or (is_compiled
+            and isinstance(self.aggregator._orig_mod, Aggregator))
         ):
             self.check_image(image, prompt, prompt_embeds)
         else:
-            assert False
+            raise AssertionError
 
         if control_guidance_start >= control_guidance_end:
             raise ValueError(
@@ -932,7 +932,7 @@ class InstantIRPipeline(
         noise = torch.randn(latents.shape, generator=generator[0] if isinstance(generator, list) else generator, device=self.vae.device, dtype=self.vae.dtype, layout=torch.strided)
         bsz = latents.shape[0]
         timestep = torch.tensor([timestep]*bsz, device=self.vae.device)
-        # Note that the latents will be scaled aleady by scheduler.add_noise
+        # Note that the latents will be scaled already by scheduler.add_noise
         latents = self.scheduler.add_noise(latents, noise, timestep)
         return latents
 
@@ -1064,13 +1064,13 @@ class InstantIRPipeline(
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         image: PipelineImageInput = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 30,
-        timesteps: List[int] = None,
+        timesteps: List[int] | None = None,
         denoising_end: Optional[float] = None,
         guidance_scale: float = 7.0,
         negative_prompt: Optional[Union[str, List[str]]] = None,
@@ -1098,9 +1098,9 @@ class InstantIRPipeline(
         control_guidance_end: float = 1.0,
         preview_start: float = 0.0,
         preview_end: float = 1.0,
-        original_size: Tuple[int, int] = None,
+        original_size: Tuple[int, int] | None = None,
         crops_coords_top_left: Tuple[int, int] = (0, 0),
-        target_size: Tuple[int, int] = None,
+        target_size: Tuple[int, int] | None = None,
         negative_original_size: Optional[Tuple[int, int]] = None,
         negative_crops_coords_top_left: Tuple[int, int] = (0, 0),
         negative_target_size: Optional[Tuple[int, int]] = None,
@@ -1405,7 +1405,7 @@ class InstantIRPipeline(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
 
-        # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        # 7. Prepare extra step kwargs.
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 7.1 Create tensor stating which controlnets to keep

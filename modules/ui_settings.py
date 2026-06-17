@@ -2,6 +2,7 @@ import os
 import gradio as gr
 from modules import timer, shared, paths, theme, sd_models, modelloader, generation_parameters_copypaste, call_queue, script_callbacks
 from modules import ui_common, ui_loadsave, ui_history, ui_components, ui_symbols
+from modules.logger import log
 
 
 text_settings = None # holds json of entire shared.opts
@@ -37,7 +38,7 @@ def apply_setting(key, value):
     shared.opts.data[key] = valtype(value) if valtype != type(None) else value
     if oldval != value and shared.opts.data_labels[key].onchange is not None:
         shared.opts.data_labels[key].onchange()
-    shared.opts.save(shared.config_filename)
+    shared.opts.save()
     return getattr(shared.opts, key)
 
 
@@ -56,6 +57,8 @@ def create_setting_component(key, is_quicksettings=False):
     info = shared.opts.data_labels[key]
     t = type(info.default)
     args = (info.component_args() if callable(info.component_args) else info.component_args) or {}
+    if 'settings' in shared.opts.ui_disabled:
+        args['visible'] = False
     if info.component is not None:
         comp = info.component
     elif t == str:
@@ -82,23 +85,23 @@ def create_setting_component(key, is_quicksettings=False):
             with gr.Row():
                 res = comp(label=info.label, value=fun(), elem_id=elem_id, **args)
                 ui_common.create_refresh_button(res, info.refresh, info.component_args, f"settings_{key}_refresh")
-    elif info.folder is not None:
+    elif info.folder:
         with gr.Row():
             res = comp(label=info.label, value=fun(), elem_id=elem_id, elem_classes="folder-selector", **args)
     else:
         try:
             res = comp(label=info.label, value=fun(), elem_id=elem_id, **args)
         except Exception as e:
-            shared.log.error(f'Error creating setting: {key} {e}')
+            log.error(f'Error creating setting: {key} {e}')
             res = None
 
     if res is not None and not is_quicksettings:
         try:
             res.change(fn=None, inputs=res, _js=f'(val) => markIfModified("{key}", val)')
         except Exception as e:
-            shared.log.error(f'Quicksetting: component={res} {e}')
+            log.error(f'Quicksetting: component={res} {e}')
         if dirty_indicator is not None:
-            dirty_indicator.click(fn=lambda: shared.opts.get_default(key), outputs=[res], show_progress=False)
+            dirty_indicator.click(fn=lambda: shared.opts.get_default(key), outputs=[res], show_progress='hidden')
         dirtyable_setting.__exit__()
 
     return res
@@ -106,25 +109,25 @@ def create_setting_component(key, is_quicksettings=False):
 def create_dirty_indicator(key, keys_to_reset, **kwargs):
     def get_default_values():
         values = [shared.opts.get_default(key) for key in keys_to_reset]
-        shared.log.debug(f'Settings restore: section={key} keys={keys_to_reset} values={values}')
+        log.debug(f'Settings restore: section={key} keys={keys_to_reset} values={values}')
         return values
 
     elements_to_reset = [shared.settings_components[_key] for _key in keys_to_reset if shared.settings_components[_key] is not None]
     indicator = gr.Button('', elem_classes="modification-indicator", elem_id=f"modification_indicator_{key}", **kwargs)
-    indicator.click(fn=get_default_values, outputs=elements_to_reset, show_progress=True)
+    indicator.click(fn=get_default_values, outputs=elements_to_reset, show_progress='full')
     return indicator
 
 
 def run_settings(*args):
     changed = []
-    for key, value, comp in zip(shared.opts.data_labels.keys(), args, components):
+    for key, value, comp in zip(shared.opts.data_labels.keys(), args, components, strict=False):
         if comp == dummy_component or value=='dummy': # or getattr(comp, 'visible', True) is False or key in hidden_list:
             # actual = shared.opts.data.get(key, None)  # ensure the key is in data
             # default = shared.opts.data_labels[key].default
-            # shared.log.warning(f'Setting skip: key={key} value={value} actual={actual} default={default} comp={comp}')
+            # log.warning(f'Setting skip: key={key} value={value} actual={actual} default={default} comp={comp}')
             continue
         if not shared.opts.same_type(value, shared.opts.data_labels[key].default):
-            shared.log.error(f'Setting bad value: {key}={value} expecting={type(shared.opts.data_labels[key].default).__name__}')
+            log.error(f'Setting bad value: {key}={value} expecting={type(shared.opts.data_labels[key].default).__name__}')
             continue
         if shared.opts.set(key, value):
             changed.append(key)
@@ -137,27 +140,58 @@ def run_settings(*args):
         directml_override_opts()
     if shared.cmd_opts.use_openvino:
         if "Model" not in shared.opts.cuda_compile:
-            shared.log.warning("OpenVINO: Enabling Torch Compile Model")
+            log.warning("OpenVINO: Overriding Torch Compile Model")
             shared.opts.cuda_compile.append("Model")
-        if shared.opts.cuda_compile_backend != "openvino_fx":
-            shared.log.warning("OpenVINO: Setting Torch Compiler backend to OpenVINO FX")
-            shared.opts.cuda_compile_backend = "openvino_fx"
+        if shared.opts.cuda_compile_backend != shared.opts.openvino_compile_backend:
+            log.warning(f"OpenVINO: Overriding Torch Compile backend={shared.opts.openvino_compile_backend}")
+            shared.opts.cuda_compile_backend = shared.opts.openvino_compile_backend
+        if shared.opts.diffusers_offload_mode != "none":
+            log.warning("OpenVINO: Overriding diffusers_offload_mode=none")
+            shared.opts.diffusers_offload_mode = "none"
     if shared.opts.sd_backend != "diffusers":
-        shared.log.error('Legacy option: backend=original is no longer supported')
+        log.error('Legacy option: backend=original is no longer supported')
         shared.opts.sd_backend = "diffusers"
     try:
         if len(changed) > 0:
-            shared.opts.save(shared.config_filename)
-            shared.log.info(f'Settings: changed={len(changed)} {changed}')
+            shared.opts.save()
+            log.info(f'Settings: changed={len(changed)} {changed}')
     except RuntimeError:
-        shared.log.error(f'Settings failed: change={len(changed)} {changed}')
+        log.error(f'Settings failed: change={len(changed)} {changed}')
         return shared.opts.dumpjson(), f'{len(changed)} Settings changed without save: {", ".join(changed)}'
     return shared.opts.dumpjson(), f'{len(changed)} Settings changed{": " if len(changed) > 0 else ""}{", ".join(changed)}'
 
-def run_settings_single(value, key, progress=False):
+model_keys_validated = {'sd_model_checkpoint', 'sd_model_refiner', 'sd_vae', 'sd_unet', 'sd_text_encoder'}
+
+
+def looks_like_custom_model_value(value):
+    # Cheap, non-network check to decide whether a typed string plausibly identifies a model.
+    # Mirrors the patterns handled in sd_checkpoint.get_closest_checkpoint_match without doing any IO.
+    if not isinstance(value, str) or not value:
+        return False
+    if value.startswith(('https://huggingface.co/', 'huggingface/', 'https://civitai.com/')):
+        return True
+    if value.endswith('.safetensors'):
+        return True
+    if ' ' not in value and value.count('/') in (1, 2):
+        return True
+    return False
+
+
+def run_settings_single(value, key, progress=False, force=False):
     if not shared.opts.same_type(value, shared.opts.data_labels[key].default):
         return gr.update(visible=True), shared.opts.dumpjson()
-    if not shared.opts.set(key, value):
+    if key in model_keys_validated and not force and isinstance(value, str):
+        # Guard against editable dropdowns committing a partial filter string (e.g. user typed "a")
+        # which would otherwise trigger reload_model_weights -> select_checkpoint -> unload of the
+        # currently loaded model. Accept the value only if it matches a known choice or a recognized
+        # custom pattern (HF URL, user/model path, .safetensors path).
+        info = shared.opts.data_labels[key]
+        comp_args = info.component_args() if callable(info.component_args) else info.component_args or {}
+        choices = comp_args.get('choices', []) if isinstance(comp_args, dict) else []
+        if value not in choices and not looks_like_custom_model_value(value):
+            log.debug(f'Settings: ignored {key}="{value}" not in choices and not a recognized custom value')
+            return gr.update(value=getattr(shared.opts, key)), shared.opts.dumpjson()
+    if not shared.opts.set(key, value, force):
         return gr.update(value=getattr(shared.opts, key)), shared.opts.dumpjson()
     if key == "cuda_compile_backend" and value == "olive-ai":
         from modules.onnx_impl import install_olive
@@ -165,22 +199,43 @@ def run_settings_single(value, key, progress=False):
     if shared.cmd_opts.use_directml:
         from modules.dml import directml_override_opts
         directml_override_opts()
-    shared.opts.save(shared.config_filename)
-    if key not in ['sd_model_checkpoint', 'sd_model_refiner', 'sd_vae', 'sd_te', 'sd_unet']:
-        shared.log.debug(f'Setting changed: {key}={value} progress={progress}')
+    shared.opts.save(silent=True)
+    if key not in ['sd_model_checkpoint', 'sd_model_refiner', 'sd_vae', 'sd_te', 'sd_unet'] or force:
+        log.debug(f'Setting changed: {key}="{value}" progress={progress} force={force}')
     return get_value_for_setting(key), shared.opts.dumpjson()
 
 
-def create_ui():
-    shared.log.debug('UI initialize: tab=settings')
+def create_ui(disabled_tabs=None):
+    if disabled_tabs is None:
+        disabled_tabs = []
+    log.debug('UI initialize: tab=settings')
     global text_settings # pylint: disable=global-statement
     text_settings = gr.Textbox(elem_id="settings_json", elem_classes=["settings_json"], value=lambda: shared.opts.dumpjson(), visible=False)
-    with gr.Row(elem_id="system_row"):
-        unload_sd_model = gr.Button(value='Unload model', variant='primary', elem_id="sett_unload_sd_model")
-        reload_sd_model = gr.Button(value='Reload model', variant='primary', elem_id="sett_reload_sd_model")
-        restart_submit = gr.Button(value="Restart server", variant='primary', elem_id="restart_submit")
-        shutdown_submit = gr.Button(value="Shutdown server", variant='primary', elem_id="shutdown_submit")
-        enable_profiling = gr.Button(value='Start profiling', variant='primary', elem_id="enable_profiling")
+
+    def unload_sd_weights():
+        sd_models.unload_model_weights(op='model')
+        sd_models.unload_model_weights(op='refiner')
+
+    def reload_sd_weights():
+        sd_models.reload_model_weights(force=True)
+
+    def switch_profiling():
+        shared.cmd_opts.profile = not shared.cmd_opts.profile
+        log.warning(f'Profiling: {shared.cmd_opts.profile}')
+        return 'Stop profiling' if shared.cmd_opts.profile else 'Start profiling'
+
+    if 'system' not in disabled_tabs:
+        with gr.Row(elem_id="system_row"):
+            unload_sd_model = gr.Button(value='Unload model', variant='primary', elem_id="sett_unload_sd_model")
+            reload_sd_model = gr.Button(value='Reload model', variant='primary', elem_id="sett_reload_sd_model")
+            restart_submit = gr.Button(value="Restart server", variant='primary', elem_id="restart_submit")
+            shutdown_submit = gr.Button(value="Shutdown server", variant='primary', elem_id="shutdown_submit")
+            enable_profiling = gr.Button(value='Start profiling', variant='primary', elem_id="enable_profiling")
+            unload_sd_model.click(fn=unload_sd_weights, inputs=[], outputs=[])
+            reload_sd_model.click(fn=reload_sd_weights, inputs=[], outputs=[])
+            enable_profiling.click(fn=switch_profiling, inputs=[], outputs=[enable_profiling])
+            restart_submit.click(fn=lambda: shared.restart_server(restart=True), _js="() => { restartReload(); }")
+            shutdown_submit.click(fn=lambda: shared.restart_server(restart=False), _js="() => { restartReload(); }")
 
     with gr.Tabs(elem_id="system") as system_tabs:
         global ui_system_tabs # pylint: disable=global-statement
@@ -208,13 +263,12 @@ def create_ui():
                 if (section_id, section_text) not in sections:
                     sections.append((section_id, section_text))
 
-            shared.log.debug(f'Settings: sections={len(sections)} settings={len(shared.opts.list())}/{len(list(shared.opts.data_labels))} quicksettings={len(quicksettings_list)}')
             with gr.Tabs(elem_id="settings"):
                 quicksettings_list.clear()
                 for (section_id, section_text) in sections:
                     items = [item for item in shared.opts.data_labels.items() if item[1].section[0] == section_id] # find all items in this section
                     hidden = section_id is None or 'hidden' in section_id.lower() or 'hidden' in section_text.lower()
-                    # shared.log.trace(f'Settings: section="{section_id}" title="{section_text}" items={len(items)} hidden={hidden}')
+                    # log.trace(f'Settings: section="{section_id}" title="{section_text}" items={len(items)} hidden={hidden}')
                     if hidden:
                         for (key, _item) in items:
                             hidden_list.append(key)
@@ -235,74 +289,66 @@ def create_ui():
                         create_dirty_indicator(section_id, current_items)
                 components_count = len(components)
                 if components_count != options_count:
-                    shared.log.error(f'Settings: count mismatch: options={options_count} components={components_count}')
+                    log.error(f'Settings: count mismatch: options={options_count} components={components_count}')
 
                 with gr.TabItem("Show all pages", elem_id="settings_show_all_pages"):
                     create_dirty_indicator("show_all_pages", [])
                 request_notifications = gr.Button(value='Request browser notifications', elem_id="request_notifications", visible=False)
 
-        with gr.TabItem("Update", id="system_update", elem_id="tab_update"):
-            from modules import update
-            update.create_ui()
+            log.debug(f'Settings: sections={len(sections)} settings={len(shared.opts.list())}/{len(list(shared.opts.data_labels))} quicksettings={len(quicksettings_list)}')
 
-        with gr.TabItem("User interface", id="system_config", elem_id="tab_config"):
-            loadsave.create_ui()
-            create_dirty_indicator("tab_defaults", [], interactive=False)
+        if 'update' not in disabled_tabs:
+            with gr.TabItem("Update", id="system_update", elem_id="tab_update"):
+                from modules import update
+                update.create_ui()
 
-        with gr.TabItem("History", id="system_history", elem_id="tab_history"):
-            ui_history.create_ui()
+        if 'config' not in disabled_tabs:
+            with gr.TabItem("User interface", id="system_config", elem_id="tab_config"):
+                loadsave.create_ui()
+                create_dirty_indicator("tab_defaults", [], interactive=False)
 
-        with gr.TabItem("GPU Monitor", id="system_gpu", elem_id="tab_gpu"):
-            with gr.Row(elem_id='gpu-controls'):
-                gpu_start = gr.Button(value="Start", elem_id="gpu_start", variant="primary")
-                gpu_stop = gr.Button(value="Stop", elem_id="gpu_stop", variant="primary")
-                gpu_start.click(fn=lambda: None, _js='startGPU', inputs=[], outputs=[])
-                gpu_stop.click(fn=lambda: None, _js='disableGPU', inputs=[], outputs=[])
-            gr.HTML('''
-                <div class="gpu" id="gpu">
-                    <table class="gpu-table" id="gpu-table">
-                        <thead><tr><th></th><th></th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                    <div id="gpuChart"></div>
-                </div>
-            ''', elem_id='gpu-container', visible=True)
+        if 'history' not in disabled_tabs:
+            with gr.TabItem("History", id="system_history", elem_id="tab_history"):
+                ui_history.create_ui()
 
-        with gr.TabItem("ONNX", id="onnx_config", elem_id="tab_onnx"):
-            from modules.onnx_impl import ui as ui_onnx
-            ui_onnx.create_ui()
+        if 'monitor' not in disabled_tabs:
+            with gr.TabItem("GPU Monitor", id="system_gpu", elem_id="tab_gpu"):
+                with gr.Row(elem_id='gpu-controls'):
+                    gpu_start = gr.Button(value="Start", elem_id="gpu_start", variant="primary")
+                    gpu_stop = gr.Button(value="Stop", elem_id="gpu_stop", variant="primary")
+                    gpu_start.click(fn=lambda: None, _js='startGPU', inputs=[], outputs=[])
+                    gpu_stop.click(fn=lambda: None, _js='disableGPU', inputs=[], outputs=[])
+                gr.HTML('''
+                    <div class="gpu" id="gpu">
+                        <table class="gpu-table" id="gpu-table">
+                            <thead><tr><th></th><th></th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                        <div id="gpuChart"></div>
+                    </div>
+                ''', elem_id='gpu-container', visible=True)
 
-    def unload_sd_weights():
-        sd_models.unload_model_weights(op='model')
-        sd_models.unload_model_weights(op='refiner')
+        if 'onnx' not in disabled_tabs:
+            with gr.TabItem("ONNX", id="onnx_config", elem_id="tab_onnx"):
+                from modules.onnx_impl import ui as ui_onnx
+                ui_onnx.create_ui()
 
-    def reload_sd_weights():
-        sd_models.reload_model_weights(force=True)
-
-    def switch_profiling():
-        shared.cmd_opts.profile = not shared.cmd_opts.profile
-        shared.log.warning(f'Profiling: {shared.cmd_opts.profile}')
-        return 'Stop profiling' if shared.cmd_opts.profile else 'Start profiling'
-
-    unload_sd_model.click(fn=unload_sd_weights, inputs=[], outputs=[])
-    reload_sd_model.click(fn=reload_sd_weights, inputs=[], outputs=[])
-    enable_profiling.click(fn=switch_profiling, inputs=[], outputs=[enable_profiling])
-    request_notifications.click(fn=lambda: None, inputs=[], outputs=[], _js='function(){}')
+    if request_notifications:
+        request_notifications.click(fn=lambda: None, inputs=[], outputs=[], _js='function(){}')
     settings_submit.click(
         fn=call_queue.wrap_gradio_call(run_settings, extra_outputs=[gr.update()]),
         inputs=components,
         outputs=[text_settings, result],
     )
-    defaults_submit.click(fn=lambda: shared.restore_defaults(restart=True), _js="restartReload")
-    restart_submit.click(fn=lambda: shared.restart_server(restart=True), _js="restartReload")
-    shutdown_submit.click(fn=lambda: shared.restart_server(restart=False), _js="restartReload")
+    if defaults_submit:
+        defaults_submit.click(fn=lambda: shared.restore_defaults(restart=True), _js="() => { restartReload(); }")
 
 
 def reset_quicksettings(quick_components):
     quick_components = quick_components.split(',')
     updates = []
     for key in quick_components:
-        shared.log.warning(f'Reset: setting={key}')
+        log.warning(f'Reset: setting={key}')
         updates.append(gr.update(value=shared.opts.get_default(key)))
     return updates
 
@@ -345,56 +391,94 @@ def create_quicksettings(interfaces):
         if shared.opts.notification_audio_enable and os.path.exists(os.path.join(paths.script_path, shared.opts.notification_audio_path)):
             gr.Audio(interactive=False, value=os.path.join(paths.script_path, shared.opts.notification_audio_path), elem_id="audio_notification", visible=False)
 
+        def sync_checkpoint_unet(value, progress=False, force=False):
+            checkpoint_update, settings_text = run_settings_single(value, key='sd_model_checkpoint', progress=progress, force=force)
+            return checkpoint_update, get_value_for_setting('sd_unet'), settings_text
+
         for k, _item in quicksettings_list:
             component = shared.settings_components[k]
             info = shared.opts.data_labels[k]
             if isinstance(component, gr.components.Textbox):
                 change_handlers = [component.blur, component.submit]
+            elif isinstance(component, gr.components.Dropdown) and getattr(component, 'allow_custom_value', False):
+                # Editable dropdowns (allow_custom_value=True) fire .change on every keystroke because
+                # Gradio binds keyup -> value = typed_text. Using .change here would queue a full model
+                # reload per letter and let in-flight server updates clobber what the user is typing.
+                # .blur fires after typing settles AND when an option is clicked (Gradio calls input.blur()
+                # on selection), so selecting from the list still works.
+                change_handlers = [component.blur]
             else:
                 change_handlers = [component.release if hasattr(component, 'release') else component.change]
+            progress_flag = info.refresh is not None
+            if k == 'sd_model_checkpoint':
+                def fn(value, progress=progress_flag):
+                    return sync_checkpoint_unet(value, progress=progress)
+                outputs = [component, shared.settings_components['sd_unet'], text_settings]
+            else:
+                def fn(value, k=k, progress=progress_flag):
+                    return run_settings_single(value, key=k, progress=progress)
+                outputs = [component, text_settings]
             for change_handler in change_handlers:
                 change_handler(
-                    fn=lambda value, k=k, progress=info.refresh is not None: run_settings_single(value, key=k, progress=progress),
+                    fn=fn,
                     inputs=[component],
-                    outputs=[component, text_settings],
-                    show_progress=info.refresh is not None,
+                    outputs=outputs,
+                    show_progress='full' if info.refresh is not None else 'hidden',
                 )
+
+        def sync_checkpoint_unet_forced(value, _dummy):
+            return sync_checkpoint_unet(value, force=True)
 
         button_set_checkpoint = gr.Button('Change model', elem_id='change_checkpoint', visible=False)
         button_set_checkpoint.click(
-            fn=lambda value, _: run_settings_single(value, key='sd_model_checkpoint'),
-            _js="function(v){ var res = desiredCheckpointName; desiredCheckpointName = ''; return [res || v, null]; }",
+            fn=sync_checkpoint_unet_forced,
+            _js="consumeDesiredCheckpointName",
             inputs=[shared.settings_components['sd_model_checkpoint'], dummy_component],
-            outputs=[shared.settings_components['sd_model_checkpoint'], text_settings],
+            outputs=[shared.settings_components['sd_model_checkpoint'], shared.settings_components['sd_unet'], text_settings],
         )
         button_set_refiner = gr.Button('Change refiner', elem_id='change_refiner', visible=False)
         button_set_refiner.click(
             fn=lambda value, _: run_settings_single(value, key='sd_model_checkpoint'),
-            _js="function(v){ var res = desiredCheckpointName; desiredCheckpointName = ''; return [res || v, null]; }",
+            _js="consumeDesiredCheckpointName",
             inputs=[shared.settings_components['sd_model_refiner'], dummy_component],
             outputs=[shared.settings_components['sd_model_refiner'], text_settings],
         )
         button_set_vae = gr.Button('Change VAE', elem_id='change_vae', visible=False)
         button_set_vae.click(
             fn=lambda value, _: run_settings_single(value, key='sd_vae'),
-            _js="function(v){ var res = desiredVAEName; desiredVAEName = ''; return [res || v, null]; }",
+            _js="consumeDesiredVAEName",
             inputs=[shared.settings_components['sd_vae'], dummy_component],
             outputs=[shared.settings_components['sd_vae'], text_settings],
+        )
+        button_set_unet = gr.Button("Change UNet", elem_id="change_unet", visible=False)
+        button_set_unet.click(
+            fn=lambda value, _: run_settings_single(value, key="sd_unet"),
+            _js="consumeDesiredUNetName",
+            inputs=[shared.settings_components["sd_unet"], dummy_component],
+            outputs=[shared.settings_components["sd_unet"], text_settings],
         )
 
         def reference_submit(model):
             if '@' not in model: # diffusers
                 loaded = modelloader.load_reference(model)
-                return model if loaded else shared.opts.sd_model_checkpoint
+                if loaded:
+                    shared.opts.sd_model_checkpoint = model
+                    sd_models.reload_model_weights(force=True)
+                    return model
+                return shared.opts.sd_model_checkpoint
             else: # civitai
                 model, url = model.split('@')
                 loaded = modelloader.load_civitai(model, url)
-                return loaded if loaded is not None else shared.opts.sd_model_checkpoint
+                if loaded is not None:
+                    shared.opts.sd_model_checkpoint = loaded
+                    sd_models.reload_model_weights(force=True)
+                    return loaded
+                return shared.opts.sd_model_checkpoint
 
         button_set_reference = gr.Button('Change reference', elem_id='change_reference', visible=False)
         button_set_reference.click(
             fn=reference_submit,
-            _js="function(v){ return desiredCheckpointName; }",
+            _js="getDesiredCheckpointName",
             inputs=[shared.settings_components['sd_model_checkpoint']],
             outputs=[shared.settings_components['sd_model_checkpoint']],
         )

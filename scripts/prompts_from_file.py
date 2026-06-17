@@ -93,11 +93,14 @@ def load_prompt_file(file):
         return None, "\n".join(lines), gr.update(lines=7)
 
 
-class Script(scripts_manager.Script):
+class PromptsFromFileScript(scripts_manager.Script):
     def title(self):
         return "Prompts from file"
 
-    def ui(self, is_img2img):
+    def show(self, is_img2img): # pylint: disable=unused-argument
+        return True
+
+    def ui(self, _is_img2img):
         with gr.Row():
             gr.HTML('<span">&nbsp Prompt from file</span><br>')
         with gr.Row():
@@ -105,8 +108,8 @@ class Script(scripts_manager.Script):
             checkbox_iterate_batch = gr.Checkbox(label="Use same seed", value=False, elem_id=self.elem_id("checkbox_iterate_batch"))
         prompt_txt = gr.Textbox(label="Prompts", lines=2, elem_id=self.elem_id("prompt_txt"), value='')
         file = gr.File(label="Upload prompts", type='binary', elem_id=self.elem_id("file"))
-        file.change(fn=load_prompt_file, inputs=[file], outputs=[file, prompt_txt, prompt_txt], show_progress=False)
-        prompt_txt.change(lambda tb: gr.update(lines=7) if ("\n" in tb) else gr.update(lines=2), inputs=[prompt_txt], outputs=[prompt_txt], show_progress=False)
+        file.change(fn=load_prompt_file, inputs=[file], outputs=[file, prompt_txt, prompt_txt], show_progress='hidden')
+        prompt_txt.change(lambda tb: gr.update(lines=7) if ("\n" in tb) else gr.update(lines=2), inputs=[prompt_txt], outputs=[prompt_txt], show_progress='hidden')
         return [checkbox_iterate, checkbox_iterate_batch, prompt_txt]
 
     def run(self, p, checkbox_iterate, checkbox_iterate_batch, prompt_txt: str): # pylint: disable=arguments-differ
@@ -145,8 +148,8 @@ class Script(scripts_manager.Script):
             all_seeds += proc.all_seeds
             all_prompts += proc.all_prompts
             all_negative += proc.all_negative_prompts
-            images += proc.images
-            infotexts += proc.infotexts
+            images += proc.images[proc.index_of_first_image:]
+            infotexts += proc.infotexts[proc.index_of_first_image:]
             if state.interrupted:
                 break
         return get_processed(p, images, p.seed, "", all_prompts=all_prompts, all_seeds=all_seeds, all_negative_prompts=all_negative, infotexts=infotexts)

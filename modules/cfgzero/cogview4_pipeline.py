@@ -191,7 +191,7 @@ class CogView4CFGZeroPipeline(DiffusionPipeline, CogView4LoraLoaderMixin):
 
     def _get_glm_embeds(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] | None = None,
         max_sequence_length: int = 1024,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,

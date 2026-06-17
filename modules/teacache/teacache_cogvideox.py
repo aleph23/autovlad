@@ -34,7 +34,7 @@ def teacache_cog_forward(
                 "Passing `scale` via `attention_kwargs` when not using the PEFT backend is ineffective."
             )
 
-    batch_size, num_frames, channels, height, width = hidden_states.shape
+    batch_size, num_frames, _channels, height, width = hidden_states.shape
 
     # 1. Time embedding
     timesteps = timestep
@@ -91,7 +91,7 @@ def teacache_cog_forward(
             ori_hidden_states = hidden_states.clone()
             ori_encoder_hidden_states = encoder_hidden_states.clone()
             # 4. Transformer blocks
-            for i, block in enumerate(self.transformer_blocks):
+            for _i, block in enumerate(self.transformer_blocks):
                 if torch.is_grad_enabled() and self.gradient_checkpointing:
 
                     def create_custom_forward(module):
@@ -121,7 +121,7 @@ def teacache_cog_forward(
             self.previous_residual_encoder = encoder_hidden_states - ori_encoder_hidden_states
     else:
         # 4. Transformer blocks
-        for i, block in enumerate(self.transformer_blocks):
+        for _i, block in enumerate(self.transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
 
                 def create_custom_forward(module):

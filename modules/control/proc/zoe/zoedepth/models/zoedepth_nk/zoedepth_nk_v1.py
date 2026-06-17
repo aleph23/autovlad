@@ -28,13 +28,12 @@ import torch
 import torch.nn as nn
 
 from ..depth_model import DepthModel
-from ..base_models.midas import MidasCore
-from ..layers.attractor import AttractorLayer, AttractorLayerUnnormed
-from ..layers.dist_layers import ConditionalLogBinomial
-from ..layers.localbins_layers import (Projector, SeedBinRegressor,
-                                            SeedBinRegressorUnnormed)
-from ..layers.patch_transformer import PatchTransformerEncoder
-from ..model_io import load_state_from_resource
+from ...base_models.midas import MidasCore
+from ...layers.attractor import AttractorLayer, AttractorLayerUnnormed
+from ...layers.dist_layers import ConditionalLogBinomial
+from ...layers.localbins_layers import Projector, SeedBinRegressor, SeedBinRegressorUnnormed
+from ...layers.patch_transformer import PatchTransformerEncoder
+from ...model_io import load_state_from_resource
 
 class ZoeDepthNK(DepthModel):
     def __init__(self, core,  bin_conf, bin_centers_type="softplus", bin_embedding_dim=128,
@@ -64,7 +63,7 @@ class ZoeDepthNK(DepthModel):
             min_temp (int, optional): Lower bound for temperature of output probability distribution. Defaults to 5.
             max_temp (int, optional): Upper bound for temperature of output probability distribution. Defaults to 50.
 
-            memory_efficient (bool, optional): Whether to use memory efficient version of attractor layers. Memory efficient version is slower but is recommended incase of multiple metric heads in order save GPU memory. Defaults to False.
+            memory_efficient (bool, optional): Whether to use memory efficient version of attractor layers. Memory efficient version is slower but is recommended in case of multiple metric heads in order save GPU memory. Defaults to False.
 
             train_midas (bool, optional): Whether to train "core", the base midas model. Defaults to True.
             is_midas_pretrained (bool, optional): Is "core" pretrained? Defaults to True.
@@ -173,10 +172,10 @@ class ZoeDepthNK(DepthModel):
                 - "bin_centers": Bin centers of shape (B, N, H, W). Present only if return_final_centers is True
                 - "probs": Bin probabilities of shape (B, N, H, W). Present only if return_probs is True
         """
-        b, c, h, w = x.shape
+        b, _c, h, w = x.shape
         self.orig_input_width = w
         self.orig_input_height = h
-        rel_depth, out = self.core(x, denorm=denorm, return_rel_depth=True)
+        _rel_depth, out = self.core(x, denorm=denorm, return_rel_depth=True)
 
         outconv_activation = out[0]
         btlnck = out[1]
