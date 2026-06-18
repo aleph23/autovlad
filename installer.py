@@ -296,6 +296,7 @@ def pip(arg: str, ignore: bool = False, quiet: bool = False, uv = True):
     all_args.append(arg)
     if env_args:
         all_args.append(env_args)
+    constraints = os.path.exists("constraints.txt")
     if constraints and "-c " not in env_args and arg.startswith("install"):
         all_args.append("-c constraints.txt")
     if not quiet:
@@ -537,6 +538,7 @@ def check_diffusers():
     target_commit = "d1f8e55c3b6e3ac42d6303a8805ded1c2a4bdd0e" # diffusers commit hash == 0.39.0.dev0 == 06-15-2026
     # if args.use_rocm or args.use_zluda or args.use_directml:
     #     sha = '043ab2520f6a19fce78e6e060a68dbc947edb9f9' # lock diffusers versions for now
+    sha = target_commit
     pkg = package_spec('diffusers')
     parts = pkg.version.split('.') if pkg is not None else []
     minor = int(parts[1]) if len(parts) > 1 else -1
