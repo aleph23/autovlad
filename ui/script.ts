@@ -35,6 +35,7 @@ export function getUICurrentTab() {
 }
 
 export function getUICurrentTabContent() {
+  if (window.waitForUiReady) return gradioApp().querySelector('.xtabs-item:not(.hidden) > .split');
   return gradioApp().querySelector('.tabitem[id^=tab_]:not([style*="display: none"])');
 }
 
@@ -117,7 +118,7 @@ export function executeCallbacks(queue: any[], arg?: any) {
       const t0 = performance.now();
       callback(arg);
       const t1 = performance.now();
-      if (t1 - t0 > 250) log('callbackSlow', callback.name || callback, `time=${Math.round(t1 - t0)}`);
+      if (t1 - t0 > 250) log('callbackSlow', { callback: callback.name || callback, time: Math.round(t1 - t0) });
       timer(callback.name || 'anonymousCallback', t1 - t0);
     } catch (e) {
       error(`executeCallbacks: ${callback} ${e}`);
@@ -177,26 +178,28 @@ document.addEventListener('DOMContentLoaded', () => {
   gradioObserver.observe(gradioApp(), { childList: true, subtree: true, attributes: false });
 });
 
+async function selectHotKeyElement(e: KeyboardEvent, id: string) {
+  const elem = getUICurrentTabContent().querySelector(id);
+  log('hotkey', { key: e.key, meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, id, elid: elem?.id, elnode: elem?.nodeName });
+  if (elem) {
+    e.preventDefault();
+    if (elem.nodeName === 'BUTTON') (elem as HTMLButtonElement).click();
+    else (elem as HTMLElement).focus();
+  }
+}
+
 /**
  * Add a listener to the document for keydown events
  */
 document.addEventListener('keydown', (e) => {
-  let elem;
-  if (e.key === 'Escape') elem = getUICurrentTabContent().querySelector('button[id$=_interrupt]');
-  if (e.key === 'Enter' && e.ctrlKey) elem = getUICurrentTabContent().querySelector('button[id$=_generate]');
-  if (e.key === 'i' && e.ctrlKey) elem = getUICurrentTabContent().querySelector('button[id$=_reprocess]');
-  if (e.key === ' ' && e.ctrlKey) elem = getUICurrentTabContent().querySelector('button[id$=_extra_networks_btn]');
-  if (e.key === 'n' && e.ctrlKey) elem = getUICurrentTabContent().querySelector('button[id$=_extra_networks_btn]');
-  if (e.key === 's' && e.ctrlKey) elem = getUICurrentTabContent().querySelector('button[id^=save_]');
-  if (e.key === 'Insert' && e.ctrlKey) elem = getUICurrentTabContent().querySelector('button[id^=save_]');
-  if (e.key === 'd' && e.ctrlKey) elem = getUICurrentTabContent().querySelector('button[id^=delete_]');
-  // if (e.key === 'm' && e.ctrlKey) elem = gradioApp().getElementById('setting_sd_model_checkpoint');
-  if (elem) {
-    e.preventDefault();
-    log('hotkey', { key: e.key, meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey }, elem?.id, elem.nodeName);
-    if (elem.nodeName === 'BUTTON') elem.click();
-    else elem.focus();
-  }
+  if (e.key === 'Escape') selectHotKeyElement(e, 'button[id$=_interrupt]');
+  if (e.key === 'Enter' && e.ctrlKey) selectHotKeyElement(e, 'button[id$=_generate]');
+  if (e.key === 'i' && e.ctrlKey) selectHotKeyElement(e, 'button[id$=_reprocess]');
+  if (e.key === ' ' && e.ctrlKey) selectHotKeyElement(e, 'button[id$=_extra_networks_btn]');
+  if (e.key === 'n' && e.ctrlKey) selectHotKeyElement(e, 'button[id$=_extra_networks_btn]');
+  if (e.key === 's' && e.ctrlKey) selectHotKeyElement(e, 'button[id^=save_]');
+  if (e.key === 'Insert' && e.ctrlKey) selectHotKeyElement(e, 'button[id^=save_]');
+  if (e.key === 'd' && e.ctrlKey) selectHotKeyElement(e, 'button[id^=delete_]');
 });
 
 function getSortableCellValue(cell, sortType) {
@@ -273,7 +276,7 @@ export async function deleteFile(filename) {
   if (!filename) return;
   // eslint-disable-next-line no-alert
   if (!confirm(`Are you sure you want to delete the object - This action cannot be undone? Object: ${filename}`)) return;
-  const res = await authFetch(`${window.api}/delete-file?file=${encodeURIComponent(filename)}`);
+  const res = await authFetch(`${window.api}/delete-file?file=${encodeURIComponent(filename)}`, { method: 'DELETE' });
   if (!res || res.status !== 200) {
     error('FileDelete', { file: filename, status: res?.status, statusText: res?.statusText });
     return;

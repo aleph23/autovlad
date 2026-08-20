@@ -4,9 +4,12 @@ from pathlib import Path
 from modules.logger import log
 
 
-# Map CivitAI model types to shared.opts directory settings and fallback subfolder names
+# Map CivitAI model types to shared.opts directory settings and fallback subfolder
+# names. 'Text Encoder' is a file type, not a model type: versions bundle companion
+# files, and clients route those by the file's own type.
 TYPE_MAP = {
     'Checkpoint': ('ckpt_dir', 'Stable-diffusion'),
+    'Text Encoder': ('te_dir', 'Text-encoder'),
     'TextualInversion': ('embeddings_dir', 'embeddings'),
     'Hypernetwork': ('hypernetwork_dir', 'hypernetworks'),
     'AestheticGradient': ('ckpt_dir', 'Stable-diffusion'),
@@ -23,8 +26,19 @@ TYPE_MAP = {
     'Other': ('ckpt_dir', 'Stable-diffusion'),
 }
 
+# CivitAI has no type for a standalone transformer, so DiT finetunes ship as
+# 'Checkpoint' like full models. Bases listed here are full checkpoints and stay
+# in Stable-diffusion; any other base is transformer-only in practice and routes
+# to UNET. Exact names: 'Pony' is SDXL but 'Pony V7' is AuraFlow.
+FULL_CHECKPOINT_BASES = {'Pony', 'Illustrious', 'NoobAI', 'SVD', 'SVD XT', 'Kolors', 'Stable Cascade'}
+FULL_CHECKPOINT_PREFIXES = ('SD 1', 'SD 2', 'SDXL')
 
-def get_type_folder(model_type: str) -> Path:
+
+def is_full_checkpoint_base(base_model: str) -> bool:
+    return base_model in FULL_CHECKPOINT_BASES or base_model.startswith(FULL_CHECKPOINT_PREFIXES)
+
+
+def get_type_folder(model_type: str, base_model: str = '') -> Path:
     from modules import shared, paths
     # Check for user-configured type folder overrides
     custom_json = getattr(shared.opts, 'civitai_save_type_folders', '') or ''
@@ -40,6 +54,8 @@ def get_type_folder(model_type: str) -> Path:
         except Exception as e:
             log.warning(f'CivitAI type folder override parse error: {e}')
     opt_attr, fallback_dir = TYPE_MAP.get(model_type, ('ckpt_dir', 'Stable-diffusion'))
+    if model_type == 'Checkpoint' and base_model and not is_full_checkpoint_base(base_model):
+        opt_attr, fallback_dir = 'unet_dir', 'UNET'
     if opt_attr:
         configured = getattr(shared.opts, opt_attr, '') or ''
         if configured:
@@ -47,11 +63,30 @@ def get_type_folder(model_type: str) -> Path:
     return Path(paths.models_path) / fallback_dir
 
 
+def iter_type_roots() -> set[Path]:
+    """Every root folder downloads can resolve into, for maintenance sweeps."""
+    from modules import shared, paths
+    roots = set()
+    custom_json = getattr(shared.opts, 'civitai_save_type_folders', '') or ''
+    if custom_json.strip():
+        try:
+            import json
+            for folder in json.loads(custom_json).values():
+                p = Path(folder)
+                roots.add(p if p.is_absolute() else Path(paths.models_path) / folder)
+        except Exception:
+            pass
+    for opt_attr, fallback_dir in set(TYPE_MAP.values()) | {('unet_dir', 'UNET')}:
+        configured = (getattr(shared.opts, opt_attr, '') or '') if opt_attr else ''
+        roots.add(Path(configured) if configured else Path(paths.models_path) / fallback_dir)
+    return {r for r in roots if r.is_dir()}
+
+
 def resolve_save_path(model_type: str, model_name: str = "", base_model: str = "",
                       nsfw: bool = False, creator: str = "", model_id: int = 0,
                       version_id: int = 0, version_name: str = "") -> Path:
     from modules import shared
-    base_folder = get_type_folder(model_type)
+    base_folder = get_type_folder(model_type, base_model=base_model)
     if not getattr(shared.opts, 'civitai_save_subfolder_enabled', False):
         return base_folder
     template = getattr(shared.opts, 'civitai_save_subfolder', '{{BASEMODEL}}') or ''

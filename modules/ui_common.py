@@ -62,14 +62,18 @@ def infotext_to_html(text):
     res.pop('Negative template', None)
 
     runtime = {}
-    runtime['App'] = res.get('App', '')
-    res.pop('App', None)
-    runtime['Version'] = res.get('Version', '')
-    res.pop('Version', None)
-    runtime['Pipeline'] = res.get('Pipeline', '')
-    res.pop('Pipeline', None)
-    runtime['Operations'] = res.get('Operations', '')
-    res.pop('Operations', None)
+    if 'App' in res:
+        runtime['App'] = res.get('App', '')
+        res.pop('App', None)
+    if 'Version' in res:
+        runtime['Version'] = res.get('Version', '')
+        res.pop('Version', None)
+    if 'Pipeline' in res:
+        runtime['Pipeline'] = res.get('Pipeline', '')
+        res.pop('Pipeline', None)
+    if 'Operations' in res:
+        runtime['Operations'] = res.get('Operations', '')
+        res.pop('Operations', None)
 
     params = [f'{k}: {v}' for k, v in res.items() if v is not None and not k.endswith('-1') and not k.endswith('-2')]
     params = '| '.join(params) if len(params) > 0 else ''
@@ -180,6 +184,8 @@ def save_files(js_data, files, html_info, index):
         if index < len(files):
             files = [files[index]]
             start_index = index
+        elif len(files) == 1:
+            start_index = 0
         else:
             log.error(f'Save: index={index} first={p.index_of_first_image} files={len(files)} out of range')
             files = []
@@ -290,7 +296,7 @@ def open_folder(result_gallery, gallery_index = 0):
         subprocess.Popen([opener, path])  # pylint: disable=consider-using-with
 
 
-def create_output_panel(tabname, preview=True, prompt=None, height=None, transfer=True, scale=1, result_info=None):
+def create_output_panel(tabname, preview=True, prompt=None, height=None, transfer=True, scale=1, result_info=None, html_log_val=''):
     with gr.Column(variant='panel', elem_id=f"{tabname}_results", scale=scale):
         with gr.Group(elem_id=f"{tabname}_gallery_container"):
             if tabname == "txt2img":
@@ -342,7 +348,7 @@ def create_output_panel(tabname, preview=True, prompt=None, height=None, transfe
                 html_info = gr.HTML(elem_id=f'html_info_{tabname}', elem_classes="infotext", visible=False) # contains raw infotext as returned by wrapped call
                 html_info_formatted = gr.HTML(elem_id=f'html_info_formatted_{tabname}', elem_classes="infotext", visible=True) # contains html formatted infotext
                 html_info.change(fn=infotext_to_html, inputs=[html_info], outputs=[html_info_formatted], show_progress='hidden')
-                html_log = gr.HTML(elem_id=f'html_log_{tabname}')
+                html_log = gr.HTML(elem_id=f'html_log_{tabname}', elem_classes=["hint"], value=html_log_val)
                 generation_info = gr.Textbox(visible=False, elem_id=f'generation_info_{tabname}')
                 generation_info_button = gr.Button(visible=False, elem_id=f"{tabname}_generation_info_button")
 

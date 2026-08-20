@@ -2759,15 +2759,15 @@ var require_jquery = __commonJS({
       function returnFalse() {
         return false;
       }
-      function on(elem, types, selector, data, fn, one) {
+      function on(elem, types2, selector, data, fn, one) {
         var origFn, type;
-        if (typeof types === "object") {
+        if (typeof types2 === "object") {
           if (typeof selector !== "string") {
             data = data || selector;
             selector = void 0;
           }
-          for (type in types) {
-            on(elem, type, selector, data, types[type], one);
+          for (type in types2) {
+            on(elem, type, selector, data, types2[type], one);
           }
           return elem;
         }
@@ -2798,11 +2798,11 @@ var require_jquery = __commonJS({
           fn.guid = origFn.guid || (origFn.guid = jQuery3.guid++);
         }
         return elem.each(function() {
-          jQuery3.event.add(this, types, fn, data, selector);
+          jQuery3.event.add(this, types2, fn, data, selector);
         });
       }
       jQuery3.event = {
-        add: function(elem, types, handler, data, selector) {
+        add: function(elem, types2, handler, data, selector) {
           var handleObjIn, eventHandle, tmp, events, t, handleObj, special, handlers, type, namespaces, origType, elemData = dataPriv.get(elem);
           if (!acceptData(elem)) {
             return;
@@ -2826,10 +2826,10 @@ var require_jquery = __commonJS({
               return typeof jQuery3 !== "undefined" && jQuery3.event.triggered !== e.type ? jQuery3.event.dispatch.apply(elem, arguments) : void 0;
             };
           }
-          types = (types || "").match(rnothtmlwhite) || [""];
-          t = types.length;
+          types2 = (types2 || "").match(rnothtmlwhite) || [""];
+          t = types2.length;
           while (t--) {
-            tmp = rtypenamespace.exec(types[t]) || [];
+            tmp = rtypenamespace.exec(types2[t]) || [];
             type = origType = tmp[1];
             namespaces = (tmp[2] || "").split(".").sort();
             if (!type) {
@@ -2871,20 +2871,20 @@ var require_jquery = __commonJS({
           }
         },
         // Detach an event or set of events from an element
-        remove: function(elem, types, handler, selector, mappedTypes) {
+        remove: function(elem, types2, handler, selector, mappedTypes) {
           var j, origCount, tmp, events, t, handleObj, special, handlers, type, namespaces, origType, elemData = dataPriv.hasData(elem) && dataPriv.get(elem);
           if (!elemData || !(events = elemData.events)) {
             return;
           }
-          types = (types || "").match(rnothtmlwhite) || [""];
-          t = types.length;
+          types2 = (types2 || "").match(rnothtmlwhite) || [""];
+          t = types2.length;
           while (t--) {
-            tmp = rtypenamespace.exec(types[t]) || [];
+            tmp = rtypenamespace.exec(types2[t]) || [];
             type = origType = tmp[1];
             namespaces = (tmp[2] || "").split(".").sort();
             if (!type) {
               for (type in events) {
-                jQuery3.event.remove(elem, type + types[t], handler, selector, true);
+                jQuery3.event.remove(elem, type + types2[t], handler, selector, true);
               }
               continue;
             }
@@ -3234,26 +3234,26 @@ var require_jquery = __commonJS({
         };
       });
       jQuery3.fn.extend({
-        on: function(types, selector, data, fn) {
-          return on(this, types, selector, data, fn);
+        on: function(types2, selector, data, fn) {
+          return on(this, types2, selector, data, fn);
         },
-        one: function(types, selector, data, fn) {
-          return on(this, types, selector, data, fn, 1);
+        one: function(types2, selector, data, fn) {
+          return on(this, types2, selector, data, fn, 1);
         },
-        off: function(types, selector, fn) {
+        off: function(types2, selector, fn) {
           var handleObj, type;
-          if (types && types.preventDefault && types.handleObj) {
-            handleObj = types.handleObj;
-            jQuery3(types.delegateTarget).off(
+          if (types2 && types2.preventDefault && types2.handleObj) {
+            handleObj = types2.handleObj;
+            jQuery3(types2.delegateTarget).off(
               handleObj.namespace ? handleObj.origType + "." + handleObj.namespace : handleObj.origType,
               handleObj.selector,
               handleObj.handler
             );
             return this;
           }
-          if (typeof types === "object") {
-            for (type in types) {
-              this.off(type, selector, types[type]);
+          if (typeof types2 === "object") {
+            for (type in types2) {
+              this.off(type, selector, types2[type]);
             }
             return this;
           }
@@ -3265,7 +3265,7 @@ var require_jquery = __commonJS({
             fn = returnFalse;
           }
           return this.each(function() {
-            jQuery3.event.remove(this, types, fn, selector);
+            jQuery3.event.remove(this, types2, fn, selector);
           });
         }
       });
@@ -3856,12 +3856,12 @@ var require_jquery = __commonJS({
       jQuery3.fx = Tween.prototype.init;
       jQuery3.fx.step = {};
       var fxNow, inProgress, rfxtypes = /^(?:toggle|show|hide)$/, rrun = /queueHooks$/;
-      function schedule() {
+      function schedule2() {
         if (inProgress) {
           if (document$1.hidden === false && window2.requestAnimationFrame) {
-            window2.requestAnimationFrame(schedule);
+            window2.requestAnimationFrame(schedule2);
           } else {
-            window2.setTimeout(schedule, 13);
+            window2.setTimeout(schedule2, 13);
           }
           jQuery3.fx.tick();
         }
@@ -4215,7 +4215,7 @@ var require_jquery = __commonJS({
             this.queue(type || "fx", []);
           }
           return this.each(function() {
-            var dequeue = true, index = type != null && type + "queueHooks", timers = jQuery3.timers, data = dataPriv.get(this);
+            var dequeue = true, index = type != null && type + "queueHooks", timers2 = jQuery3.timers, data = dataPriv.get(this);
             if (index) {
               if (data[index] && data[index].stop) {
                 stopQueue(data[index]);
@@ -4227,11 +4227,11 @@ var require_jquery = __commonJS({
                 }
               }
             }
-            for (index = timers.length; index--; ) {
-              if (timers[index].elem === this && (type == null || timers[index].queue === type)) {
-                timers[index].anim.stop(gotoEnd);
+            for (index = timers2.length; index--; ) {
+              if (timers2[index].elem === this && (type == null || timers2[index].queue === type)) {
+                timers2[index].anim.stop(gotoEnd);
                 dequeue = false;
-                timers.splice(index, 1);
+                timers2.splice(index, 1);
               }
             }
             if (dequeue || !gotoEnd) {
@@ -4244,16 +4244,16 @@ var require_jquery = __commonJS({
             type = type || "fx";
           }
           return this.each(function() {
-            var index, data = dataPriv.get(this), queue = data[type + "queue"], hooks = data[type + "queueHooks"], timers = jQuery3.timers, length = queue ? queue.length : 0;
+            var index, data = dataPriv.get(this), queue = data[type + "queue"], hooks = data[type + "queueHooks"], timers2 = jQuery3.timers, length = queue ? queue.length : 0;
             data.finish = true;
             jQuery3.queue(this, type, []);
             if (hooks && hooks.stop) {
               hooks.stop.call(this, true);
             }
-            for (index = timers.length; index--; ) {
-              if (timers[index].elem === this && timers[index].queue === type) {
-                timers[index].anim.stop(true);
-                timers.splice(index, 1);
+            for (index = timers2.length; index--; ) {
+              if (timers2[index].elem === this && timers2[index].queue === type) {
+                timers2[index].anim.stop(true);
+                timers2.splice(index, 1);
               }
             }
             for (index = 0; index < length; index++) {
@@ -4285,15 +4285,15 @@ var require_jquery = __commonJS({
       });
       jQuery3.timers = [];
       jQuery3.fx.tick = function() {
-        var timer2, i2 = 0, timers = jQuery3.timers;
+        var timer2, i2 = 0, timers2 = jQuery3.timers;
         fxNow = Date.now();
-        for (; i2 < timers.length; i2++) {
-          timer2 = timers[i2];
-          if (!timer2() && timers[i2] === timer2) {
-            timers.splice(i2--, 1);
+        for (; i2 < timers2.length; i2++) {
+          timer2 = timers2[i2];
+          if (!timer2() && timers2[i2] === timer2) {
+            timers2.splice(i2--, 1);
           }
         }
-        if (!timers.length) {
+        if (!timers2.length) {
           jQuery3.fx.stop();
         }
         fxNow = void 0;
@@ -4307,7 +4307,7 @@ var require_jquery = __commonJS({
           return;
         }
         inProgress = true;
-        schedule();
+        schedule2();
       };
       jQuery3.fx.stop = function() {
         inProgress = null;
@@ -5823,17 +5823,17 @@ var require_jquery = __commonJS({
         };
       });
       jQuery3.fn.extend({
-        bind: function(types, data, fn) {
-          return this.on(types, null, data, fn);
+        bind: function(types2, data, fn) {
+          return this.on(types2, null, data, fn);
         },
-        unbind: function(types, fn) {
-          return this.off(types, null, fn);
+        unbind: function(types2, fn) {
+          return this.off(types2, null, fn);
         },
-        delegate: function(selector, types, data, fn) {
-          return this.on(types, selector, data, fn);
+        delegate: function(selector, types2, data, fn) {
+          return this.on(types2, selector, data, fn);
         },
-        undelegate: function(selector, types, fn) {
-          return arguments.length === 1 ? this.off(selector, "**") : this.off(types, selector || "**", fn);
+        undelegate: function(selector, types2, fn) {
+          return arguments.length === 1 ? this.off(selector, "**") : this.off(types2, selector || "**", fn);
         },
         hover: function(fnOver, fnOut) {
           return this.on("mouseenter", fnOver).on("mouseleave", fnOut || fnOver);
@@ -9883,6 +9883,7 @@ window.xhrPost = xhrPost;
 // ui/authWrap.ts
 var user;
 var token;
+var baseURL;
 async function getToken() {
   if (token === void 0 || user === void 0) {
     const res = await fetch(`${window.subpath}/token`);
@@ -9890,7 +9891,7 @@ async function getToken() {
       const data = await res.json();
       user = data.user;
       token = data.token;
-      log("getToken", user);
+      log("getToken", { user });
     }
   }
   return { user, token };
@@ -9911,6 +9912,10 @@ async function authFetch(url2, options = {}) {
     if (navigator.onLine) {
       error("fetch", { status: res?.status || 503, url: url2, user, token, error: err });
     }
+  }
+  if (!baseURL) {
+    baseURL = window.location.origin;
+    log("origin", baseURL);
   }
   return res;
 }
@@ -9950,6 +9955,7 @@ function getUICurrentTab() {
   return gradioApp().querySelector("#tabs button.selected");
 }
 function getUICurrentTabContent() {
+  if (window.waitForUiReady) return gradioApp().querySelector(".xtabs-item:not(.hidden) > .split");
   return gradioApp().querySelector('.tabitem[id^=tab_]:not([style*="display: none"])');
 }
 var uiAfterUpdateCallbacks = [];
@@ -10019,7 +10025,7 @@ function executeCallbacks(queue, arg) {
       const t0 = performance.now();
       callback(arg);
       const t1 = performance.now();
-      if (t1 - t0 > 250) log("callbackSlow", callback.name || callback, `time=${Math.round(t1 - t0)}`);
+      if (t1 - t0 > 250) log("callbackSlow", { callback: callback.name || callback, time: Math.round(t1 - t0) });
       timer(callback.name || "anonymousCallback", t1 - t0);
     } catch (e) {
       error(`executeCallbacks: ${callback} ${e}`);
@@ -10071,22 +10077,24 @@ document.addEventListener("DOMContentLoaded", () => {
   gradioObserver = new MutationObserver(mutationCallback);
   gradioObserver.observe(gradioApp(), { childList: true, subtree: true, attributes: false });
 });
-document.addEventListener("keydown", (e) => {
-  let elem;
-  if (e.key === "Escape") elem = getUICurrentTabContent().querySelector("button[id$=_interrupt]");
-  if (e.key === "Enter" && e.ctrlKey) elem = getUICurrentTabContent().querySelector("button[id$=_generate]");
-  if (e.key === "i" && e.ctrlKey) elem = getUICurrentTabContent().querySelector("button[id$=_reprocess]");
-  if (e.key === " " && e.ctrlKey) elem = getUICurrentTabContent().querySelector("button[id$=_extra_networks_btn]");
-  if (e.key === "n" && e.ctrlKey) elem = getUICurrentTabContent().querySelector("button[id$=_extra_networks_btn]");
-  if (e.key === "s" && e.ctrlKey) elem = getUICurrentTabContent().querySelector("button[id^=save_]");
-  if (e.key === "Insert" && e.ctrlKey) elem = getUICurrentTabContent().querySelector("button[id^=save_]");
-  if (e.key === "d" && e.ctrlKey) elem = getUICurrentTabContent().querySelector("button[id^=delete_]");
+async function selectHotKeyElement(e, id) {
+  const elem = getUICurrentTabContent().querySelector(id);
+  log("hotkey", { key: e.key, meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, id, elid: elem?.id, elnode: elem?.nodeName });
   if (elem) {
     e.preventDefault();
-    log("hotkey", { key: e.key, meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey }, elem?.id, elem.nodeName);
     if (elem.nodeName === "BUTTON") elem.click();
     else elem.focus();
   }
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") selectHotKeyElement(e, "button[id$=_interrupt]");
+  if (e.key === "Enter" && e.ctrlKey) selectHotKeyElement(e, "button[id$=_generate]");
+  if (e.key === "i" && e.ctrlKey) selectHotKeyElement(e, "button[id$=_reprocess]");
+  if (e.key === " " && e.ctrlKey) selectHotKeyElement(e, "button[id$=_extra_networks_btn]");
+  if (e.key === "n" && e.ctrlKey) selectHotKeyElement(e, "button[id$=_extra_networks_btn]");
+  if (e.key === "s" && e.ctrlKey) selectHotKeyElement(e, "button[id^=save_]");
+  if (e.key === "Insert" && e.ctrlKey) selectHotKeyElement(e, "button[id^=save_]");
+  if (e.key === "d" && e.ctrlKey) selectHotKeyElement(e, "button[id^=delete_]");
 });
 function getSortableCellValue(cell, sortType) {
   const rawValue = cell?.dataset?.sortValue ?? cell?.textContent?.trim() ?? "";
@@ -10152,7 +10160,7 @@ async function initTableSorter() {
 async function deleteFile(filename) {
   if (!filename) return;
   if (!confirm(`Are you sure you want to delete the object - This action cannot be undone? Object: ${filename}`)) return;
-  const res = await authFetch(`${window.api}/delete-file?file=${encodeURIComponent(filename)}`);
+  const res = await authFetch(`${window.api}/delete-file?file=${encodeURIComponent(filename)}`, { method: "DELETE" });
   if (!res || res.status !== 200) {
     error("FileDelete", { file: filename, status: res?.status, statusText: res?.statusText });
     return;
@@ -10308,9 +10316,13 @@ async function setupControlUI() {
 
 // ui/extraNetworks.ts
 var activePromptTextarea = {};
+var selectedNetworks = {};
 var sortVal = -1;
 var totalCards = -1;
 var lastTab = "control";
+function getSelectedNetworks() {
+  return selectedNetworks;
+}
 var getENActiveTab = () => {
   let tabName = "";
   if (gradioApp().getElementById("txt2img_prompt")?.checkVisibility() || gradioApp().getElementById("txt2img_generate")?.checkVisibility()) tabName = "txt2img";
@@ -10433,6 +10445,10 @@ async function filterExtraNetworksForTab(searchTerm) {
       cards.forEach((elem) => {
         elem.style.display = elem.dataset.name.toLowerCase().includes("reference/") && elem.dataset.tags === "" ? "" : "none";
       });
+    } else if (searchTerm === "base/") {
+      cards.forEach((elem) => {
+        elem.style.display = elem.dataset.tags.toLowerCase().includes("base") ? "" : "none";
+      });
     } else if (searchTerm === "distilled/") {
       cards.forEach((elem) => {
         elem.style.display = elem.dataset.tags.toLowerCase().includes("distilled") ? "" : "none";
@@ -10468,8 +10484,14 @@ async function filterExtraNetworksForTab(searchTerm) {
         elem.style.display = re.test(`filename: ${elem.dataset.filename}|name: ${elem.dataset.name}|tags: ${elem.dataset.tags}`) ? "" : "none";
       });
     } else {
-      const searchList = searchTerm.split("|").filter((s) => s !== "" && !s.startsWith("-")).map((s) => s.trim());
-      const excludeList = searchTerm.split("|").filter((s) => s !== "" && s.trim().startsWith("-")).map((s) => s.trim().substring(1).trim());
+      let multiStr = false;
+      let searchList = searchTerm.split("|").filter((s) => s !== "" && !s.startsWith("-")).map((s) => s.trim());
+      let excludeList = searchTerm.split("|").filter((s) => s !== "" && s.trim().startsWith("-")).map((s) => s.trim().substring(1).trim());
+      if (searchList.length === 1 && searchTerm.includes(" ")) {
+        searchList = searchTerm.split(" ").filter((s) => s !== "" && !s.startsWith("-")).map((s) => s.trim());
+        excludeList = searchTerm.split(" ").filter((s) => s !== "" && s.trim().startsWith("-")).map((s) => s.trim().substring(1).trim());
+        multiStr = true;
+      }
       const searchListAll = searchList.map((s) => s.split("&").map((t) => t.trim()));
       const excludeListAll = excludeList.map((s) => s.split("&").map((t) => t.trim()));
       cards.forEach((elem) => {
@@ -10478,7 +10500,9 @@ async function filterExtraNetworksForTab(searchTerm) {
         if (elem.dataset.name) text += `${elem.dataset.name} `;
         if (elem.dataset.tags) text += `${elem.dataset.tags} `;
         text = text.toLowerCase().replace("models--", "diffusers").replaceAll("\\", "/");
-        if (searchListAll.some((sl) => sl.every((st) => text.includes(st))) && !excludeListAll.some((el2) => el2.every((et) => text.includes(et)))) {
+        if (multiStr && searchListAll.every((sl) => sl.every((st) => text.includes(st))) && !excludeListAll.some((el2) => el2.every((et) => text.includes(et)))) {
+          elem.style.display = "";
+        } else if (!multiStr && searchListAll.some((sl) => sl.every((st) => text.includes(st))) && !excludeListAll.some((el2) => el2.every((et) => text.includes(et)))) {
           elem.style.display = "";
         } else {
           elem.style.display = "none";
@@ -10529,12 +10553,13 @@ function sortExtraNetworks(fixed = "no") {
   }
   const desc = sortDesc[sortVal];
   const t1 = performance.now();
-  log("sortNetworks", { name: pagename, val: sortVal, order: desc, fixed: fixed === "fixed", items: num, time: Math.round(t1 - t0) });
+  log("sortNetworks", { page: pagename, key: sortVal, order: desc, items: num, time: Math.round(t1 - t0) });
   timer(`sortExtraNetworks:${desc}`, t1 - t0);
   return desc;
 }
 async function markSelectedCards(selected, page = "") {
-  log("markSelectedCards", selected, page);
+  log("markSelectedCards", { page, selected });
+  selectedNetworks[page] = selected;
   gradioApp().querySelectorAll(".extra-network-cards .card").forEach((el2) => {
     if (page.length > 0 && el2.dataset.page !== page) return;
     if (selected.includes(el2.dataset.name) || selected.includes(el2.dataset.short)) el2.classList.add("card-selected");
@@ -10553,7 +10578,7 @@ function extractLoraNames(prompt) {
 }
 function cardClicked(textToAdd) {
   const tabName = getENActiveTab();
-  log("cardClicked", tabName, textToAdd);
+  log("cardClicked", { tab: tabName, text: textToAdd });
   const textarea = activePromptTextarea[tabName];
   if (textarea.value.indexOf(textToAdd) !== -1) textarea.value = textarea.value.replace(textToAdd, "");
   else textarea.value += textToAdd;
@@ -10693,6 +10718,7 @@ function setupExtraNetworksForTab(tabName) {
   const txtSearch = gradioApp().querySelector(`#${tabName}_extra_search`);
   const txtSearchValue = gradioApp().querySelector(`#${tabName}_extra_search textarea`);
   const txtDescription = gradioApp().getElementById(`${tabName}_description`);
+  if (!txtSearch || !txtSearchValue || !txtDescription) return;
   txtSearch.classList.add("search");
   txtDescription.classList.add("description");
   div.appendChild(txtSearch);
@@ -10846,6 +10872,7 @@ window.applyStyles = applyStyles;
 window.closeDetailsEN = closeDetailsEN;
 window.getENActivePage = getENActivePage;
 window.getCardDetails = getCardDetails;
+window.getSelectedNetworks = getSelectedNetworks;
 window.sortExtraNetworks = sortExtraNetworks;
 window.refeshDetailsEN = refeshDetailsEN;
 window.extraNetworksSearchButton = extraNetworksSearchButton;
@@ -10960,11 +10987,19 @@ var progressTimeout = 180;
 var startTimeout = 5;
 function setRefreshInterval() {
   refreshInterval = window.opts.live_preview_refresh_period || 500;
-  log("refreshInterval", document.visibilityState, refreshInterval);
+  log("refreshInterval", { visibile: document.visibilityState, interval: refreshInterval });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) refreshInterval = Math.max(2500, window.opts.live_preview_refresh_period || 1e3);
+    if (window.opts.live_preview_require_focus !== false && document.hidden) refreshInterval = Math.max(2500, window.opts.live_preview_refresh_period || 1e3);
     else refreshInterval = window.opts.live_preview_refresh_period || 1e3;
   });
+}
+function pad2(x) {
+  return x < 10 ? `0${x}` : x;
+}
+function formatTime(secs) {
+  if (secs > 3600) return `${pad2(Math.floor(secs / 60 / 60))}:${pad2(Math.floor(secs / 60) % 60)}:${pad2(Math.floor(secs) % 60)}`;
+  if (secs > 60) return `${pad2(Math.floor(secs / 60))}:${pad2(Math.floor(secs) % 60)}`;
+  return `${Math.floor(secs)}s`;
 }
 function checkPaused(state) {
   lastState.paused = state ? !state : !lastState.paused;
@@ -10996,21 +11031,49 @@ function setProgress(res) {
       eta = min > 0 ? `${Math.round(min)}m ${Math.round(sec)}s` : `${Math.round(sec)}s`;
     }
   }
+  const elPerf = document.getElementById("control-performance");
+  let hint = "";
+  if (elPerf && res) {
+    const jobTxt = res.job && res.job !== "" ? ` | Job ${res.job}` : "";
+    const batchTxt = res.batch > 0 ? ` | Batch ${res.batch}/${res.batches}` : "";
+    const stateTxt = res.queued ? "Queued" : res.paused ? "Paused" : res.completed ? "Completed" : res.active ? "Active" : "Idle";
+    const stepsTxt = res.step > 0 ? ` | Step ${res.step}/${res.steps}` : "";
+    const progressTxt = res.progress > 0 ? ` | Progress ${Math.round(100 * res.progress)}%` : "";
+    const etaTxt = res.eta > 0 ? ` | ETA ${formatTime(res.eta)}` : "";
+    const previewTxt = res.id_live_preview > 0 ? ` | Preview ${res.id_live_preview}` : "";
+    const elapsedTxt = res.job_time > 0 ? ` | Elapsed ${formatTime(Date.now() / 1e3 - res.job_time)}` : "";
+    const startedTxt = res.job_time > 0 ? ` | Started ${new Date(res.job_time * 1e3).toLocaleTimeString()}` : "";
+    hint = `\u23F1 State ${stateTxt} ${jobTxt} ${startedTxt} ${elapsedTxt} ${batchTxt} ${progressTxt} ${stepsTxt} ${etaTxt} ${previewTxt}`.replaceAll("  ", " ").trim();
+    elPerf.innerHTML = `<p>${hint}`;
+  }
   document.title = `SD.Next ${perc}`;
   for (const elId of elements) {
-    const el2 = document.getElementById(elId);
-    if (el2) {
-      const jobLabel = (res ? `${job} ${perc}${eta}` : "Generate").trim();
-      el2.innerText = jobLabel;
-      if (!window.waitForUiReady) {
-        const gradient = perc !== "" ? perc : "100%";
-        if (jobLabel === "Generate") el2.style.background = "var(--primary-500)";
-        else if (jobLabel.endsWith("Decode")) continue;
-        else if (jobLabel.endsWith("Start") || jobLabel.endsWith("Finishing")) el2.style.background = "var(--primary-800)";
-        else if (res && progress > 0 && progress < 1) el2.style.background = `linear-gradient(to right, var(--primary-500) 0%, var(--primary-800) ${gradient}, var(--neutral-700) ${gradient})`;
-        else el2.style.background = "var(--primary-500)";
-      }
+    const el3 = document.getElementById(elId);
+    if (!el3) continue;
+    const jobLabel = (res ? `${job} ${perc}${eta}` : "Generate").trim();
+    el3.innerText = jobLabel;
+    el3.title = hint.length > 0 ? hint : jobLabel;
+    if (!window.waitForUiReady) {
+      const gradient = perc !== "" ? perc : "100%";
+      if (jobLabel === "Generate") el3.style.background = "var(--primary-500)";
+      else if (jobLabel.endsWith("Decode")) continue;
+      else if (jobLabel.endsWith("Start") || jobLabel.endsWith("Finishing")) el3.style.background = "var(--primary-800)";
+      else if (res && progress > 0 && progress < 1) el3.style.background = `linear-gradient(to right, var(--primary-500) 0%, var(--primary-800) ${gradient}, var(--neutral-700) ${gradient})`;
+      else el3.style.background = "var(--primary-500)";
     }
+  }
+  const el2 = document.getElementById("control-performance");
+  if (el2 && res) {
+    const jobTxt = res.job && res.job !== "" ? ` | Job ${res.job}` : "";
+    const batchTxt = res.batch > 0 ? ` | Batch ${res.batch}/${res.batches}` : "";
+    const stateTxt = res.queued ? "Queued" : res.paused ? "Paused" : res.completed ? "Completed" : res.active ? "Active" : "Idle";
+    const stepsTxt = res.step > 0 ? ` | Step ${res.step}/${res.steps}` : "";
+    const progressTxt = res.progress > 0 ? ` | Progress ${Math.round(100 * res.progress)}%` : "";
+    const etaTxt = res.eta > 0 ? ` | ETA ${formatTime(res.eta)}` : "";
+    const previewTxt = res.id_live_preview > 0 ? ` | Preview ${res.id_live_preview}` : "";
+    const elapsedTxt = res.job_time > 0 ? ` | Elapsed ${formatTime(Date.now() / 1e3 - res.job_time)}` : "";
+    const startedTxt = res.job_time > 0 ? ` | Started ${new Date(res.job_time * 1e3).toLocaleTimeString()}` : "";
+    el2.innerHTML = `<p>\u23F1 State ${stateTxt} ${jobTxt} ${startedTxt} ${elapsedTxt} ${batchTxt} ${progressTxt} ${stepsTxt} ${etaTxt} ${previewTxt}</p>`.replaceAll("  ", " ").trim();
   }
 }
 function requestInterrupt() {
@@ -11076,50 +11139,72 @@ function requestProgress(id_task = "undefined", progressEl = null, galleryEl = n
     sendNotification();
     if (atEnd) atEnd();
   };
-  const startLivePreview = (taskId, id_live_preview) => {
-    if (window.opts.live_preview_refresh_period === 0) return;
-    const request_id = document.hidden ? -1 : id_live_preview;
-    const onProgressHandler = (res) => {
-      if (res?.debug) debug("progress:", { start: dateStart, id: request_id, res });
-      lastState = res;
-      const elapsedFromStart = (Date.now() - dateStart) / 1e3;
-      hasStarted = hasStarted || res.active;
-      if (res.completed || !res.active && (hasStarted || once)) {
-        debug("progress", { end: res, reason: res.completed ? "completed" : "inactive" });
-        if (!res.paused) removeLivePreview(true);
-        return;
-      }
-      if (elapsedFromStart > progressTimeout && !res.queued && res.progress === prevProgress) {
-        debug("progress", { end: res, reason: "progressSimeout" });
-        if (!res.paused) removeLivePreview(false);
-        return;
-      }
-      if (elapsedFromStart > startTimeout && !res.queued && !res.active) {
-        debug("progress", { end: res, reason: "startTimeout" });
-        if (!res.paused) removeLivePreview(false);
-        return;
-      }
-      if (res.progress !== prevProgress) {
-        dateStart = Date.now();
-        prevProgress = res.progress;
-      }
-      setProgress(res);
-      if (res.live_preview && !livePreview) initLivePreview();
-      if (res.live_preview && galleryEl) {
-        if (img.src !== res.live_preview) img.src = res.live_preview;
-        id_live_preview = res.id_live_preview;
-      }
-      if (onProgress) onProgress(res);
-      setTimeout(() => startLivePreview(id_task, id_live_preview), window.opts.live_preview_refresh_period || 500);
-    };
-    const onProgressErrorHandler = (err) => {
-      error("progress", { error: err });
-      removeLivePreview(false);
-    };
-    xhrPost("./internal/progress", { id_task, id_live_preview: request_id }, onProgressHandler, onProgressErrorHandler, false, 3e4);
+  const previewVisible = () => {
+    try {
+      return !galleryEl?.closest(".section")?.classList.contains("minimize");
+    } catch {
+      return true;
+    }
   };
+  const onProgressDataHandler = async (res, caller) => {
+    if (res?.debug) debug("progress:", { start: dateStart, res });
+    lastState = res;
+    const elapsedFromStart = (Date.now() - dateStart) / 1e3;
+    hasStarted = hasStarted || res.active;
+    if (res.completed || !res.active && (hasStarted || once)) {
+      debug("progress", { end: res, reason: res.completed ? "completed" : "inactive" });
+      const hidden = document.hidden || !previewVisible();
+      if (!res.paused) removeLivePreview(!hidden);
+      return;
+    }
+    if (elapsedFromStart > progressTimeout && !res.queued && res.progress === prevProgress) {
+      debug("progress", { end: res, reason: "progressTimeout" });
+      if (!res.paused) removeLivePreview(false);
+      return;
+    }
+    if (elapsedFromStart > startTimeout && !res.queued && !res.active) {
+      debug("progress", { end: res, reason: "startTimeout" });
+      if (!res.paused) removeLivePreview(false);
+      return;
+    }
+    if (res.progress !== prevProgress) {
+      dateStart = Date.now();
+      prevProgress = res.progress;
+    }
+    setProgress(res);
+    if (res.live_preview && !livePreview) initLivePreview();
+    let id_live_preview = res.id_live_preview;
+    if (res.live_preview && galleryEl) {
+      if (img.src !== res.live_preview) img.src = res.live_preview;
+      id_live_preview = res.id_live_preview;
+    }
+    if (onProgress) onProgress(res);
+    let timeout = Math.max(window.opts.live_preview_refresh_period || 500, 500);
+    timeout += (Math.random() * 0.4 - 0.2) * timeout;
+    setTimeout(() => caller(id_task, id_live_preview), timeout);
+  };
+  const onProgressErrorHandler = (err) => {
+    error("progress", { error: err });
+    removeLivePreview(false);
+  };
+  const startLivePreview = (taskId, id_live_preview) => {
+    const hidden = document.hidden || !previewVisible();
+    let request_id = id_live_preview;
+    if (hidden) {
+      if (!window.opts.live_preview_require_focus) request_id = id_live_preview;
+    } else if (window.opts.live_preview_refresh_period === 0) {
+      request_id = -1;
+    }
+    xhrPost("./internal/progress", { id_task, id_live_preview: request_id }, onLivePreviewHandler, onProgressErrorHandler, false, 3e4);
+  };
+  const startProgress = (taskId, id_live_preview) => {
+    xhrPost("./internal/progress", { id_task, id_live_preview: -1 }, onProgressHandler, onProgressErrorHandler, false, 3e4);
+  };
+  const onProgressHandler = (res) => onProgressDataHandler(res, startProgress);
+  const onLivePreviewHandler = (res) => onProgressDataHandler(res, startLivePreview);
   debug("progress", { start: dateStart });
   startLivePreview(id_task, 0);
+  startProgress(id_task, -1);
 }
 window.checkPaused = checkPaused;
 window.requestInterrupt = requestInterrupt;
@@ -11134,7 +11219,6 @@ var fontSizeApplyRaf = 0;
 var pendingFontSize = null;
 var appliedFontSize = null;
 var cachedGradioRoot = null;
-var resizeDebounce;
 var wait_time = 800;
 var token_timeouts = {};
 var uiLoaded = false;
@@ -11271,14 +11355,13 @@ function setFontSize(val, old) {
     rootStyle.setProperty("--text-xxl", `${nextSize + 3}px`);
     appliedFontSize = nextSize;
     const t1 = performance.now();
-    log("setFontSize", nextSize, `time=${Math.round(t1 - t0)}`);
-    timer("setFontSize", t1 - t0);
+    log("setFontSize", { size: nextSize, time: Math.round(t1 - t0) });
   });
 }
 function switchToTab(tab) {
   const tabs = Array.from(gradioApp().querySelectorAll("#tabs > .tab-nav > button"));
   const btn = tabs?.find((t) => t.innerText === tab);
-  log("switchToTab", tab);
+  log("switchToTab", { tab });
   if (btn) btn.click();
 }
 function switch_to_txt2img(...args) {
@@ -11433,8 +11516,12 @@ function submit_video_wrapper(...args) {
   if (btn) btn.click();
 }
 function submit_postprocessing(...args) {
-  log("SubmitExtras");
+  const id = randomId();
+  log("SubmitProcess", id);
   clearGallery("extras");
+  requestProgress(id, null, null);
+  window.submit_state = "";
+  args[0] = id;
   return args;
 }
 window.submit_state = "";
@@ -11646,8 +11733,12 @@ function getDesiredCheckpointName() {
 }
 function selectUNet(name) {
   desiredUNetName = name;
-  gradioApp().getElementById("change_unet").click();
-  log(`selectUNet: ${desiredUNetName}`);
+  const tabName = getENActiveTab();
+  const btnModel = gradioApp().getElementById(`${tabName}_extra_model`);
+  const isSecondary = btnModel && btnModel.classList.contains("toolbutton-selected");
+  if (isSecondary) gradioApp().getElementById("change_unet_secondary").click();
+  else gradioApp().getElementById("change_unet").click();
+  log(`selectUNet ${isSecondary ? "secondary" : "primary"}: ${desiredUNetName}`);
   markSelectedCards([desiredUNetName], "unet");
 }
 function selectReference(name) {
@@ -11662,6 +11753,10 @@ function currentImageResolutionimg2img(_a, _b, scaleBy) {
   return img ? [img.naturalWidth, img.naturalHeight, scaleBy] : [0, 0, scaleBy];
 }
 function currentImageResolutioncontrol(_a, _b, scaleBy) {
+  if (window.kanvas) {
+    const active2 = window.kanvas.stages?.getActiveStage();
+    return [active2?.width || 0, active2?.height || 0, scaleBy];
+  }
   const img = gradioApp().querySelector('#control-tab-input > div[style="display: block;"] img');
   return img ? [img.naturalWidth, img.naturalHeight, scaleBy] : [0, 0, scaleBy];
 }
@@ -11672,7 +11767,7 @@ function updateImg2imgResizeToTextAfterChangingImage() {
 }
 async function toggleCompact(val, old) {
   if (val === old) return;
-  log("toggleCompact", val, old);
+  log("toggleCompact", val);
   if (val) {
     gradioApp().style.setProperty("--layout-gap", "var(--spacing-md)");
     gradioApp().querySelectorAll("input[type=range]").forEach((el2) => el2.classList.add("hidden"));
@@ -11685,20 +11780,14 @@ async function toggleCompact(val, old) {
     gradioApp().querySelectorAll(".small-accordion .label-wrap").forEach((el2) => el2.classList.remove("accordion-compact"));
   }
 }
-function resolutionChange(ar, width, height) {
-  let desired = ar;
-  if (desired === "AR") desired = "1:1";
-  try {
-    const [w, h] = desired.split(":").map((x) => parseInt(x));
-    if (w > h) height = Math.round(width * h / w);
-    else if (h > w) width = Math.round(height * w / h);
-  } catch {
-  }
+var kanvasNotifyTimer;
+function notifyKanvasResize(width, height) {
   if (window.resizeStage) {
-    clearTimeout(resizeDebounce);
-    resizeDebounce = setTimeout(() => window.resizeStage(width, height), 250);
+    const w = Number(width);
+    const h = Number(height);
+    clearTimeout(kanvasNotifyTimer);
+    kanvasNotifyTimer = setTimeout(() => window.resizeStage?.(w, h), 250);
   }
-  return [ar, width, height];
 }
 async function reconnectUI() {
   const t0 = performance.now();
@@ -11735,6 +11824,7 @@ async function reconnectUI() {
 }
 window.restartReload = restartReload;
 window.updateInput = updateInput2;
+window.notifyKanvasResize = notifyKanvasResize;
 window.clip_gallery_urls = clip_gallery_urls;
 window.extract_image_from_gallery = extract_image_from_gallery;
 window.getCaptionActiveTab = getCaptionActiveTab;
@@ -11766,7 +11856,6 @@ window.recalculate_prompts_txt2img = recalculate_prompts_txt2img;
 window.recalculate_prompts_img2img = recalculate_prompts_img2img;
 window.recalculate_prompts_inpaint = recalculate_prompts_inpaint;
 window.recalculate_prompts_control = recalculate_prompts_control;
-window.resolutionChange = resolutionChange;
 window.selectCheckpoint = selectCheckpoint;
 window.selectVAE = selectVAE;
 window.selectUNet = selectUNet;
@@ -11906,7 +11995,7 @@ async function add(record) {
 async function get(hash3) {
   if (!db) return null;
   return new Promise((resolve, reject) => {
-    const request = db.transaction(["thumbs"], "readwrite").objectStore("thumbs").get(hash3);
+    const request = db.transaction(["thumbs"], "readonly").objectStore("thumbs").index("hash").get(hash3);
     request.onsuccess = () => resolve(request.result);
     request.onerror = (evt) => reject(evt);
   });
@@ -11919,11 +12008,8 @@ async function idbGetAllKeys(index = null, query = null) {
       const transaction = db.transaction("thumbs", "readonly");
       transaction.onabort = (e) => reject(e);
       const store = transaction.objectStore("thumbs");
-      if (index) {
-        request = store.index(index).getAllKeys(query);
-      } else {
-        request = store.getAllKeys(query);
-      }
+      if (index) request = store.index(index).getAllKeys(query);
+      else request = store.getAllKeys(query);
       request.onsuccess = () => resolve(request.result);
       request.onerror = (e) => reject(e);
     } catch (err) {
@@ -11939,11 +12025,8 @@ async function idbCount(folder) {
       const transaction = db.transaction("thumbs", "readonly");
       transaction.onabort = (e) => reject(e);
       const store = transaction.objectStore("thumbs");
-      if (folder) {
-        request = store.index("folder").count(folder);
-      } else {
-        request = store.count();
-      }
+      if (folder) request = store.index("folder").count(folder);
+      else request = store.count();
       request.onsuccess = () => resolve(request.result);
       request.onerror = (e) => reject(e);
     } catch (err) {
@@ -11980,21 +12063,21 @@ var logErrors = 0;
 var logConnected = false;
 function dateToStr(ts) {
   const dt = new Date(1e3 * ts);
-  const year = dt.getFullYear();
-  const mo = String(dt.getMonth() + 1).padStart(2, "0");
-  const day = String(dt.getDate()).padStart(2, "0");
   const hour = String(dt.getHours()).padStart(2, "0");
   const min = String(dt.getMinutes()).padStart(2, "0");
   const sec = String(dt.getSeconds()).padStart(2, "0");
   const ms = String(dt.getMilliseconds()).padStart(3, "0");
-  const s = `${year}-${mo}-${day} ${hour}:${min}:${sec}.${ms}`;
+  const s = `${hour}:${min}:${sec}.${ms}`;
   return s;
 }
 function htmlEscape(text) {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 function parseLogLine(line) {
-  const parsed = JSON.parse(line.replaceAll("\n", " ").replaceAll("\\", "\\\\"));
+  let str = line.replaceAll("\n", " ").replaceAll("\\", "\\\\");
+  const tracebackIndex = str.indexOf("Traceback");
+  if (tracebackIndex !== -1) str = str.substring(0, tracebackIndex);
+  const parsed = JSON.parse(str);
   return {
     created: Number(parsed.created ?? Date.now()),
     level: String(parsed.level ?? "INFO"),
@@ -12002,6 +12085,21 @@ function parseLogLine(line) {
     facility: String(parsed.facility ?? "ui"),
     msg: String(parsed.msg ?? "")
   };
+}
+async function clearErrors() {
+  logWarnings = 0;
+  logErrors = 0;
+  log("clearErrors");
+}
+async function initClearErrorsButton() {
+  const btnServerClear = document.getElementById("btn_console_log_server_clear");
+  if (btnServerClear) {
+    btnServerClear.onclick = async (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      clearErrors();
+    };
+  }
 }
 async function logMonitor() {
   const addLogLine = (line) => {
@@ -12013,14 +12111,13 @@ async function logMonitor() {
       const level = `<td style="color: var(--color-${l.level.toLowerCase()})">${l.level}</td>`;
       if (l.level === "WARNING") logWarnings++;
       if (l.level === "ERROR") logErrors++;
-      const module = `<td style="color: var(--neutral-400)">${l.module}</td>`;
+      const module = `<td style="color: #ffca68">${l.module}</td>`;
       const facilityText = l.facility.length > 20 ? `${l.facility.substring(0, 20)}...` : l.facility;
-      const facility = l.facility !== "sd" ? `<td>${facilityText}</td>` : "<td></td>";
+      const facility = l.facility !== "sd" ? `<td style="color: #ffca68">${facilityText}</td>` : "<td></td>";
       row.innerHTML = `<td>${dateToStr(l.created)}</td>${level}${facility}${module}<td>${htmlEscape(l.msg)}</td>`;
       logMonitorEl.appendChild(row);
     } catch (err) {
-      error(`logMonitor: ${String(err)}
-${line}`);
+      error("logMonitor", { error: String(err), line });
     }
   };
   const cleanupLog = (atBottom2) => {
@@ -12035,7 +12132,13 @@ ${line}`);
     const modenUIBtn = document.getElementById("btn_console");
     if (elWarn) elWarn.innerText = String(logWarnings);
     if (elErr) elErr.innerText = String(logErrors);
-    if (modenUIBtn) modenUIBtn.setAttribute("error-count", logErrors > 0 ? String(logErrors) : "");
+    if (modenUIBtn) {
+      modenUIBtn.setAttribute("error-count", logErrors > 0 ? String(logErrors) : "");
+      modenUIBtn.style.backgroundColor = logErrors > 0 ? "var(--color-error)" : "";
+      modenUIBtn.title = `Log
+Errors ${logErrors}
+Warnings ${logWarnings}`;
+    }
   };
   const txtGallery = document.getElementById("txt2img_gallery");
   if (txtGallery) txtGallery.style.height = window.opts.logmonitor_show ? "50vh" : "55vh";
@@ -12069,51 +12172,66 @@ ${line}`);
       if (logMonitorEl && lines?.length > 0 && logMonitorEl.parentElement?.parentElement instanceof HTMLElement) {
         logMonitorEl.parentElement.parentElement.style.display = window.opts.logmonitor_show ? "block" : "none";
       }
-      for (const line of lines) addLogLine(line);
       if (!logConnected) {
         logConnected = true;
         xhrPost(`${window.api}/log`, { debug: "connected" });
+        logErrors = 0;
       }
+      for (const line of lines) addLogLine(line);
     } else {
       logConnected = false;
       logErrors++;
-      addLogLine(`{ "created": ${Date.now()}, "level":"ERROR", "module":"logMonitor", "facility":"ui", "msg":"Failed to fetch log: ${res?.status} ${res?.statusText}" }`);
+      if (res) addLogLine(`{ "created": ${Date.now()}, "level":"ERROR", "module":"logMonitor", "facility":"ui", "msg":"Failed to fetch log: ${res?.status} ${res?.statusText}" }`);
+      else addLogLine(`{ "created": ${Date.now()}, "level":"ERROR", "module":"logMonitor", "facility":"ui", "msg":"Server unreachable" }`);
     }
     cleanupLog(atBottom);
   } catch {
     logConnected = false;
     logErrors++;
-    addLogLine(`{ "created": ${Date.now()}, "level":"ERROR", "module":"logMonitor", "facility":"ui", "msg":"Failed to fetch log: server unreachable" }`);
+    addLogLine(`{ "created": ${Date.now()}, "level":"ERROR", "module":"logMonitor", "facility":"ui", "msg":"Server unreachable" }`);
     cleanupLog(atBottom);
   }
 }
 async function initLogMonitor() {
-  const el2 = document.getElementsByTagName("footer")[0];
+  let el2 = document.getElementById("logMonitorPlaceholder");
+  const modernUi = Boolean(el2);
+  if (!el2) el2 = document.getElementsByTagName("footer")[0];
   if (!el2) return;
   const t0 = performance.now();
   el2.classList.add("log-monitor");
   const uiDisabled = Array.isArray(window.opts.ui_disabled) ? window.opts.ui_disabled : [];
   if (uiDisabled.includes("logs")) return;
-  el2.innerHTML = `
-    <table id="logMonitor" style="width: 100%;">
-      <thead style="display: block; text-align: left; border-bottom: solid 1px var(--button-primary-border-color)">
-        <tr>
-          <th style="width: 144px">Time</th>
-          <th>Level</th>
-          <th style="width: 0"></th>
-          <th style="width: 154px">Module</th>
-          <th>Message</th>
-          <th style="position: absolute; right: 7em">Warnings <span id="logWarnings">0</span></th>
-          <th style="position: absolute; right: 1em">Errors <span id="logErrors">0</span></th>
-        </tr>
-      </thead>
-      <tbody id="logMonitorData" style="white-space: nowrap; height: 10vh; width: 100vw; display: block; overflow-x: hidden; overflow-y: scroll; color: var(--neutral-400)">
-      </tbody>
-    </table>
-  `;
+  if (modernUi) {
+    el2.style.overflow = "auto";
+    el2.innerHTML = `
+      <table id="logMonitor" style="width: 100%;">
+        <tbody id="logMonitorData" style="white-space: nowrap; display: block">
+        </tbody>
+      </table>
+    `;
+  } else {
+    el2.innerHTML = `
+      <table id="logMonitor" style="width: 100%;">
+        <thead style="display: block; text-align: left; border-bottom: solid 1px var(--button-primary-border-color)">
+          <tr>
+            <th style="width: 144px">Time</th>
+            <th>Level</th>
+            <th style="width: 0"></th>
+            <th style="width: 154px">Module</th>
+            <th>Message</th>
+            <th style="position: absolute; right: 7em">Warnings <span id="logWarnings">0</span></th>
+            <th style="position: absolute; right: 1em">Errors <span id="logErrors">0</span></th>
+          </tr>
+        </thead>
+        <tbody id="logMonitorData" style="white-space: nowrap; display: block; color: var(--neutral-400)">
+        </tbody>
+      </table>
+    `;
+  }
   el2.style.display = "none";
   authFetch(`${window.api}/start?agent=${encodeURI(navigator.userAgent)}`);
   logMonitor();
+  initClearErrorsButton();
   const t1 = performance.now();
   log("initLogMonitor", { show: window.opts.logmonitor_show, time: Math.round(t1 - t0) });
   timer("initLogMonitor", t1 - t0);
@@ -12150,7 +12268,7 @@ async function updateOpts(json_string) {
   for (const op of monitoredOpts) {
     const [key, callback] = Object.entries(op)[0];
     if (Object.hasOwn(opts, key) && opts[key] !== new_opts[key]) {
-      log("updateOpt", key, opts[key], new_opts[key]);
+      log("updateOpt", { key, val: new_opts[key] });
       if (callback) callback(new_opts[key], opts[key]);
     }
   }
@@ -12172,7 +12290,7 @@ async function updateOpts(json_string) {
     else opts_tabs[meta.tab_name].saved_keys.add(opt);
   });
   const t2 = performance.now();
-  log("updateOpts", `settings=${Object.keys(new_opts).length} callbacks=${Math.round(t2 - t1)} apply=${Math.round(t1 - t0)}`);
+  log("updateOpts", { settings: Object.keys(new_opts).length, callbacks: Math.round(t2 - t1), apply: Math.round(t1 - t0) });
   timer("updateOpts", t2 - t0);
 }
 function showAllSettings() {
@@ -12352,10 +12470,11 @@ async function initSettings() {
 
 // ui/monitor.ts
 var monitorActive = false;
+var wsTimer;
 var ConnectionMonitorState = class _ConnectionMonitorState {
   static ws;
   static url = "";
-  static delay = 1e3;
+  static delay = 2e3;
   static element;
   static version = "";
   static commit = "";
@@ -12375,7 +12494,7 @@ var ConnectionMonitorState = class _ConnectionMonitorState {
     if (online !== this.online) {
       this.online = online;
       this.ts = /* @__PURE__ */ new Date();
-      debug("monitorState", { online: _ConnectionMonitorState.online, ts: _ConnectionMonitorState.ts });
+      debug("monitorState", { online: _ConnectionMonitorState.online, ts: _ConnectionMonitorState.ts?.toLocaleTimeString() });
     }
     if (data?.updated) this.version = data.updated;
     if (data?.commit) this.commit = data.commit;
@@ -12408,21 +12527,41 @@ async function updateIndicator(online, data = {}, msg) {
   ConnectionMonitorState.updateState();
   if (msg) log("monitorConnection:", { online, data, msg });
 }
+function scheduleNextLoop() {
+  if (wsTimer) {
+    clearTimeout(wsTimer);
+    wsTimer = void 0;
+  }
+  const offlineDurationMs = Date.now() - ConnectionMonitorState.ts.getTime();
+  if (!ConnectionMonitorState.online && offlineDurationMs > 60 * 60 * 1e3) ConnectionMonitorState.delay = 1e4;
+  else if (!ConnectionMonitorState.online && offlineDurationMs > 5 * 60 * 1e3) ConnectionMonitorState.delay = 5e3;
+  else ConnectionMonitorState.delay = 1e3;
+  wsTimer = setTimeout(wsMonitorLoop, ConnectionMonitorState.delay);
+}
 async function wsMonitorLoop() {
-  const delayed = Date.now() - ConnectionMonitorState.ts.getTime();
-  if (delayed > 60 * 60 && ConnectionMonitorState.delay < 10 && !ConnectionMonitorState.online) ConnectionMonitorState.delay = 1e4;
-  else if (delayed > 5 * 60 && ConnectionMonitorState.delay < 5 && !ConnectionMonitorState.online) ConnectionMonitorState.delay = 5e3;
-  else ConnectionMonitorState.delay = 2e3;
+  if (ConnectionMonitorState.ws) {
+    ConnectionMonitorState.ws.onopen = null;
+    ConnectionMonitorState.ws.onmessage = null;
+    ConnectionMonitorState.ws.onclose = null;
+    ConnectionMonitorState.ws.onerror = null;
+    try {
+      ConnectionMonitorState.ws.close();
+    } catch {
+    }
+    ConnectionMonitorState.ws = void 0;
+  }
   try {
-    ConnectionMonitorState.ws = new WebSocket(`${ConnectionMonitorState.url}/queue/join`);
-    ConnectionMonitorState.ws.onopen = () => {
+    ConnectionMonitorState.ws = new WebSocket(`${ConnectionMonitorState.url}/internal/monitor`);
+    ConnectionMonitorState.ws.onopen = () => updateIndicator(true);
+    ConnectionMonitorState.ws.onmessage = (msg) => updateIndicator(true, msg.data ? JSON.parse(msg.data) : {});
+    ConnectionMonitorState.ws.onclose = () => {
+      updateIndicator(false);
+      scheduleNextLoop();
     };
-    ConnectionMonitorState.ws.onmessage = () => updateIndicator(true);
-    ConnectionMonitorState.ws.onclose = () => setTimeout(wsMonitorLoop, ConnectionMonitorState.delay);
     ConnectionMonitorState.ws.onerror = (e) => updateIndicator(false, {}, String(e.message || "unknown error"));
   } catch (e) {
     updateIndicator(false, {}, String(e.message || e));
-    setTimeout(monitorConnection, ConnectionMonitorState.delay);
+    scheduleNextLoop();
   }
 }
 async function monitorConnection() {
@@ -12446,7 +12585,7 @@ async function monitorConnection() {
     wsMonitorLoop();
   } catch {
     updateIndicator(false, data);
-    setTimeout(monitorConnection, ConnectionMonitorState.delay);
+    scheduleNextLoop();
   }
 }
 
@@ -12909,9 +13048,12 @@ var currentGalleryFolder = null;
 var outstanding = 0;
 var gallerySelection = { files: [], index: -1 };
 var maintenanceController = new AbortController();
+var maxFetchRequests = 32;
+var fragmentSize = 100;
+var minCleanupCount = 1e3;
+var minCleanupTime = 1e3 * 60 * 60;
 var folderStylesheet = new CSSStyleSheet();
 var fileStylesheet = new CSSStyleSheet();
-var iconStopwatch = String.fromCodePoint(9201);
 var separatorStates = /* @__PURE__ */ new Map();
 var el = {
   folders: void 0,
@@ -12921,6 +13063,16 @@ var el = {
   btnSend: void 0,
   overlay: void 0,
   size: void 0
+};
+var cleanupTimers = {};
+var maintenanceTimers = {};
+var fetchQueue = [];
+var icons = {
+  Time: String.fromCodePoint(9201),
+  Folder: String.fromCodePoint(128448),
+  // or 128449;
+  Sort: String.fromCodePoint(8645),
+  Images: String.fromCodePoint(128461)
 };
 var SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "tiff", "jp2", "jxl", "gif", "mp4", "mkv", "avi", "mjpeg", "mpg", "avr"];
 var gallerySorter = {
@@ -13003,12 +13155,6 @@ function buildGalleryFileUrl(path) {
 window.getGallerySelection = () => ({ index: gallerySelection.index, files: gallerySelection.files });
 window.setGallerySelection = (index, options) => applyGallerySelection(index, options);
 window.getGallerySelectedUrl = () => currentImage ? buildGalleryFileUrl(currentImage) : null;
-async function awaitForOutstanding(num, signal) {
-  while (outstanding > num && !signal.aborted) await new Promise((resolve) => {
-    setTimeout(resolve, 50);
-  });
-  signal.throwIfAborted();
-}
 async function awaitForGallery(expectedSize, signal) {
   while (Math.max(galleryHashes.size, galleryHashes.fallback) < expectedSize && !signal.aborted) await new Promise((resolve) => {
     setTimeout(resolve, 500);
@@ -13087,9 +13233,9 @@ function updateGalleryStyles() {
       padding: 4px;
       font-size: 1.2em;
       letter-spacing: 0.5em;
-      width: 140px;
       margin-top: calc(140px - 32px);
       opacity: 75%;
+      border-radius: var(--sd-border-radius);
     }
     :host(.gallery-file-selected) .gallery-file {
       box-shadow: 0 0 0 2px var(--sd-button-selected-color);
@@ -13119,64 +13265,61 @@ var SimpleProgressBar = class {
   #textDiv = document.createElement("div");
   #text = document.createElement("span");
   #visible = false;
-  #hideTimeout;
   #interval;
   #max = 0;
+  defaultStats = { queue: 0, fetch: 0, hash: 0, db: 0, cached: 0, fetched: 0, failed: 0, error: 0, callback: 0, elapsed: 0, count: 0 };
+  stats = { ...this.defaultStats };
   /** @type {Set} */
   #monitoredSet;
   constructor(monitoredSet) {
     this.#monitoredSet = monitoredSet;
-    this.#container.style.cssText = "position:relative;overflow:hidden;border-radius:var(--sd-border-radius);width:100%;background-color:hsla(0,0%,36%,0.3);height:1.2rem;margin:0;padding:0;display:none;";
-    this.#progress.style.cssText = "position:absolute;left:0;height:100%;width:0;transition:width 200ms;";
-    this.#progress.style.backgroundColor = "hsla(110, 32%, 35%, 0.80)";
-    this.#textDiv.style.cssText = "position:relative;margin:auto;width:max-content;height:100%;";
-    this.#text.style.cssText = "user-select:none;color:white;";
+    this.#container.style.cssText = "position:relative; overflow:hidden; border-radius:var(--sd-border-radius); width:100%; background-color:hsla(0,0%,36%,0.3); height:1.2rem; margin:0; padding:0; display:none;";
+    this.#progress.style.cssText = "position:absolute; left:0; height:100%; width:0; transition:width 200ms;";
+    this.#progress.style.backgroundColor = "var(--sd-main-accent-color)";
+    this.#textDiv.style.cssText = "position:relative; margin:auto; width:max-content; height:100%;";
+    this.#text.style.cssText = "user-select:none; color:white;";
     this.#textDiv.append(this.#text);
     this.#container.append(this.#progress, this.#textDiv);
   }
   start(total) {
-    this.clear();
+    if (total <= 0) return;
+    this.hide();
     this.#max = total;
-    this.#interval = setInterval(() => {
-      this.#update(this.#monitoredSet.size, this.#max);
-    }, 250);
+    if (this.#monitoredSet.size >= this.#max) {
+      this.stop();
+      return;
+    }
+    this.#interval = setInterval(() => this.update(this.#monitoredSet.size, this.#max), 100);
   }
   attachTo(element) {
-    if (element.hasChildNodes) {
-      element.innerHTML = "";
-    }
+    if (element.hasChildNodes) element.innerHTML = "";
     element.appendChild(this.#container);
   }
-  clear() {
-    this.#stop();
-    clearTimeout(this.#hideTimeout);
-    this.#hideTimeout = void 0;
+  hide() {
     this.#container.style.display = "none";
     this.#visible = false;
     this.#progress.style.width = "0";
     this.#text.textContent = "";
   }
-  #update(loaded, max) {
-    if (this.#hideTimeout) {
-      this.#hideTimeout = void 0;
-    }
+  update(loaded, max) {
     this.#progress.style.width = `${Math.floor(loaded / max * 100)}%`;
     this.#text.textContent = `${loaded}/${max}`;
     if (!this.#visible) {
       this.#container.style.display = "block";
       this.#visible = true;
     }
-    if (loaded >= max) {
-      this.#stop();
-      this.#hideTimeout = setTimeout(() => this.clear(), 1e3);
-    }
+    if (loaded >= max) this.stop();
   }
-  #stop() {
+  stop() {
     clearInterval(this.#interval);
-    this.#interval = null;
+    if (this.stats.count) {
+      debug("gallery: thumbnail stats", this.stats);
+      this.stats = { ...this.defaultStats };
+    }
+    setTimeout(() => this.hide(), 100);
   }
 };
-var galleryProgressBar = new SimpleProgressBar(galleryHashes);
+var pb = new SimpleProgressBar(galleryHashes);
 var SimpleFunctionQueue = class {
   #id;
   #running;
@@ -13281,12 +13424,37 @@ var GalleryFolder = class _GalleryFolder extends HTMLElement {
     }
   }
 };
+async function awaitForOutstanding(signal) {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  if (outstanding < maxFetchRequests) return;
+  await new Promise((resolve, reject) => {
+    const onResolve = () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    };
+    const onAbort = () => {
+      const idx = fetchQueue.findIndex((item) => item.resolve === onResolve);
+      if (idx !== -1) fetchQueue.splice(idx, 1);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    fetchQueue.push({ resolve: onResolve });
+    signal?.addEventListener("abort", onAbort);
+  });
+}
 async function delayFetchThumb(fn, signal) {
-  await awaitForOutstanding(16, signal);
+  const t0 = performance.now();
+  try {
+    await awaitForOutstanding(signal);
+  } catch (err) {
+    if (err.name === "AbortError") return void 0;
+    throw err;
+  }
+  pb.stats.queue = (pb.stats.queue || 0) + Math.round(performance.now() - t0);
+  const t1 = performance.now();
   try {
     outstanding++;
-    const ts = Date.now().toString();
-    const res = await authFetch(`${window.api}/browser/thumb?file=${encodeURI(fn)}&ts=${ts}`, { priority: "low" });
+    const ts = t0.toString();
+    const res = await authFetch(`${window.api}/browser/thumb?file=${encodeURI(fn)}&ts=${ts}&exif=false`, { priority: "low" });
     if (!res.ok) {
       error(`fetchThumb: ${res.statusText}`);
       return void 0;
@@ -13299,6 +13467,11 @@ async function delayFetchThumb(fn, signal) {
     return json;
   } finally {
     outstanding--;
+    pb.stats.fetch = (pb.stats.fetch || 0) + Math.round(performance.now() - t1);
+    if (fetchQueue.length > 0 && outstanding < maxFetchRequests) {
+      const nextRequest = fetchQueue.shift();
+      nextRequest.resolve();
+    }
   }
 }
 var GalleryFile = class extends HTMLElement {
@@ -13324,6 +13497,8 @@ var GalleryFile = class extends HTMLElement {
   async connectedCallback() {
     if (!this.firstRun) return;
     this.firstRun = false;
+    const t0 = performance.now();
+    pb.stats.count = (pb.stats.count || 0) + 1;
     const dir = this.name.match(/(.*)[/\\]/);
     if (dir && dir[1]) {
       const dirPath = dir[1];
@@ -13334,7 +13509,13 @@ var GalleryFile = class extends HTMLElement {
       error("getHash:", err);
       return null;
     });
-    const cachedData = this.hash && opts.browser_cache ? await idbGet(this.hash).catch(() => void 0) : void 0;
+    pb.stats.hash = (pb.stats.hash || 0) + Math.round(performance.now() - t0);
+    let cachedData;
+    if (opts.browser_cache) {
+      const t1 = performance.now();
+      cachedData = await idbGet(this.hash).catch(() => void 0);
+      pb.stats.db = (pb.stats.db || 0) + Math.round(performance.now() - t1);
+    }
     const img = document.createElement("img");
     img.className = "gallery-file";
     img.loading = "lazy";
@@ -13357,11 +13538,13 @@ Resolution: ${this.width} x ${this.height}`;
       this.height = cachedData.height;
       this.size = cachedData.size;
       this.mtime = new Date(cachedData.mtime);
+      pb.stats.cached = (pb.stats.cached || 0) + 1;
     } else {
       try {
         const json = await delayFetchThumb(this.src, this.#signal);
         if (!json) {
           ok2 = false;
+          pb.stats.failed = (pb.stats.failed || 0) + 1;
         } else {
           img.src = json.data;
           this.exif = json.exif;
@@ -13369,6 +13552,7 @@ Resolution: ${this.width} x ${this.height}`;
           this.height = json.height;
           this.size = json.size;
           this.mtime = new Date(json.mtime);
+          pb.stats.fetched = (pb.stats.fetched || 0) + 1;
           if (opts.browser_cache && this.hash) {
             idbAdd({
               hash: this.hash,
@@ -13388,8 +13572,10 @@ Resolution: ${this.width} x ${this.height}`;
         }
       } catch (err) {
         img.src = `file=${this.src}`;
+        pb.stats.error = (pb.stats.error || 0) + 1;
       }
     }
+    pb.stats.callback = (pb.stats.callback || 0) + Math.round(performance.now() - t0);
     if (this.#signal.aborted) return;
     galleryHashes.add(this.hash);
     if (!ok2) return;
@@ -13412,10 +13598,9 @@ Size: ${this.size.toLocaleString()} bytes
 Modified: ${this.mtime.toLocaleString()}`;
     this.title = img.title;
     const shouldDisplayBasedOnSearch = this.title.toLowerCase().includes(el.search.value.toLowerCase());
-    if (this.style.display !== "none") {
-      this.style.display = shouldDisplayBasedOnSearch ? "flex" : "none";
-    }
+    if (this.style.display !== "none") this.style.display = shouldDisplayBasedOnSearch ? "" : "none";
     this.shadow.appendChild(img);
+    pb.stats.elapsed = (pb.stats.elapsed || 0) + Math.round(performance.now() - t0);
   }
 };
 async function handleSeparator(separator) {
@@ -13430,7 +13615,7 @@ async function handleSeparator(separator) {
     const fileDir = f.name.match(/(.*)[/\\]/);
     const fileDirPath = fileDir ? fileDir[1] : "";
     if (separator.title.length > 0 && fileDirPath === separator.title) {
-      f.style.display = nowHidden ? "none" : "unset";
+      f.style.display = nowHidden ? "none" : "";
     }
   }
 }
@@ -13499,24 +13684,22 @@ async function addSeparators() {
 }
 var gallerySendImage = (_images) => [currentImage];
 window.gallerySendImage = gallerySendImage;
-function updateStatusWithSort(...messages) {
+function updateStatusLine(...messages) {
   if (!el.status) return;
   messages.unshift(["Sort", sortMode.name]);
   const fragment = document.createDocumentFragment();
   for (let i = 0; i < messages.length; i++) {
     const div = document.createElement("div");
     if (Array.isArray(messages[i])) {
-      const [text1, text2] = messages[i];
-      const tDiv1 = document.createElement("div");
-      tDiv1.innerText = `${text1}:`;
-      const tDiv2 = document.createElement("div");
-      tDiv2.innerText = text2;
-      tDiv2.title = text2;
-      div.append(tDiv1, tDiv2);
+      const [k, v] = messages[i];
+      const tDiv = document.createElement("div");
+      const ico = icons[k] || `${k}:`;
+      tDiv.innerText = `${ico} ${v}`;
+      div.append(tDiv);
     } else {
-      const tDiv1 = document.createElement("div");
-      tDiv1.innerText = messages[i];
-      div.append(tDiv1);
+      const tDiv = document.createElement("div");
+      tDiv.innerText = messages[i];
+      div.append(tDiv);
     }
     fragment.append(div);
   }
@@ -13595,7 +13778,7 @@ async function gallerySearch() {
         const isOpen = separatorStates.get(dirPath);
         f.style.display = !dirPath || isOpen ? "unset" : "none";
       });
-      updateStatusWithSort("Filter", "Cleared", ["Images", allFiles.length.toLocaleString()]);
+      updateStatusLine("Filter", "Cleared", ["Images", allFiles.length.toLocaleString()]);
       return;
     }
     let totalFound = 0;
@@ -13640,7 +13823,7 @@ async function gallerySearch() {
       f.style.display = fileMatches.has(f) ? "unset" : "none";
     }
     const t1 = performance.now();
-    updateStatusWithSort("Filter", ["Images", `${totalFound.toLocaleString()} / ${allFiles.length.toLocaleString()}`], `${iconStopwatch} ${Math.round(t1 - t0).toLocaleString()}ms`);
+    updateStatusLine("Filter", ["Images", `${totalFound.toLocaleString()} / ${allFiles.length.toLocaleString()}`], ["Time", `${Math.round(t1 - t0).toLocaleString()}ms`]);
     timer(`galleryFilter:${str}`, t1 - t0);
     refreshGallerySelection();
   }, 250);
@@ -13665,15 +13848,14 @@ async function gallerySort(key) {
   const folderGroups = /* @__PURE__ */ new Map();
   for (const file of subfolderFiles) {
     const dir = getDirPath(file);
-    if (!folderGroups.has(dir)) {
-      folderGroups.set(dir, []);
-    }
+    if (!folderGroups.has(dir)) folderGroups.set(dir, []);
     folderGroups.get(dir).push(file);
   }
   sortMode = gallerySorter[currentSort];
   rootFiles.sort(sortMode.func);
   rootFiles.forEach((node) => fragment.appendChild(node));
-  const sortedFolderNames = Array.from(folderGroups.keys()).sort((a, b) => a.localeCompare(b));
+  const folderNames = Array.from(folderGroups.keys());
+  const sortedFolderNames = currentSort.endsWith("A") ? folderNames.sort((a, b) => a.localeCompare(b)) : folderNames.sort((a, b) => b.localeCompare(a));
   for (const folderName of sortedFolderNames) {
     const files = folderGroups.get(folderName);
     files.sort(sortMode.func);
@@ -13697,7 +13879,7 @@ async function gallerySort(key) {
   }
   const t1 = performance.now();
   log(`gallerySort: sort=${sortMode.name} len=${arr.length} time=${Math.floor(t1 - t0)}`);
-  updateStatusWithSort(["Images", arr.length.toLocaleString()], `${iconStopwatch} ${Math.round(t1 - t0).toLocaleString()}ms`);
+  updateStatusLine(["Images", arr.length.toLocaleString()], ["Time", `${Math.round(t1 - t0).toLocaleString()}ms`]);
   timer(`gallerySort:${sortMode.name}`, t1 - t0);
   refreshGallerySelection();
 }
@@ -13727,11 +13909,14 @@ function showCleaningMsg(count, all = false) {
 var maintenanceQueue = new SimpleFunctionQueue("Gallery Maintenance");
 async function thumbCacheCleanup(folder, imgCount, controller, force = false) {
   if (!opts.browser_cache && !force) return;
+  if (!folder || !imgCount) return;
+  if (Date.now() - cleanupTimers[folder] < minCleanupTime) return;
+  cleanupTimers[folder] = Date.now();
   try {
     if (typeof folder !== "string" || typeof imgCount !== "number") {
       throw new Error("Function called with invalid arguments");
     }
-    debug("thumbCacheCleanup: wait");
+    debug("thumbCacheCleanup", { folder, imgCount });
     await awaitForGallery(imgCount, controller.signal);
   } catch (err) {
     error("thumbCacheCleanup", { folder, error: err });
@@ -13740,19 +13925,20 @@ async function thumbCacheCleanup(folder, imgCount, controller, force = false) {
   maintenanceQueue.enqueue({
     signal: controller.signal,
     callback: async () => {
-      log("maintenanceQueue", { folder });
+      if (Date.now() - maintenanceTimers[folder] < minCleanupTime) return;
+      maintenanceTimers[folder] = Date.now();
       const t0 = performance.now();
       const keptGalleryHashes = force ? /* @__PURE__ */ new Set() : new Set(galleryHashes.values());
       const folderNormalized = folder.replace(/\/+/g, "/").replace(/\/$/, "");
       const recursiveFolder = IDBKeyRange.bound(folderNormalized, `${folderNormalized}\uFFFF`, false, true);
+      if (keptGalleryHashes.size < minCleanupCount && !force) return;
       const cachedHashesCount = await idbCount(recursiveFolder).catch((e) => {
         error("maintenanceQueue", { folder, error: e });
         return Infinity;
       });
       const cleanupCount = cachedHashesCount - keptGalleryHashes.size;
-      if (!force && (cleanupCount < 500 || !Number.isFinite(cleanupCount))) {
-        return;
-      }
+      if (!force && (cleanupCount < minCleanupCount || !Number.isFinite(cleanupCount))) return;
+      log("galleryMaintenance", { folder });
       if (controller.signal.aborted) {
         debug("maintenanceQueue", { folder, reason: controller.signal.reason });
         return;
@@ -13760,10 +13946,10 @@ async function thumbCacheCleanup(folder, imgCount, controller, force = false) {
       const cb_clearMsg = showCleaningMsg(cleanupCount);
       await idbFolderCleanup(keptGalleryHashes, recursiveFolder, controller.signal).then((delcount) => {
         const t1 = performance.now();
-        log("maintenanceQueue", { folder, kept: keptGalleryHashes.size, deleted: delcount, time: Math.round(t1 - t0) });
+        log("galleryMaintenance", { folder, kept: keptGalleryHashes.size, deleted: delcount, time: Math.round(t1 - t0) });
         timer(`thumbnailDBCleanup:${folder}`, t1 - t0);
         currentGalleryFolder = null;
-        updateStatusWithSort("Thumbnail cache cleared");
+        updateStatusLine("Thumbnail cache cleared");
       }).catch((reason) => {
         SimpleFunctionQueue.abortLogger("thumbCacheCleanup", reason);
       }).finally(async () => {
@@ -13780,7 +13966,7 @@ function resetGalleryState(reason) {
   const controller = new AbortController();
   maintenanceController = controller;
   galleryHashes.clear();
-  galleryProgressBar.clear();
+  pb.hide();
   resetGallerySelection();
   return controller;
 }
@@ -13795,11 +13981,11 @@ window.clearCache = clearCache;
 async function fetchFilesHT(evt, controller) {
   const t0 = performance.now();
   const fragment = document.createDocumentFragment();
-  updateStatusWithSort(["Folder", evt.target.name], "in-progress");
+  updateStatusLine(["Folder", evt.target.name], "in-progress");
   let numFiles = 0;
   const res = await authFetch(`${window.api}/browser/files?folder=${encodeURI(evt.target.name)}`);
   if (!res || res.status !== 200) {
-    updateStatusWithSort(["Folder", evt.target.name], ["Failed", res?.statusText || "No response"]);
+    updateStatusLine(["Folder", evt.target.name], ["Failed", res?.statusText || "No response"]);
     return;
   }
   const jsonData = await res.json();
@@ -13816,10 +14002,10 @@ async function fetchFilesHT(evt, controller) {
   if (controller.signal.aborted) return;
   el.files.appendChild(fragment);
   const t1 = performance.now();
-  log(`gallery: folder=${evt.target.name} num=${numFiles} time=${Math.floor(t1 - t0)}ms`);
+  log(`gallery: folder=${evt.target.name} num=${numFiles} method=http time=${Math.floor(t1 - t0)}ms`);
   timer(`galleryFetch:${evt.target.name}`, t1 - t0);
-  updateStatusWithSort(["Folder", evt.target.name], ["Images", numFiles.toLocaleString()], `${iconStopwatch} ${Math.floor(t1 - t0).toLocaleString()}ms`);
-  galleryProgressBar.start(numFiles);
+  updateStatusLine(["Folder", evt.target.name], ["Images", numFiles.toLocaleString()], ["Time", `${Math.floor(t1 - t0).toLocaleString()}ms`]);
+  pb.start(numFiles);
   addSeparators();
   refreshGallerySelection();
   thumbCacheCleanup(evt.target.name, numFiles, controller);
@@ -13844,7 +14030,7 @@ async function fetchFilesWS(evt) {
     await fetchFilesHT(evt, controller);
     return;
   }
-  updateStatusWithSort(["Folder", evt.target.name]);
+  updateStatusLine(["Folder", evt.target.name]);
   const t0 = performance.now();
   let numFiles = 0;
   let t1 = performance.now();
@@ -13861,8 +14047,8 @@ async function fetchFilesWS(evt) {
         const file = new GalleryFile(data[0], fileName, controller.signal);
         numFiles++;
         fragment.appendChild(file);
-        if (numFiles % 100 === 0) {
-          updateStatusWithSort(["Folder", evt.target.name], ["Images", numFiles.toLocaleString()], "in-progress", `${iconStopwatch} ${Math.floor(t1 - t0).toLocaleString()}ms`);
+        if (numFiles % fragmentSize === 0) {
+          updateStatusLine(["Folder", evt.target.name], ["Images", numFiles.toLocaleString()], ["Status", "in-progress"], ["Time", `${Math.floor(t1 - t0).toLocaleString()}ms`]);
           el.files.appendChild(fragment);
           fragment = document.createDocumentFragment();
         }
@@ -13872,9 +14058,9 @@ async function fetchFilesWS(evt) {
   ws.onclose = (event2) => {
     if (controller.signal.aborted) return;
     el.files.appendChild(fragment);
-    log(`gallery: folder=${evt.target.name} num=${numFiles} time=${Math.floor(t1 - t0)}ms`);
-    updateStatusWithSort(["Folder", evt.target.name], ["Images", numFiles.toLocaleString()], `${iconStopwatch} ${Math.floor(t1 - t0).toLocaleString()}ms`);
-    galleryProgressBar.start(numFiles);
+    log(`gallery: folder=${evt.target.name} num=${numFiles} method=ws time=${Math.floor(t1 - t0)}ms`);
+    updateStatusLine(["Folder", evt.target.name], ["Images", numFiles.toLocaleString()], ["Time", `${Math.floor(t1 - t0).toLocaleString()}ms`]);
+    pb.start(numFiles);
     addSeparators();
     refreshGallerySelection();
     thumbCacheCleanup(evt.target.name, numFiles, controller);
@@ -13959,7 +14145,7 @@ async function initGalleryAutoRefresh() {
   galleryVisObserver.observe(galleryTab, { attributeFilter: ["class", "style"], attributeOldValue: true });
 }
 async function overlayDelete(evt) {
-  const res = await authFetch(`${window.api}/delete-image?file=${encodeURIComponent(currentImage)}`);
+  const res = await authFetch(`${window.api}/delete-image?file=${encodeURIComponent(currentImage)}`, { method: "DELETE" });
   evt.stopPropagation();
   if (!res || res.status !== 200) {
     error("galleryDelete", { file: currentImage, status: res?.status, statusText: res?.statusText });
@@ -14066,7 +14252,7 @@ async function initGallery() {
   injectGalleryStatusCSS();
   setOverlayAnimation();
   const progress = gradioApp().getElementById("tab-gallery-progress");
-  if (progress) galleryProgressBar.attachTo(progress);
+  if (progress) pb.attachTo(progress);
   else log("initGallery", "Failed to attach loading progress bar");
   el.search.addEventListener("input", gallerySearch);
   el.btnSend = gradioApp().getElementById("tab-gallery-send-image");
@@ -15375,7 +15561,7 @@ async function getLocaleData(desiredLocale = null) {
     localeData.locale = desiredLocale || "en";
     localeData.prev = localeData.locale;
   }
-  log("getLocale", desiredLocale, localeData.locale);
+  log("getLocale", { lang: desiredLocale, locale: localeData.locale });
   let json = {};
   try {
     let res = await fetch(`${window.subpath}/file=ui/locale/locale_${localeData.locale}.json`);
@@ -15467,8 +15653,7 @@ async function setHints() {
 }
 async function applyHintToElement(el2) {
   if (!localeData.data || localeData.data.length === 0) return;
-  if (!el2.textContent) return;
-  const isValidElement = el2.tagName === "BUTTON" || el2.tagName === "H2" || el2.tagName === "SPAN" && (el2.parentElement?.tagName === "LABEL" || el2.parentElement?.classList.contains("label-wrap") || el2.dataset.testid === "block-info");
+  const isValidElement = el2.tagName === "BUTTON" || el2.tagName === "H2" || el2.classList.contains("hint") || el2.tagName === "SPAN" && (el2.parentElement?.tagName === "LABEL" || el2.parentElement?.classList.contains("label-wrap") || el2.dataset.testid === "block-info");
   if (!isValidElement) return;
   let found;
   if (el2.id) found = localeData.data.find((l) => l.id && (l.id === el2.id || el2.id.endsWith(l.id)));
@@ -15476,16 +15661,14 @@ async function applyHintToElement(el2) {
     if (el2.dataset.original) found = localeData.data.find((l) => l.label.toLowerCase().trim() === el2.dataset.original.toLowerCase().trim());
     else found = localeData.data.find((l) => l.label.toLowerCase().trim() === el2.textContent.toLowerCase().trim());
   }
-  if (found?.localized?.length > 0) {
+  if (el2.textContent && el2.textContent.length > 0 && found?.localized?.length > 0) {
     if (!el2.dataset.original) el2.dataset.original = el2.textContent;
     replaceTextContent(el2, found.localized);
   }
   if (found?.hint?.length > 0) setHint(el2, found);
 }
 function initializeDOMObserver() {
-  if (hintsObserver) {
-    hintsObserver.disconnect();
-  }
+  if (hintsObserver) hintsObserver.disconnect();
   hintsObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       if (mutation.type === "childList") {
@@ -15494,12 +15677,15 @@ function initializeDOMObserver() {
             applyHintToElement(node);
             const elements = [
               ...Array.from(node.querySelectorAll("button")),
-              ...Array.from(node.querySelectorAll("h2")),
+              ...Array.from(gradioApp().querySelectorAll("h1")),
+              ...Array.from(gradioApp().querySelectorAll("h2")),
+              ...Array.from(gradioApp().querySelectorAll("h3")),
+              ...Array.from(gradioApp().querySelectorAll(".hint")),
               ...Array.from(node.querySelectorAll("label > span")),
               ...Array.from(node.querySelectorAll(".label-wrap > span")),
               ...Array.from(node.querySelectorAll('span[data-testid="block-info"]'))
             ];
-            if (node.matches && (node.matches("button") || node.matches("h2") || node.matches("label > span") || node.matches(".label-wrap > span") || node.matches('span[data-testid="block-info"]'))) {
+            if (node.matches && (node.matches("button") || node.matches("h1") || node.matches("h2") || node.matches("h3") || node.matches("label > span") || node.matches(".hint") || node.matches(".label-wrap > span") || node.matches('span[data-testid="block-info"]'))) {
               elements.push(node);
             }
             elements.forEach((el2) => applyHintToElement(el2));
@@ -15635,12 +15821,12 @@ var generateForever = (genbuttonid) => {
     const genbutton = gradioApp().querySelector(genbuttonid);
     if (!(genbutton instanceof HTMLElement)) return;
     const isBusy = () => {
-      let busy = document.getElementById("progressbar")?.style.display === "block";
-      if (!busy) {
+      let busy2 = document.getElementById("progressbar")?.style.display === "block";
+      if (!busy2) {
         const outerButton = genbutton.parentElement.closest("button");
-        busy = outerButton?.classList.contains("generate") && outerButton?.classList.contains("active");
+        busy2 = outerButton?.classList.contains("generate") && outerButton?.classList.contains("active");
       }
-      return busy;
+      return busy2;
     };
     log("generateForever: start");
     if (!isBusy()) genbutton.click();
@@ -15821,13 +16007,27 @@ async function createSplash() {
   monitorLog();
   await authFetch(`${window.api}/motd`).then((res) => res.text()).then((text) => {
     const clean = text.replace(/["]+/g, "");
-    log("getMOTD", clean);
+    const boldMatch = clean.match(/<b>(.*?)<\/b>/);
+    const boldText = boldMatch ? boldMatch[1] : clean;
+    if (boldMatch) log("getMOTD", { version: boldText });
+    else log("getMOTD", { text: clean });
     const motdEl = document.getElementById("motd");
     if (motdEl) motdEl.innerHTML = clean;
   }).catch((err) => error(`getMOTD: ${err}`));
   log("loadGradioUi");
 }
 window.onload = createSplash;
+
+// ui/legacy.ts
+function addLegacyNotice() {
+  log("legacyNotice");
+  const notice = document.createElement("div");
+  notice.id = "legacy-notice";
+  notice.className = "legacy-standard";
+  notice.textContent = "Legacy";
+  notice.title = "Standard UI is a legacy interface that is no longer maintained and will be removed in the future. Please switch to ModernUI for best experience.";
+  document.body.appendChild(notice);
+}
 
 // ui/startup.ts
 window.api = "/sdapi/v1";
@@ -15859,6 +16059,14 @@ async function postStartup() {
   disconnectHintsObserver();
   logTimers();
 }
+async function updateSubpath() {
+  log("mountURL", window.opts.subpath);
+  if (window.opts.subpath?.length > 0) {
+    window.subpath = window.opts.subpath;
+    window.api = `${window.subpath}/sdapi/v1`;
+  }
+  log("API", { url: window.api });
+}
 async function initStartup() {
   const t0 = performance.now();
   log("initGradio", Math.round(t0 - appStartTime));
@@ -15879,14 +16087,10 @@ async function initStartup() {
   startupPromises.push(Promise.resolve(setupControlUI()));
   await reconnectUI();
   await waitForOpts();
-  log("mountURL", window.opts.subpath);
-  if (window.opts.subpath?.length > 0) {
-    window.subpath = window.opts.subpath;
-    window.api = `${window.subpath}/sdapi/v1`;
-  }
-  startupPromises.push(initLogMonitor());
+  await updateSubpath();
   executeCallbacks(uiReadyCallbacks);
   if (window.waitForUiReady) await window.waitForUiReady();
+  startupPromises.push(Promise.resolve(initLogMonitor()));
   startupPromises.push(Promise.resolve(initGallery()));
   startupPromises.push(Promise.resolve(setRefreshInterval()));
   startupPromises.push(Promise.resolve(setupExtraNetworks()));
@@ -15897,6 +16101,7 @@ async function initStartup() {
   startupPromises.push(Promise.resolve(applyStyles()));
   startupPromises.push(Promise.resolve(initIndexDB()));
   startupPromises.push(Promise.resolve(initTableSorter()));
+  if (window.opts.theme_type !== "Modern") addLegacyNotice();
   const t1 = performance.now();
   log("initStartup", Math.round(1e3 * (t1 - t0) / 1e6));
   removeSplash();
@@ -16310,7 +16515,7 @@ var Timesheet = class {
 // ui/history.ts
 var inferenceTypes = ["inference", "vae", "te"];
 var ioTypes = ["load", "save"];
-function refreshHistory() {
+async function refreshHistory() {
   log("refreshHistory");
   authFetch(`${window.api}/history`, { priority: "low" }).then((res) => {
     if (!res) return;
@@ -16361,6 +16566,70 @@ function refreshHistory() {
   });
 }
 window.refreshHistory = refreshHistory;
+
+// ui/storage.ts
+var types = ["Images", "Videos", "Models", "Data", "Cache", "Code", "Other"];
+function buildTable(type, data) {
+  const totalSize = data.reduce((acc, entry) => acc + entry.size, 0);
+  const totalLoc = data.length;
+  const totalFiles = data.reduce((acc, entry) => acc + entry.nfiles, 0);
+  const totalFolders = data.reduce((acc, entry) => acc + entry.nfolders, 0);
+  let title = `Locations: ${totalLoc}
+Total Size: ${(totalSize / (1024 * 1024)).toLocaleString(void 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MB
+Total Files: ${totalFiles}
+Total Folders: ${totalFolders}
+`;
+  let html = `<h2 title="${title}">${type}</h2><table><tbody>`;
+  for (const entry of data) {
+    if (entry.size === 0) continue;
+    const size = (entry.size / (1024 * 1024)).toLocaleString(void 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " MB";
+    const mtime = entry.mtime > 0 ? new Date(entry.mtime * 1e3).toLocaleString() : "";
+    title = `Type: ${entry.type}
+Name: ${entry.name}
+Size: ${size}
+Last modified: ${mtime}
+`;
+    title += `Folders: ${entry.folders.join(", ")}
+Resolved paths: ${entry.paths.join(", ")}
+`;
+    title += `Subfolders: ${entry.nfolders}
+Files: ${entry.nfiles}
+Symlinks: ${entry.nsymlinks}
+Errors: ${entry.nerrors}
+`;
+    title += `Time to scan: ${entry.time.toFixed(3)} seconds`;
+    const perc = Math.round(entry.size / totalSize * 100);
+    const color = `rgb(${perc}, 50, 80)`;
+    const css = `background: linear-gradient(to right, ${color} ${perc}%, transparent ${perc}%);`;
+    html += `<tr title="${title}"><td style="${css}">${entry.name}</td><td>${size}</td><td>${mtime}</td></tr>`;
+  }
+  html += "</tbody></table>";
+  return html;
+}
+async function refreshStorage(storageTypes) {
+  log("refreshStorage", storageTypes);
+  authFetch(`${window.api}/storage?types=${storageTypes.join(",")}`, { priority: "low" }).then((res) => {
+    if (!res) return;
+    const timeline = document.getElementById("storage_timeline");
+    const table = document.getElementById("storage_table");
+    if (!timeline || !table) return;
+    timeline.innerHTML = "";
+    res.json().then((rawData) => {
+      const data = rawData;
+      if (!data || !data.length) {
+        table.innerHTML = "<p>No storage data available.</p>";
+        return;
+      }
+      table.innerHTML = "";
+      if (storageTypes.includes("All")) storageTypes = types;
+      for (const type of storageTypes) {
+        const typeData = data.filter((entry) => entry.type === type);
+        if (typeData.length > 0) table.innerHTML += buildTable(type, typeData);
+      }
+    });
+  });
+}
+window.refreshStorage = refreshStorage;
 
 // ui/aspectRatioOverlay.ts
 var currentWidth = null;
@@ -16439,6 +16708,102 @@ function aspectRatioCallback() {
   }
 }
 onAfterUiUpdate(aspectRatioCallback);
+
+// ui/resolutionLock.ts
+var RES_DEBOUNCE = 350;
+var AR_DEBOUNCE = 120;
+var timers = /* @__PURE__ */ new WeakMap();
+var busy = /* @__PURE__ */ new WeakSet();
+function parseAR(ar) {
+  if (!ar || ar === "AR") return null;
+  const parts = ar.split(":");
+  if (parts.length !== 2) return null;
+  const w = parseInt(parts[0], 10);
+  const h = parseInt(parts[1], 10);
+  return w > 0 && h > 0 ? [w, h] : null;
+}
+function numberInput(group) {
+  const inp = group.querySelector("input[type=number]") || group.querySelector("input");
+  return inp instanceof HTMLInputElement ? inp : null;
+}
+function readValue(group) {
+  const inp = numberInput(group);
+  return inp ? Number(inp.value) : 0;
+}
+function writeValue(group, raw) {
+  const inp = numberInput(group);
+  if (!inp) return;
+  const step = Number(inp.step) || 8;
+  const min = inp.min !== "" ? Number(inp.min) : 0;
+  const max = inp.max !== "" ? Number(inp.max) : 8192;
+  const value = Math.max(min, Math.min(max, Math.round(raw / step) * step));
+  if (value === Number(inp.value)) return;
+  group.querySelectorAll("input").forEach((el2) => {
+    if (!(el2 instanceof HTMLInputElement)) return;
+    el2.value = String(value);
+    const e = new Event("input", { bubbles: true });
+    Object.defineProperty(e, "target", { value: el2 });
+    el2.dispatchEvent(e);
+  });
+}
+function arValue(arEl) {
+  const inp = arEl.querySelector("input");
+  return inp instanceof HTMLInputElement ? inp.value : "AR";
+}
+function pairOf(arEl) {
+  let container = arEl.parentElement;
+  for (let i = 0; i < 6 && container; i++) {
+    const width = container.querySelector('[id$="_width"]');
+    const height = container.querySelector('[id$="_height"]');
+    if (width && height) return { width, height };
+    container = container.parentElement;
+  }
+  return null;
+}
+function settle(arEl, source) {
+  const ar = parseAR(arValue(arEl));
+  if (!ar) return;
+  const pair = pairOf(arEl);
+  if (!pair) return;
+  const [rw, rh] = ar;
+  busy.add(arEl);
+  if (source === "height") writeValue(pair.width, readValue(pair.height) * rw / rh);
+  else writeValue(pair.height, readValue(pair.width) * rh / rw);
+  busy.delete(arEl);
+}
+function schedule(arEl, source, delay2) {
+  if (busy.has(arEl)) return;
+  clearTimeout(timers.get(arEl));
+  timers.set(arEl, setTimeout(() => settle(arEl, source), delay2));
+}
+function flush(arEl, source) {
+  if (busy.has(arEl)) return;
+  clearTimeout(timers.get(arEl));
+  settle(arEl, source);
+}
+function bind(arEl, group, source) {
+  group.querySelectorAll("input").forEach((el2) => {
+    if (!(el2 instanceof HTMLInputElement) || el2.classList.contains("ar-lock-bound")) return;
+    el2.classList.add("ar-lock-bound");
+    el2.addEventListener("input", () => schedule(arEl, source, RES_DEBOUNCE));
+    el2.addEventListener("change", () => flush(arEl, source));
+  });
+}
+function setupResolutionLock() {
+  gradioApp().querySelectorAll(".ar-dropdown").forEach((arEl) => {
+    const pair = pairOf(arEl);
+    if (!pair) return;
+    bind(arEl, pair.width, "width");
+    bind(arEl, pair.height, "height");
+    arEl.querySelectorAll("input").forEach((el2) => {
+      if (!(el2 instanceof HTMLInputElement) || el2.classList.contains("ar-lock-bound")) return;
+      el2.classList.add("ar-lock-bound");
+      el2.addEventListener("change", () => flush(arEl, "width"));
+      el2.addEventListener("input", () => schedule(arEl, "width", AR_DEBOUNCE));
+    });
+  });
+}
+onAfterUiUpdate(setupResolutionLock);
 
 // ui/editAttention.ts
 function keyupEditAttention(event2) {
@@ -18967,12 +19332,12 @@ async function updateGPU() {
     }
     const gpuTbody = gpuTable.querySelector("tbody");
     if (!gpuTbody) return;
-    for (const gpu of data) {
-      let rows = `<tr><td>GPU</td><td>${gpu.name}</td></tr>`;
-      for (const item of Object.entries(gpu.data)) rows += `<tr><td>${item[0]}</td><td>${item[1]}</td></tr>`;
-      gpuTbody.innerHTML = rows;
-      if (gpu.chart && gpu.chart.length === 2) updateGPUChart(gpu.chart[0], gpu.chart[1]);
-    }
+    let gpu = { data: {} };
+    if (Array.isArray(data) && data.length >= 1) gpu = data[0];
+    let rows = `<tr><td style="color: var(--color-info)">GPU</td><td>${gpu.name || "unknown"}</td></tr>`;
+    for (const item of Object.entries(gpu.data)) rows += `<tr><td style="color: var(--color-info)">${item[0]}</td><td>${item[1]}</td></tr>`;
+    gpuTbody.innerHTML = rows;
+    if (gpu.chart && gpu.chart.length === 2) updateGPUChart(gpu.chart[0], gpu.chart[1]);
     gpuEl.style.display = "block";
   } catch (e) {
     error("updateGPU", e);
@@ -18986,7 +19351,7 @@ async function startGPU() {
   gpuEl.style.display = "block";
   if (gpuInterval) clearInterval(gpuInterval);
   const interval = window.opts?.gpu_monitor || 3e3;
-  log("startGPU", interval);
+  log("startGPUmonitor", interval);
   gpuInterval = setInterval(updateGPU, interval);
   updateGPU();
 }

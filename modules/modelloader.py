@@ -407,9 +407,9 @@ def cleanup_models():
 
 def move_files(src_path: str, dest_path: str, ext_filter: str | None = None):
     try:
-        if not os.path.exists(dest_path):
-            os.makedirs(dest_path)
         if os.path.exists(src_path):
+            if not os.path.exists(dest_path):
+                os.makedirs(dest_path)
             for file in os.listdir(src_path):
                 fullpath = os.path.join(src_path, file)
                 if os.path.isfile(fullpath):
@@ -428,7 +428,7 @@ def move_files(src_path: str, dest_path: str, ext_filter: str | None = None):
         pass
 
 
-def load_upscalers():
+def load_upscalers(quiet=False):
     # We can only do this 'magic' method to dynamically load upscalers if they are referenced, so we'll try to import any _model.py files before looking in __subclasses__
     t0 = time.time()
     modules_dir = os.path.join(paths.script_path, "modules", "postprocess")
@@ -465,5 +465,6 @@ def load_upscalers():
         log.error('Upscalers: no data')
     shared.sd_upscalers = upscalers
     t1 = time.time()
-    log.info(f"Available Upscalers: items={len(shared.sd_upscalers)} downloaded={len([x for x in shared.sd_upscalers if x.data_path is not None and os.path.isfile(x.data_path)])} user={len([x for x in shared.sd_upscalers if x.custom])} time={t1-t0:.2f} types={upscaler_types}")
+    if not quiet:
+        log.info(f"Available Upscalers: items={len(shared.sd_upscalers)} downloaded={len([x for x in shared.sd_upscalers if x.data_path is not None and os.path.isfile(x.data_path)])} user={len([x for x in shared.sd_upscalers if x.custom])} time={t1-t0:.2f} types={upscaler_types}")
     return [x.name for x in shared.sd_upscalers]

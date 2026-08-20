@@ -16,8 +16,6 @@ config = {
     'None': {},
     # pose models
     'OpenPose': {'class': None, 'group': 'Pose', 'checkpoint': True, 'params': {'include_body': True, 'include_hand': False, 'include_face': False}},
-    'MediaPipe Face': {'class': None, 'group': 'Pose', 'checkpoint': False, 'params': {'max_faces': 1, 'min_confidence': 0.5}},
-    'DWPose (ONNX)': {'class': None, 'group': 'Pose', 'checkpoint': False, 'params': {'min_confidence': 0.3}},
     'RTMW': {'class': None, 'group': 'Pose', 'checkpoint': False, 'params': {'min_confidence': 0.3, 'draw_body_pose': True, 'draw_hand_pose': True, 'draw_face_pose': True}},
     'RTMO': {'class': None, 'group': 'Pose', 'checkpoint': False, 'params': {'min_confidence': 0.3}},
     'ViTPose': {'class': None, 'group': 'Pose', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'usyd-community/vitpose-plus-base'}, 'params': {'min_confidence': 0.3}},
@@ -29,8 +27,6 @@ config = {
     'HED': {'class': None, 'group': 'Edge', 'checkpoint': True, 'params': {'scribble': False, 'safe': False}},
     'PidiNet': {'class': None, 'group': 'Edge', 'checkpoint': True, 'params': {'scribble': False, 'safe': False, 'apply_filter': False}},
     'MLSD': {'class': None, 'group': 'Edge', 'checkpoint': True, 'params': {'thr_v': 0.1, 'thr_d': 0.1}},
-    'TEED': {'class': None, 'group': 'Edge', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'fal/teed'}, 'params': {}},
-    'Anyline': {'class': None, 'group': 'Edge', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'TheMistoAI/MistoLine'}, 'params': {}},
     # depth models
     'Midas Depth Hybrid': {'class': None, 'group': 'Depth', 'checkpoint': True, 'params': {'bg_th': 0.1, 'depth_and_normal': False}},
     'Leres Depth': {'class': None, 'group': 'Depth', 'checkpoint': True, 'params': {'boost': False, 'thr_a': 0, 'thr_b': 0}},
@@ -45,16 +41,21 @@ config = {
     'Marigold Depth LCM': {'class': None, 'group': 'Depth', 'checkpoint': True, 'params': {'denoising_steps': 1, 'ensemble_size': 1, 'processing_res': 768, 'match_input_res': True, 'color_map': 'None'}, 'load_config': {'pretrained_model_or_path': 'prs-eth/marigold-depth-lcm-v1-0'}},
     'Lotus Depth': {'class': None, 'group': 'Depth', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'jingheya/lotus-depth-g-v2-1-disparity'}, 'params': {'color_map': 'inferno'}},
     # normal models
-    'Normal Bae': {'class': None, 'group': 'Normal', 'checkpoint': True, 'params': {}},
     'DSINE': {'class': None, 'group': 'Normal', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'hugoycj/DSINE-hub'}, 'params': {}},
     'StableNormal': {'class': None, 'group': 'Normal', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'Stable-X/StableNormal'}, 'params': {}},
     'Marigold Normals': {'class': None, 'group': 'Normal', 'checkpoint': True, 'params': {'denoising_steps': 4, 'ensemble_size': 4, 'processing_res': 768, 'match_input_res': True}, 'load_config': {'pretrained_model_or_path': 'prs-eth/marigold-normals-v1-1'}},
     # segmentation models
-    'SegmentAnything': {'class': None, 'group': 'Segmentation', 'checkpoint': True, 'model': 'Base', 'params': {}},
-    'SAM 2.1': {'class': None, 'group': 'Segmentation', 'checkpoint': True, 'model': 'Large', 'load_config': {'pretrained_model_or_path': 'facebook/sam2.1-hiera-large'}, 'params': {}},
+    'SegmentAnything 1.0': {'class': None, 'group': 'Segmentation', 'checkpoint': True, 'model': 'Base', 'params': {}},
+    'SegmentAnything 2.1': {'class': None, 'group': 'Segmentation', 'checkpoint': True, 'model': 'Large', 'load_config': {'pretrained_model_or_path': 'facebook/sam2.1-hiera-large'}, 'params': {}},
     'OneFormer': {'class': None, 'group': 'Segmentation', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'shi-labs/oneformer_ade20k_swin_large'}, 'params': {}},
     # other models
     'Shuffle': {'class': None, 'group': 'Other', 'checkpoint': False, 'params': {}},
+    # legacy models
+    'MediaPipe Face (Legacy)': {'class': None, 'group': 'Pose', 'checkpoint': False, 'params': {'max_faces': 1, 'min_confidence': 0.5}},
+    'DWPose (Legacy)': {'class': None, 'group': 'Pose', 'checkpoint': False, 'params': {'min_confidence': 0.3}},
+    'TEED (Legacy)': {'class': None, 'group': 'Edge', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'fal/teed'}, 'params': {}},
+    'Anyline (Legacy)': {'class': None, 'group': 'Edge', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'TheMistoAI/MistoLine'}, 'params': {}},
+    'Normal Bae (Legacy)': {'class': None, 'group': 'Normal', 'checkpoint': True, 'params': {}},
 }
 
 
@@ -81,6 +82,7 @@ def delay_load_config():
     from modules.control.proc.depth_pro import DepthProDetector
     from modules.control.proc.depth_anything_v2 import DepthAnythingV2Detector
     from modules.control.proc.teed import TEEDDetector
+    from modules.control.proc.normalbae import NormalBaeDetector
     from modules.control.proc.anyline import AnylineDetector
     from modules.control.proc.rtmlib_pose import RtmlibPoseDetector
     from modules.control.proc.vitpose import ViTPoseDetector
@@ -95,8 +97,8 @@ def delay_load_config():
         'None': {},
         # pose models
         'OpenPose': {'class': OpenposeDetector, 'group': 'Pose', 'checkpoint': True, 'params': {'include_body': True, 'include_hand': False, 'include_face': False}},
-        'MediaPipe Face': {'class': MediapipeFaceDetector, 'group': 'Pose', 'checkpoint': False, 'params': {'max_faces': 1, 'min_confidence': 0.5}},
-        'DWPose (ONNX)': {'class': RtmlibPoseDetector, 'group': 'Pose', 'checkpoint': False, 'params': {'min_confidence': 0.3}},
+        'MediaPipe Face (Legacy)': {'class': MediapipeFaceDetector, 'group': 'Pose', 'checkpoint': False, 'params': {'max_faces': 1, 'min_confidence': 0.5}},
+        'DWPose (Legacy)': {'class': RtmlibPoseDetector, 'group': 'Pose', 'checkpoint': False, 'params': {'min_confidence': 0.3}},
         'RTMW': {'class': RtmlibPoseDetector, 'group': 'Pose', 'checkpoint': False, 'params': {'min_confidence': 0.3, 'draw_body_pose': True, 'draw_hand_pose': True, 'draw_face_pose': True}},
         'RTMO': {'class': RtmlibPoseDetector, 'group': 'Pose', 'checkpoint': False, 'params': {'min_confidence': 0.3}},
         'ViTPose': {'class': ViTPoseDetector, 'group': 'Pose', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'usyd-community/vitpose-plus-base'}, 'params': {'min_confidence': 0.3}},
@@ -108,8 +110,8 @@ def delay_load_config():
         'HED': {'class': HEDdetector, 'group': 'Edge', 'checkpoint': True, 'params': {'scribble': False, 'safe': False}},
         'PidiNet': {'class': PidiNetDetector, 'group': 'Edge', 'checkpoint': True, 'params': {'scribble': False, 'safe': False, 'apply_filter': False}},
         'MLSD': {'class': MLSDdetector, 'group': 'Edge', 'checkpoint': True, 'params': {'thr_v': 0.1, 'thr_d': 0.1}},
-        'TEED': {'class': TEEDDetector, 'group': 'Edge', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'fal/teed'}, 'params': {}},
-        'Anyline': {'class': AnylineDetector, 'group': 'Edge', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'TheMistoAI/MistoLine'}, 'params': {}},
+        'TEED (Legacy)': {'class': TEEDDetector, 'group': 'Edge', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'fal/teed'}, 'params': {}},
+        'Anyline (Legacy)': {'class': AnylineDetector, 'group': 'Edge', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'TheMistoAI/MistoLine'}, 'params': {}},
         # depth models
         'Midas Depth Hybrid': {'class': MidasDetector, 'group': 'Depth', 'checkpoint': True, 'params': {'bg_th': 0.1, 'depth_and_normal': False}},
         'Leres Depth': {'class': LeresDetector, 'group': 'Depth', 'checkpoint': True, 'params': {'boost': False, 'thr_a': 0, 'thr_b': 0}},
@@ -124,13 +126,13 @@ def delay_load_config():
         'Marigold Depth LCM': {'class': MarigoldDetector, 'group': 'Depth', 'checkpoint': True, 'params': {'denoising_steps': 1, 'ensemble_size': 1, 'processing_res': 768, 'match_input_res': True, 'color_map': 'None'}, 'load_config': {'pretrained_model_or_path': 'prs-eth/marigold-depth-lcm-v1-0'}},
         'Lotus Depth': {'class': LotusDetector, 'group': 'Depth', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'jingheya/lotus-depth-g-v2-1-disparity'}, 'params': {'color_map': 'inferno'}},
         # normal models
-        'Normal Bae': {'class': None, 'group': 'Normal', 'checkpoint': True, 'params': {}},
+        'Normal Bae (Legacy)': {'class': NormalBaeDetector, 'group': 'Normal', 'checkpoint': True, 'params': {}},
         'DSINE': {'class': DSINEDetector, 'group': 'Normal', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'hugoycj/DSINE-hub'}, 'params': {}},
         'StableNormal': {'class': StableNormalDetector, 'group': 'Normal', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'Stable-X/StableNormal'}, 'params': {}},
         'Marigold Normals': {'class': MarigoldNormalsDetector, 'group': 'Normal', 'checkpoint': True, 'params': {'denoising_steps': 4, 'ensemble_size': 4, 'processing_res': 768, 'match_input_res': True}, 'load_config': {'pretrained_model_or_path': 'prs-eth/marigold-normals-v1-1'}},
         # segmentation models
-        'SegmentAnything': {'class': SamDetector, 'group': 'Segmentation', 'checkpoint': True, 'model': 'Base', 'params': {}},
-        'SAM 2.1': {'class': Sam2Detector, 'group': 'Segmentation', 'checkpoint': True, 'model': 'Large', 'load_config': {'pretrained_model_or_path': 'facebook/sam2.1-hiera-large'}, 'params': {}},
+        'SegmentAnything 1.0': {'class': SamDetector, 'group': 'Segmentation', 'checkpoint': True, 'model': 'Base', 'params': {}},
+        'SegmentAnything 2.1': {'class': Sam2Detector, 'group': 'Segmentation', 'checkpoint': True, 'model': 'Large', 'load_config': {'pretrained_model_or_path': 'facebook/sam2.1-hiera-large'}, 'params': {}},
         'OneFormer': {'class': OneFormerDetector, 'group': 'Segmentation', 'checkpoint': True, 'load_config': {'pretrained_model_or_path': 'shi-labs/oneformer_ade20k_swin_large'}, 'params': {}},
         # other models
         'Shuffle': {'class': ContentShuffleDetector, 'group': 'Other', 'checkpoint': False, 'params': {}},
@@ -177,21 +179,20 @@ def update_settings(*settings):
     update(['Leres Depth', 'params', 'boost'], settings[11])
     update(['Leres Depth', 'params', 'thr_a'], settings[12])
     update(['Leres Depth', 'params', 'thr_b'], settings[13])
-    update(['MediaPipe Face', 'params', 'max_faces'], settings[14])
-    update(['MediaPipe Face', 'params', 'min_confidence'], settings[15])
+    update(['MediaPipe Face (Legacy)', 'params', 'max_faces'], settings[14])
+    update(['MediaPipe Face (Legacy)', 'params', 'min_confidence'], settings[15])
     update(['Canny', 'params', 'low_threshold'], settings[16])
     update(['Canny', 'params', 'high_threshold'], settings[17])
-    update(['DWPose', 'model'], settings[18])
-    update(['DWPose', 'params', 'min_confidence'], settings[19])
-    update(['SegmentAnything', 'model'], settings[20])
-    update(['Edge', 'params', 'pf'], settings[21])
-    update(['Edge', 'params', 'mode'], settings[22])
-    update(['Zoe Depth', 'params', 'gamma_corrected'], settings[23])
-    update(['Marigold Depth', 'params', 'color_map'], settings[24])
-    update(['Marigold Depth', 'params', 'denoising_steps'], settings[25])
-    update(['Marigold Depth', 'params', 'ensemble_size'], settings[26])
-    update(['Depth Anything', 'params', 'color_map'], settings[27])
-    update(['Depth Pro', 'params', 'color_map'], settings[28])
+    update(['DWPose (Legacy)', 'params', 'min_confidence'], settings[18])
+    update(['SegmentAnything 1.0', 'model'], settings[19])
+    update(['Edge', 'params', 'pf'], settings[20])
+    update(['Edge', 'params', 'mode'], settings[21])
+    update(['Zoe Depth', 'params', 'gamma_corrected'], settings[22])
+    update(['Marigold Depth', 'params', 'color_map'], settings[23])
+    update(['Marigold Depth', 'params', 'denoising_steps'], settings[24])
+    update(['Marigold Depth', 'params', 'ensemble_size'], settings[25])
+    update(['Depth Anything', 'params', 'color_map'], settings[26])
+    update(['Depth Pro', 'params', 'color_map'], settings[27])
 
 
 class Processor:
@@ -262,28 +263,13 @@ class Processor:
             # log.debug(f'Control Processor loading: id="{processor_id}" class={cls.__name__}')
             debug(f'Control Processor config={self.load_config}')
             jobid = state.begin('Load processor')
-            if processor_id == 'DWPose':
-                det_ckpt = 'https://download.openmmlab.com/mmdetection/v2.0/yolox/yolox_l_8x8_300e_coco/yolox_l_8x8_300e_coco_20211126_140236-d3bd2b23.pth'
-                if 'Tiny' == config['DWPose']['model']:
-                    pose_config = 'config/rtmpose-t_8xb64-270e_coco-ubody-wholebody-256x192.py'
-                    pose_ckpt = 'https://huggingface.co/yzd-v/DWPose/resolve/main/dw-tt_ucoco.pth'
-                elif 'Medium' == config['DWPose']['model']:
-                    pose_config = 'config/rtmpose-m_8xb64-270e_coco-ubody-wholebody-256x192.py'
-                    pose_ckpt = 'https://huggingface.co/yzd-v/DWPose/resolve/main/dw-mm_ucoco.pth'
-                elif 'Large' == config['DWPose']['model']:
-                    pose_config = 'config/rtmpose-l_8xb32-270e_coco-ubody-wholebody-384x288.py'
-                    pose_ckpt = 'https://huggingface.co/yzd-v/DWPose/resolve/main/dw-ll_ucoco_384.pth'
-                else:
-                    log.error(f'Control Processor load failed: id="{processor_id}" error=unknown model type')
-                    return f'Processor failed to load: {processor_id}'
-                self.model = cls(det_ckpt=det_ckpt, pose_config=pose_config, pose_ckpt=pose_ckpt, device="cpu")
-            elif processor_id in ('DWPose (ONNX)', 'RTMW', 'RTMO'):
-                model_type = {'DWPose (ONNX)': 'DWPose', 'RTMW': 'RTMW-l', 'RTMO': 'RTMO-l'}[processor_id]
+            if processor_id in ('DWPose (Legacy)', 'RTMW', 'RTMO'):
+                model_type = {'DWPose (Legacy)': 'DWPose', 'RTMW': 'RTMW-l', 'RTMO': 'RTMO-l'}[processor_id]
                 self.model = cls.from_pretrained(model_type, **self.load_config)
-            elif 'SegmentAnything' in processor_id:
-                if 'Base' == config['SegmentAnything']['model']:
+            elif processor_id == 'SegmentAnything 1.0':
+                if 'Base' == config[processor_id]['model']:
                     self.model = cls.from_pretrained(model_path = 'segments-arnaud/sam_vit_b', filename='sam_vit_b_01ec64.pth', model_type='vit_b', **self.load_config)
-                elif 'Large' == config['SegmentAnything']['model']:
+                elif 'Large' == config[processor_id]['model']:
                     self.model = cls.from_pretrained(model_path = 'segments-arnaud/sam_vit_l', filename='sam_vit_l_0b3195.pth', model_type='vit_l', **self.load_config)
                 else:
                     log.error(f'Control Processor load failed: id="{processor_id}" error=unknown model type')

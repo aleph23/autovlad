@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import hashlib
 import threading
@@ -10,6 +11,10 @@ import rich.progress as p
 from installer import log
 from modules import shared, paths
 from modules.logger import console
+
+
+STALE_PARTIAL_DAYS = 7
+TEMP_FILE_RE = re.compile(r'^[0-9a-f]{8}\.tmp$')
 
 
 @dataclass
@@ -57,6 +62,27 @@ class DownloadManager:
         self._lock = threading.Lock()
         self._max_workers = max_workers
         self._worker_count = 0
+        threading.Thread(target=self._sweep_stale_partials, daemon=True).start()
+
+    def _sweep_stale_partials(self):
+        # Partials double as resume state, but mtime stops moving the moment a
+        # download stops, so an untouched week-old .tmp is abandoned.
+        try:
+            from modules.civitai.filemanage_civitai import iter_type_roots
+            cutoff = time.time() - STALE_PARTIAL_DAYS * 86400
+            for root in iter_type_roots():
+                for path in root.rglob('*.tmp'):
+                    if not TEMP_FILE_RE.match(path.name):
+                        continue
+                    try:
+                        stat = path.stat()
+                        if stat.st_mtime < cutoff:
+                            path.unlink()
+                            log.info(f'CivitAI stale partial removed: file="{path}" size={stat.st_size/1024/1024:.0f}MB age>{STALE_PARTIAL_DAYS}d')
+                    except OSError as e:
+                        log.warning(f'CivitAI stale partial sweep: file="{path}" {e}')
+        except Exception as e:
+            log.warning(f'CivitAI stale partial sweep error: {e}')
 
     def enqueue(self, url: str, folder: str, filename: str, model_type: str = "",
                 expected_hash: str = "", token: str | None = None,
@@ -178,6 +204,25 @@ class DownloadManager:
                 item.completed_at = datetime.now()
                 return
 
+            # A text/* response is an error or login page served with HTTP 200,
+            # not a model. Reject before writing.
+            content_type = r.headers.get('content-type', '').lower()
+            if content_type.startswith('text/'):
+                item.status = "failed"
+                item.error = f'invalid content-type: {content_type}'
+                item.completed_at = datetime.now()
+                log.warning(f'CivitAI download invalid content-type: id={item.id} content-type="{content_type}"')
+                return
+
+            # A 200 reply to a Range request means the server ignored the range
+            # and is sending the whole file; appending it to the partial would
+            # corrupt it. Truncate and restart from byte 0.
+            if starting_pos > 0 and r.status_code == 200:
+                log.warning(f'CivitAI download resume not supported: id={item.id} file="{item.filename}" restarting')
+                starting_pos = 0
+                item.bytes_downloaded = 0
+                os.truncate(temp_file, 0)
+
             total_size = int(r.headers.get('content-length', 0))
             item.bytes_total = starting_pos + total_size
 
@@ -216,8 +261,18 @@ class DownloadManager:
                             item.progress = written / item.bytes_total
                         pbar.update(task, completed=written)
 
-            # Validate minimum size
-            if written < 1024:
+            # Complete = received bytes match Content-Length, at any size. Some
+            # safetensors are legitimately tiny (~160 bytes), so no size floor;
+            # the floor is only a fallback for when Content-Length is missing.
+            expected = starting_pos + total_size
+            if total_size > 0:
+                if written != expected:
+                    item.status = "failed"
+                    item.error = f'incomplete: expected={expected} got={written}'
+                    item.completed_at = datetime.now()
+                    log.warning(f'CivitAI download incomplete: id={item.id} expected={expected} got={written}')
+                    return
+            elif written < 1024:
                 try:
                     os.remove(temp_file)
                 except OSError:
@@ -225,13 +280,7 @@ class DownloadManager:
                 item.status = "failed"
                 item.error = f'download too small: {written} bytes'
                 item.completed_at = datetime.now()
-                return
-
-            # Check for incomplete download
-            if starting_pos + total_size != written:
-                item.status = "failed"
-                item.error = f'incomplete: expected={starting_pos + total_size} got={written}'
-                item.completed_at = datetime.now()
+                log.warning(f'CivitAI download too small: id={item.id} file="{item.filename}" bytes={written}')
                 return
 
         except Exception as e:
@@ -728,7 +777,6 @@ def download_civit_model(model_url: str, model_name: str = '', model_path: str =
         log.error('Model download: no url provided')
         return None
     if not version_id:
-        import re
         match = re.search(r'/api/download/models/(\d+)', model_url)
         if match:
             version_id = int(match.group(1))
@@ -738,7 +786,7 @@ def download_civit_model(model_url: str, model_name: str = '', model_path: str =
             from modules.civitai.filemanage_civitai import resolve_save_path
             folder = str(resolve_save_path(model_type or 'Checkpoint', model_name=model_name, base_model=base_model))
         else:
-            folder = str(get_type_folder(model_type or 'Checkpoint'))
+            folder = str(get_type_folder(model_type or 'Checkpoint', base_model=base_model))
     elif os.path.isabs(model_path):
         folder = model_path
     else:

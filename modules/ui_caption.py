@@ -361,7 +361,7 @@ def create_ui():
 
         with gr.Column(variant='compact', elem_id='caption_output'):
             with gr.Row(elem_id='caption_output_prompt'):
-                prompt = gr.Textbox(label="Answer", lines=12, placeholder="ai generated image description")
+                prompt = gr.Textbox(label="Answer", lines=12, placeholder="VLM generated image description")
             with gr.Row(elem_id='caption_output_image'):
                 output_image = gr.Image(type='pil', label="Annotated Image", interactive=False, visible=False, elem_id='caption_output_image_display')
             with gr.Row(elem_id='caption_output_classes'):
@@ -445,7 +445,7 @@ def create_ui():
     # Load/Unload model buttons
     vlm_load_btn.click(fn=vqa.load_model, inputs=[vlm_model], outputs=[])
     vlm_unload_btn.click(fn=vqa.unload_model, inputs=[], outputs=[])
-    analyze_load_btn.click(fn=vqa.load_model, inputs=[vlm_model], outputs=[])
+    analyze_load_btn.click(fn=vqa.load_model, inputs=[analyze_model], outputs=[])
     analyze_unload_btn.click(fn=vqa.unload_model, inputs=[], outputs=[])
 
     def tagger_load_wrapper(model_name):

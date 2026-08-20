@@ -33,6 +33,7 @@ declare global {
     // global functions
     args_to_array?: typeof Array.from; // ui/ui.ts
     updateInput?: (target: EventTarget) => void; // ui/ui.ts
+    notifyKanvasResize?: (width: number, height: number) => void; // ui/ui.ts
     cycleImageFit?: () => void; // ui/imageViewer.ts
     clip_gallery_urls?: (gallery: { data: string }[]) => void; // ui/ui.ts
     extract_image_from_gallery?: (gallery: { data?: string }[]) => ({ data?: string } | null)[]; // ui/ui.ts
@@ -75,7 +76,6 @@ declare global {
     recalculate_prompts_img2img?: (...args: unknown[]) => unknown[]; // ui/ui.ts
     recalculate_prompts_inpaint?: (...args: unknown[]) => unknown[]; // ui/ui.ts
     recalculate_prompts_control?: (...args: unknown[]) => unknown[]; // ui/ui.ts
-    resolutionChange?: (ar: string, width: number, height: number) => unknown[]; // ui/ui.ts
     consumeDesiredCheckpointName?: (...args: unknown[]) => unknown[]; // ui/ui.ts
     create_submit_args?: (args: unknown[]) => unknown[]; // ui/ui.ts
     selectCheckpoint?: (name: string) => void; // ui/ui.ts
@@ -102,6 +102,7 @@ declare global {
     closeDetailsEN?: (...args: unknown[]) => unknown[]; // ui/extraNetworks.ts
     extraNetworksFilterVersion?: (event: Event) => void; // ui/extraNetworks.ts
     extraNetworksSearchButton?: (event: Event) => void; // ui/extraNetworks.ts
+    getSelectedNetworks?: () => Record<string, string[]>; // ui/extraNetworks.ts
     getCardDetails?: (...args: unknown[]) => unknown[]; // ui/extraNetworks.ts
     quickSaveStyle?: () => void; // ui/extraNetworks.ts
     getENActivePage?: () => string; // ui/extraNetworks.ts
@@ -118,6 +119,7 @@ declare global {
     disableGPU?: () => Promise<void>; // ui/gpu.ts
     startGPU?: () => Promise<void>; // ui/gpu.ts
     refreshHistory?: () => void; // ui/history.ts
+    refreshStorage?: (storageTypes: string[]) => void; // ui/storage.ts
     inputAccordionChecked?: (id: string, checked: boolean) => void; // ui/inputAccordion.ts
     debug?: (...args: unknown[]) => Promise<void>; // ui/logger.ts
     error?: (...args: unknown[]) => Promise<void>; // ui/logger.ts
@@ -161,10 +163,7 @@ declare global {
       destroy: () => void;
       initialize: (defaultWidth?: number, defaultHeight?: number) => void;
     }; // extensions-builtin/sdnext-kanvas/src/Kanvas.ts
-    kanvas?: {
-      stages: { maxStages: number };
-      getImage: (index: number, includeMask: boolean, includeAlpha: boolean) => { kanvas: true; image: string | null; mask: string | null } | null;
-    }; // extensions-builtin/sdnext-kanvas/src/Kanvas.ts
+    kanvas?: any; // extensions-builtin/sdnext-kanvas/src/Kanvas.ts
     loadFromURL?: (url: string) => unknown; // external
     getKanvasData?: () => { kanvas: true; image: string | null; mask: string | null } | null; // extensions-builtin/sdnext-kanvas/javascript/kanvas.mjs
     resizeStage?: (width: number, height: number) => void; // extensions-builtin/sdnext-kanvas/javascript/kanvas.mjs

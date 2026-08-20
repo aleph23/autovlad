@@ -2,8 +2,9 @@
 
 import torch
 
-from ...common import compile_func, int_mm_func
-from ...dequantizer import dequantize_symmetric, dequantize_symmetric_with_bias
+from ...common import compile_func
+from ...kernel_wrappers import int_mm_func, int_scaled_mm_func
+from ...dequantizer import dequantize_symmetric, dequantize_asymmetric
 from ...quant_utils import rotate_hadamard, get_hadamard
 from ...packed_int import unpack_int
 
@@ -24,12 +25,28 @@ def conv_int8_matmul(
     bias: torch.FloatTensor | None = None,
     svd_up: torch.FloatTensor | None = None,
     svd_down: torch.FloatTensor | None = None,
+    zero_point: torch.FloatTensor | None = None,
     hadamard: torch.FloatTensor | None = None,
     quantized_weight_shape: torch.Size | None = None,
     weights_dtype: str | None = None,
 ) -> torch.FloatTensor:
     return_dtype = input.dtype
     input, mm_output_shape = process_conv_input(conv_type, input, reversed_padding_repeated_twice, padding_mode, result_shape, stride, padding, dilation)
+
+    if quantized_weight_shape is not None:
+        weight = unpack_int(weight, weights_dtype, quantized_weight_shape, dtype=torch.int8).t_()
+        scale = scale.t()
+        if zero_point is not None:
+            zero_point = zero_point.t()
+        if weight.dtype == torch.uint8:
+            weight = weight.view(dtype=torch.int8)
+    elif weight.dtype == torch.uint8:
+        weight = weight.bitwise_xor(128).view(torch.int8)
+        if zero_point is not None:
+            zero_point = torch.add(zero_point, scale, alpha=128)
+        else:
+            zero_point = torch.mul(scale, 128)
+
     if hadamard is not None:
         input = rotate_hadamard(input, hadamard=hadamard)
     if svd_up is not None:
@@ -39,14 +56,16 @@ def conv_int8_matmul(
         else:
             bias = torch.mm(torch.mm(input.to(dtype=svd_down.dtype), svd_down), svd_up)
 
-    if quantized_weight_shape is not None:
-        weight = unpack_int(weight, weights_dtype, quantized_weight_shape, dtype=torch.int8).t_()
-        scale = scale.t()
     input, input_scale = quantize_int_mm_input(input, dtype=scale.dtype)
-    input, weight = check_mats(input, weight)
+    if zero_point is not None:
+        zero_bias = torch.sum(input, dim=-1, keepdim=True, dtype=torch.int32).to(input_scale.dtype).mul_(input_scale).mul(zero_point)
+        if bias is not None:
+            zero_bias.add_(bias)
+        bias = zero_bias
+    input, weight = check_mats(input, weight, matmul_dtype="int8")
 
     if groups == 1:
-        result = int_mm_func(input, weight).to(dtype=input_scale.dtype).mul_(input_scale)
+        result = int_scaled_mm_func(input, weight, input_scale, scale, bias=bias, out_dtype=return_dtype).view(mm_output_shape)
     else:
         weight = weight.view(weight.shape[0], groups, weight.shape[1] // groups)
         input = input.view(input.shape[0], groups, input.shape[1] // groups)
@@ -54,10 +73,10 @@ def conv_int8_matmul(
         for i in range(groups):
             result.append(int_mm_func(input[:, i], weight[:, i]))
         result = torch.cat(result, dim=-1).to(dtype=input_scale.dtype).mul_(input_scale)
-    if bias is not None:
-        result = dequantize_symmetric_with_bias(result, scale, bias, dtype=return_dtype, result_shape=mm_output_shape)
-    else:
-        result = dequantize_symmetric(result, scale, dtype=return_dtype, result_shape=mm_output_shape)
+        if bias is not None:
+            result = dequantize_asymmetric(result, scale, bias, dtype=return_dtype, result_shape=mm_output_shape)
+        else:
+            result = dequantize_symmetric(result, scale, dtype=return_dtype, result_shape=mm_output_shape)
 
     if conv_type == 1:
         result = result.transpose_(1,2)
@@ -65,6 +84,7 @@ def conv_int8_matmul(
         result = result.permute(0,3,1,2)
     elif conv_type == 3:
         result = result.permute(0,4,1,2,3)
+    result = result.contiguous()
     return result
 
 
@@ -74,8 +94,9 @@ def quantized_conv_forward_int8_matmul(self, input) -> torch.FloatTensor:
     if self.sdnq_dequantizer.re_quantize_for_matmul:
         weight, scale = self.sdnq_dequantizer.re_quantize_matmul(self.weight, self.scale, zero_point=self.zero_point)
         quantized_weight_shape = None
+        zero_point = None
     else:
-        weight, scale = self.weight, self.scale
+        weight, scale, zero_point = self.weight, self.scale, self.zero_point
         quantized_weight_shape = self.sdnq_dequantizer.quantized_weight_shape if self.sdnq_dequantizer.is_packed else None
     if self.sdnq_dequantizer.use_hadamard:
         hadamard = get_hadamard(self.sdnq_dequantizer.hadamard_group_size, dtype=input.dtype, device=input.device)
@@ -92,6 +113,7 @@ def quantized_conv_forward_int8_matmul(self, input) -> torch.FloatTensor:
         bias=self.bias,
         svd_up=self.svd_up,
         svd_down=self.svd_down,
+        zero_point=zero_point,
         hadamard=hadamard,
         quantized_weight_shape=quantized_weight_shape,
         weights_dtype=self.sdnq_dequantizer.weights_dtype,

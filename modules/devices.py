@@ -242,14 +242,25 @@ def torch_gc(force: bool = False, fast: bool = False, reason: str | None = None)
     if force:
         # actual gc
         collected = gc.collect() if not fast else 0 # python gc
-        if cuda_ok:
-            try:
-                with torch.cuda.device(get_cuda_device_string()):
-                    torch.cuda.synchronize()
-                    torch.cuda.empty_cache() # cuda gc
+        try:
+            if hasattr(torch, "accelerator") and torch.accelerator.is_available(): # torch >= 2.6
+                torch.accelerator.synchronize()
+                torch.accelerator.empty_cache()
+                if torch.cuda.is_available() and hasattr(torch.cuda, "ipc_collect"):
                     torch.cuda.ipc_collect()
-            except Exception as e:
-                log.error(f'GC: {e}')
+                elif hasattr(torch, "xpu") and hasattr(torch.xpu, "ipc_collect"):
+                    torch.xpu.ipc_collect()
+            elif torch.cuda.is_available(): # Fallback for older PyTorch versions
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+            elif hasattr(torch, "xpu") and torch.xpu.is_available():
+                torch.xpu.synchronize()
+                torch.xpu.empty_cache()
+                if hasattr(torch.xpu, "ipc_collect"):
+                    torch.xpu.ipc_collect()
+        except Exception as e:
+            log.error(f'Torch GC: {e}')
     else:
         return gpu, ram
     t1 = time.time()
@@ -377,7 +388,7 @@ def test_bf16():
             else:
                 from modules.zluda_installer import default_agent
                 agent = default_agent
-            if agent is not None and agent.gfx_version < 0x1100 and agent.arch != rocm.MicroArchitecture.CDNA: # all cards before RDNA 3 except for CDNA cards
+            if (agent is not None) and (agent.gfx_version < 0x1100) and (agent.arch != rocm.MicroArchitecture.CDNA): # all cards before RDNA 3 except for CDNA cards
                 bf16_ok = False
                 return bf16_ok
     try:
@@ -401,8 +412,14 @@ def test_triton(early: bool = False):
         return triton_ok
     t0 = time.time()
     try:
-        from torch.utils._triton import has_triton as torch_has_triton
-        if torch_has_triton():
+        if torch._dynamo.config.disable: # pylint: disable=protected-access
+            triton_is_available = False
+        elif backend == "cpu": # CPUs can use torch.compile / Inductor without Triton
+            triton_is_available = True
+        else:
+            from torch.utils._triton import has_triton as torch_has_triton
+            triton_is_available = torch_has_triton()
+        if triton_is_available:
             if early:
                 return True
             def test_triton_func(a,b,c):
@@ -426,7 +443,6 @@ def test_triton(early: bool = False):
         if triton_version is None:
             try:
                 import torch._inductor.triton as torch_triton
-
                 triton_version = torch_triton.__version__
             except Exception:
                 pass
@@ -524,6 +540,9 @@ def set_sdpa_params():
         if 'Sage attention' in opts.sdp_overrides:
             attention.set_sage_attention(backend, device)
 
+        if 'SDNQ attention' in opts.sdp_overrides:
+            attention.set_sdnq_attention()
+
         from importlib.metadata import version
         try:
             flash = version('flash-attn')
@@ -533,10 +552,11 @@ def set_sdpa_params():
             sage = version('sageattention')
         except Exception:
             sage = False
-        log.debug(f'Torch attention installed: flashattn={flash} sageattention={sage}')
+        if flash or sage:
+            log.debug(f'Torch attention installed: flashattn={flash} sageattention={sage}')
 
         from diffusers.models import attention_dispatch as a
-        log.debug(f'Torch attention status: flash={a._CAN_USE_FLASH_ATTN} flash3={a._CAN_USE_FLASH_ATTN_3} aiter={a._CAN_USE_AITER_ATTN} sage={a._CAN_USE_SAGE_ATTN} flex={a._CAN_USE_FLEX_ATTN} npu={a._CAN_USE_NPU_ATTN} xla={a._CAN_USE_XLA_ATTN} xformers={a._CAN_USE_XFORMERS_ATTN} kernels={a.is_kernels_available()}') # pylint: disable=protected-access
+        log.debug(f'Torch attention available: flash={a._CAN_USE_FLASH_ATTN} flash3={a._CAN_USE_FLASH_ATTN_3} aiter={a._CAN_USE_AITER_ATTN} sage={a._CAN_USE_SAGE_ATTN} flex={a._CAN_USE_FLEX_ATTN} npu={a._CAN_USE_NPU_ATTN} xla={a._CAN_USE_XLA_ATTN} xformers={a._CAN_USE_XFORMERS_ATTN} kernels={a.is_kernels_available()} sdnq=True') # pylint: disable=protected-access
 
     except Exception as e:
         log.warning(f'Torch SDPA: {e}')
@@ -616,7 +636,23 @@ def set_cuda_params():
     except Exception:
         tunable = [False, False]
     log.info(f'Torch parameters: backend={backend} device={device_name} config={opts.cuda_dtype} dtype={dtype} fp16={"pass" if fp16_ok else "fail"} bf16={"pass" if bf16_ok else "fail"} triton={"pass" if triton_ok else "fail"} optimization="{opts.cross_attention_optimization}"')
-    log.info(f'Torch compute: context={inference_context.__name__} nohalf={opts.no_half} nohalfvae={opts.no_half_vae} upcast={opts.upcast_sampling} deterministic={opts.cudnn_deterministic} tunable={tunable}')
+    try:
+        num_threads = torch._inductor.config.compile_threads # pylint: disable=protected-access
+    except Exception:
+        num_threads = None
+    log.info(f'Torch compute: context={inference_context.__name__} nohalf={opts.no_half} nohalfvae={opts.no_half_vae} upcast={opts.upcast_sampling} deterministic={opts.cudnn_deterministic} tunable={tunable} threads={num_threads}')
+
+    try:
+        from torch._inductor.runtime.runtime_utils import cache_dir
+        inductor_cache = cache_dir()
+    except Exception:
+        inductor_cache = os.getenv("TORCHINDUCTOR_CACHE_DIR", None)
+    try:
+        from triton import knobs
+        triton_cache = knobs.cache.dir
+    except Exception:
+        triton_cache = os.getenv("TRITON_CACHE_DIR", None)
+    log.info(f'Torch cache: inductor="{inductor_cache}" triton="{triton_cache}"')
 
 
 def randn(seed, shape=None):
@@ -727,3 +763,24 @@ def bypass_sdpa_hijacks():
         torch.nn.functional.scaled_dot_product_attention = current_sdpa
         if debug:
             log.debug('SDPA bypass: restored hijacked attention')
+
+
+@contextlib.contextmanager
+def llm_context():
+    """
+    Combined context manager that applies both inference_context and bypass_sdpa_hijacks.
+    """
+    with inference_context(), bypass_sdpa_hijacks():
+        yield
+
+
+def torch_reset() -> bool:
+    """
+    Resets PyTorch execution graph, flushes VRAM caches, and syncs streams.
+    """
+    torch_gc(force=True, reason='reset', fast=True)
+    try:
+        if hasattr(torch, "_dynamo"):
+            torch._dynamo.reset() # pylint: disable=protected-access
+    except Exception as e:
+        log.error(f"Torch reset: {e}")

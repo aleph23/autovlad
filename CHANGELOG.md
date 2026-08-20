@@ -1,5 +1,270 @@
 # Change Log for SD.Next
 
+## Update for 2026-08-07
+
+### Highlights for 2026-08-07
+
+This release brings **Sefi-Image** and **Mage-Flow** models, plus a new **Nunchaku-Lite** inference engine  
+*What else*?
+- On the server side, there are quite a few *under-the-hood* improvements, including optimized startup, optimized webserver, end-to-end profiling, storage analyzer, etc.  
+- There are also several new auxiliary models, such as **Lucida** for background removal  
+- And video processing now supports scripts such as prompt enhance, nudenet, etc.  
+- Plus several quality-of-life improvements (better progress monitoring for one) and bug-fixes across the board
+- Updated [SD.Next Launcher](https://github.com/vladmandic/sdnext-launcher/releases/tag/v0.1.6) with improved platform compatibility and upgrade workflows  
+
+*Note*: This release follows previous minor service-release which did not get full announcement, so if you missed it, check it out
+
+[Home](https://vladmandic.github.io/sdnext/) | [ChangeLog](https://github.com/vladmandic/automatic/blob/master/CHANGELOG.md) | [Docs](https://vladmandic.github.io/sdnext-docs/) | [Discord](https://discord.com/invite/sd-next-federal-batch-inspectors-1101998836328697867) | [Sponsor](https://github.com/sponsors/vladmandic)  
+
+### Details for 2026-08-07
+
+- **Models**
+  - [SeFi-Image](https://huggingface.co/SeFi-Image/SeFi-Image-5B-RL) in *Base*, *Turbo* (distilled) and *RL* (finetuned) variants  
+    SeFi is an interesting model that separates generation into semantic and texture latent streams  
+    and denoising semantic structure slightly ahead of texture details  
+    SeFi comes in sizes with 1B, 2B and 5B params  
+  - [Microsoft Mage-Flow](https://huggingface.co/mage-flow-community/Mage-Flow) in *Base* and *Turbo* (distilled) variants  
+    Mage-Flow is a 4B-scale generative stack for efficient text-to-image generation and instruction-based image editing  
+    *note*: Microsoft released and then unpublished the model, but we still have a mirror available for download  
+  - [Nunchaku-Lite](https://huggingface.co/lite-infer) pre-quantized models  
+    included: *Z-Image, Flux.1-Dev/Schnell/Krea/Kontex, Qwen-Image/Image-Edit, Ernie-Image*
+- **Features**
+  - [Nunchaku-Lite](https://github.com/rootonchair/nunchaku-lite) inference engine  
+    unlike Nunchaku, Nunchaku-Lite is based on Kernels and does not require any additional packages to be installed  
+    but like original Nunchaku, it is only available for CUDA and right now only for `torch==2.11/2.12`  
+  - [Krea2](https://huggingface.co/krea/Krea-2-Turbo) add *Inpaint* pipeline  
+    this also makes K2 compatible with *Detailer* workflow  
+  - storage analyzer: new feature that analyzes your storage used by sdnext per type and location  
+    *system -> storage*  
+  - video: support for scripts/extensions  
+    video processing now supports scripts and extensions (if they support video processing)  
+    *example*: use nudenet to automatically censor video frames :)  
+  - prompt enhance: support for video generation
+  - startup: optimized server startup
+  - process: preserve audio when processing video
+  - separate progress reporting and live-preview for much more precise progress reporting
+  - add progress details to performance status bar (below the preview image)
+  - remove background: new [lucida](https://huggingface.co/egeorcun/lucida) model
+  - profile flag now logs all http requests and internal tasks
+- **API**
+  - add `/sdapi/v1/storage` endpoint to return storage usage info  
+- **Internal**
+  - switch internal server to explicit `uvicorn`
+  - update core requirements
+- **Fixes**
+  - seedvr quality
+  - skip-all do not skip env init
+  - sdnq check contiguous
+  - torch reset compile cache on reload
+  - bypass sdna for caption/prompt-enhance calls
+  - skip sdnq for small weights  
+  - server monitor keep websocket open
+  - unauthenticated path traversal in /thumbs
+
+## Update for 2026-07-23
+
+Primarily a service release with updates to compute packages: torch, CUDA, ROCm, etc.
+Plus optimizations to SDNQ quantization and attention  
+And update to process tab, several quality-of-life improvements and bug-fixes  
+
+[Home](https://vladmandic.github.io/sdnext/) | [ChangeLog](https://github.com/vladmandic/automatic/blob/master/CHANGELOG.md) | [Docs](https://vladmandic.github.io/sdnext-docs/) | [Discord](https://discord.com/invite/sd-next-federal-batch-inspectors-1101998836328697867) | [Sponsor](https://github.com/sponsors/vladmandic)  
+
+- **Compute**
+  - torch: update to `2.13.0` for CUDA, ROCm, IPEX
+  - torch: explicitly set inductor and triton cache locations
+  - torch: log triton/dynamo/inductor timer stats
+  - cuda: update to `13.2`
+  - sdnq quantization optimizations
+  - sdnq attention optimizations
+  - sdnq separate dit/te settings
+- **Features**
+  - process: read video properties and metadata
+  - process: allow processing of video files  
+    *note*: currently only seedvr postprocessing is supported  
+    other workflows will be added in future releases  
+  - seedvr: enhanced upscaler support
+  - logs: propagate server tracebacks to client
+  - networks: improve search and filtering to allow multi-words  
+  - hotkeys: add alt+0-9 to switch to tab 0-9
+- **Fixes**
+  - attention: skip reapply
+  - download: better matching of shared components
+  - gallery: send to caption
+  - hotkeys: legacy-vs-modernui
+  - kanvas: paint combined with zoom
+  - load: flux1 t5
+  - logger: handle invalid subsystem log messages
+  - lora: support diffusers trainer
+  - preview: acknowledge visible/hidden on finish
+  - preview: cache image for reuse
+  - process: generate button busy tracking
+  - rembg: numba dependencies
+  - upscaler: auto-refresh to catch chainner upscalers that are not loaded on first attempt  
+
+## Update for 2026-07-14
+
+### Highlights for 2026-07-14
+
+*What's New?* Full week(!) since the last release, we're bringing a service pack update:  
+**Anima** has new *Aesthetic* and *Turbo* variants, **Joy Image Edit** has new *Plus* variant  
+*And also*:  
+- UI updates to *Server info* and *Log viewer*, more informative and allows easier sharing of info
+- Quite a few *SDNQ* improvements, both to quantization and attention
+- Continuing with enhanced support for 3rd party finetunes
+
+*Note*: As long as there are no major items in `#dev` branch, we will continue with weekly service updates, so stay tuned for more!  
+
+[Home](https://vladmandic.github.io/sdnext/) | [ChangeLog](https://github.com/vladmandic/automatic/blob/master/CHANGELOG.md) | [Docs](https://vladmandic.github.io/sdnext-docs/) | [Discord](https://discord.com/invite/sd-next-federal-batch-inspectors-1101998836328697867) | [Sponsor](https://github.com/sponsors/vladmandic)  
+
+### Details for 2026-07-14
+
+- **Models**
+  - [Anima 1.0](https://civitai.com/models/2458426/anima?modelVersionId=3108569) new *Aesthetic* and *Turbo* variants  
+  - [Joy Image Edit](https://huggingface.co/jdopensource/JoyAI-Image-Edit-Plus-Diffusers) new *Plus* variant that has multi-image-edit capabilities
+- **Features**
+  - loader: support loading secondary unet for models that have multiple unets  
+    *networks panel -> toggle: load model as secondary model*  
+    *settings -> model loading -> unet model secondary*  
+  - loader: support transformers from all-in-one safetensors  
+  - loader: improve `fp8` model support
+  - loader: improve `nvfp4` model support
+  - lora: additional lora types
+  - civitai: improve search
+  - civitai: restart download
+  - sdnq: improve attention
+  - api: add `/sdapi/v1/restart` endpoint
+  - server: strict sub-path mount and redirects for all endpoints
+- **UI**
+  - improved server info panel  
+    now shows loaded components, networks, etc.  
+  - improved log viewer for both server and client logs
+  - expose server errors
+  - log view copy server log and copy client log buttons  
+    copies current log to clipboard for easy sharing  
+  - collapsible input & output panels for *video*, *caption*, *process* tabs
+  - video add immediate load
+- **Experimental**
+  - support for `comfy_quant` models  
+- **Fixes**
+  - huggingface: fix model access on windows
+  - lora: fix lora text-encoder loader
+  - amd: hipBLASLt improved detection, thanks @0xDELUXA
+  - api: validate swagger schema
+  - installer: handle detached branch on non-english setups
+  - fs: faster stat
+  - server-info: handle multiple gpus
+  - load: skip redundant model reload 
+  - sdnq: fix hadamard on sdnq atten with sd15
+  - download: improved progress tracking
+  - gallery: delete image
+  - gallery: save image
+  - standardui: gallery collapse sections
+
+## Update for 2026-07-07
+
+### Highlights for 2026-07-07
+
+Originating as a service-pack update with a handful of fixes and quality-of-life improvements, this release also includes several larger updates  
+- Adds new models: **Krea 2**, **Boogu**, **Photoroom PRXPixel**, **FLUX.2 Klein KV** and some new community models  
+- Expands **SDNQ**: with *NPU* support and its own native *attention* kernels (try it, you may get a nice free performance boost)!  
+- Introduces couple of experimental features worth trying  
+
+[Home](https://vladmandic.github.io/sdnext/) | [ChangeLog](https://github.com/vladmandic/automatic/blob/master/CHANGELOG.md) | [Docs](https://vladmandic.github.io/sdnext-docs/) | [Discord](https://discord.com/invite/sd-next-federal-batch-inspectors-1101998836328697867) | [Sponsor](https://github.com/sponsors/vladmandic)  
+
+### Details for 2026-07-07
+
+- **Models**
+  - [Krea 2](https://www.krea.ai/blog/krea-2-image-model) in *base* and *turbo* (distilled) variants  
+    both *base* and *turbo* are available in both full *bf16* and *sdnq* pre-quantized variants  
+    K2 is a 12.9B single-stream flow-matching DiT and using a Qwen3-VL-4B text encoder  
+  - [Boogu Image](https://huggingface.co/Boogu/Boogu-Image-0.1-Base) in *base*, *edit*, *turbo*, and *edit-turbo* variants  
+    Boogu is a 10B flow-matching DiT model using a Qwen3-VL-9B text encoder
+  - [Photoroom PRXPixel](https://huggingface.co/Photoroom/prxpixel-t2i) pixel-space PRX variant using a Qwen3-VL text encoder and flow-matching scheduler  
+    supports *direct RGB* generation without a VAE and uses a *1024px* default sample size  
+  - [Microsoft Lens](https://huggingface.co/Jinstudio/Lens) got unpublished, but we still got a mirror
+  - [FLUX.2 Klein 9B KV](https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-kv) a bit late, but finally here in both *bf16* and *sdnq* pre-quantized variants  
+  - updates to [Google Nano Banana](https://aistudio.google.com/models/nano-banana) cloud image images
+  - plus several new community models...
+- **Features**
+  - **SDNQ-Attention**  
+    modelled after *sage-attention*, but modified to support AMD and Intel GPUs in addition to nVidia  
+  - **SDNQ** support for NPU during quantization and inference  
+  - **First-Last-Frame** (FLF2V) support for Wan-2.2-I2V and LTX
+  - add option: *compute settings -> force dtype on load*  
+    use to force model components to override loading with desired dtype regardless of component config  
+  - add option: *backend settings -> force sychronize*  
+    enabled by default, disable to speed up processing but may cause image corruptions, especially during preview
+  - add option: *model loading -> attempt to load incomplete model*  
+    disabled by default, attempts to load model by mapping it to known model even if some components are missing  
+    for example: if you place bare unet/dit finetune into stable-diffusion folder  
+  - prompt encode caching for pass-through text-encoders
+  - reference models: validate and update info for all reference models  
+    add size preview before download for all reference models  
+  - **CivitAI** download improvements  
+    auto-select download path  
+    improved search  
+    validate downloads  
+  - improved custom **Text Encoder** loader  
+- **UI**
+  - dynamic visibility of image controls
+  - improve main panel positioning: *portrait/landscape*
+  - improved gallery performance
+  - preview now only runs if output panel is visible  
+  - ModernUI: old *txt2img* and *img2img* tabs are marked as legacy and hidden by default
+  - StandardUI: marked as legacy
+- **Wiki**
+  - new [Performance Timers](wiki/Performance-Timers) page with detailed explanation of all timers and what to tune for performance
+  - new [Model Loading](wiki/Model-Loading) page with detailed explanation of model loading
+- **Internal**
+  - delay init of video models
+- **Experimental**
+  - support for **openai interface** for llm  
+    in *prompt enhance* enable openai interface and when llm is loaded,  
+    sdnext will start a local openai-compatible server on usual endpoints (e.g. `/v1/completions`, `/v1/chat/completions`, etc.)  
+  - support for [pruna](https://docs.pruna.ai/en/stable/compression.html) swiss-army-knife of model compression, caching and optimization  
+    see *settings -> model compile* for options  
+    *note*: pruna options compatibility varies greatly depending on platform, gpu, torch and model used  
+    *note*: some pruna options may require additional packages to be installed  
+- **Fixes**
+  - amd: hipBLASLt improved detection, thanks @0xDELUXA
+  - anima: simplify loader
+  - anima: vae postprocessing with batch size
+  - api: add missing endpoint registration
+  - api: openapi schema exposure
+  - api: stricter api request and response schemas
+  - caption: button in standard-ui
+  - embeddings: handle textual-inversion with new transformers
+  - extensions: handle extension without remote
+  - huggingface: strip corrupt headers on download
+  - insightface: missing dependencies
+  - installer: double-restart on diffusers/transformers upgrade
+  - krea2: base defaults to guidance 4.5 instead of 1.0
+  - krea2: load custom transformers that omit the dormant residual layers
+  - live preview: configurable pause when not in focus, thanks @Artheriax
+  - log: strip ansi sequences from ring buffer and client side logging
+  - lora: cache state_dict between load attempts
+  - measure: handle current kanvas stage
+  - model metadata: handle invalid metadata and strip workflows
+  - mps: install `torchsde` as requirement
+  - nunchaku: gate for `cuda` only
+  - onnxruntime: handle invalid version
+  - onnxruntime: mark all import paths as non-critical
+  - options: handle compatibility options
+  - processors: init code and multiple fixes
+  - pulid: import paths
+  - python: experimental/ignore version checks
+  - scheduler: handle zero-sigma for i2i/inpaint flowmatch workflows
+  - sdnq: warn instead of error for `triton`
+  - startup: faster model storage checks
+  - text encoder: load non-t5 single-file overrides as their actual class and quantize under sdnq
+  - text encoder: reload on override change, reset when base model is incompatible
+  - text-encode: restore hijack on pipeline switch
+  - ui debounce aspect-ratio linked width/height controls
+  - ui: networks details scrollbars
+  - vae: restore hijack on pipeline switch
+  - vae: scale factor improved detection
+  - vae: better detection of invalid/nan values
+
 ## Update for 2026-06-16
 
 ### Highlights for 2026-06-16

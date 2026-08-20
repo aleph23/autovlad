@@ -1,8 +1,13 @@
-from typing import List, Optional, Tuple, Union
+from __future__ import annotations
+from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 import torch
 from einops import rearrange
 from modules.seedvr.src.common.diffusion import classifier_free_guidance_dispatcher, create_sampler_from_config, create_sampling_timesteps_from_config, create_schedule_from_config
 from modules.seedvr.src.models.dit_v2 import na
+
+if TYPE_CHECKING:
+    from modules.seedvr.src.models.dit_v2.nadit import NaDiT
+    from modules.seedvr.src.models.video_vae_v3.modules.attn_video_vae import VideoAutoencoderKLWrapper
 
 
 def optimized_channels_to_last(tensor: torch.Tensor) -> torch.Tensor:
@@ -38,15 +43,15 @@ def optimized_channels_to_second(tensor):
         return tensor.permute(*dims)
 
 
-class VideoDiffusionInfer():
+class SeedVRPipeline():
     def __init__(self, config, device: str, dtype: torch.dtype):
         from installer import install
         install('omegaconf')
         self.config = config
         self.device = device
         self.dtype = dtype
-        self.vae = None
-        self.dit = None
+        self.vae: VideoAutoencoderKLWrapper = None
+        self.dit: NaDiT = None
         self.sampler = None
         self.schedule = None
 
@@ -128,6 +133,7 @@ class VideoDiffusionInfer():
                 latent = rearrange(latent, "b c ... -> b ... c")
                 #latent = optimized_channels_to_last(latent)
                 latent = (latent - shift) * scale
+                latent = latent.contiguous()
                 latents.append(latent)
 
             # Ungroup back to individual latent with the original order.
@@ -170,10 +176,11 @@ class VideoDiffusionInfer():
                 latent = latent / scale + shift
                 latent = rearrange(latent, "b ... c -> b c ...")
                 #latent = optimized_channels_to_second(latent)
-                latent = latent.squeeze(2)
+                latent = latent.squeeze(2).contiguous()
 
                 # 🚀 OPTIMISATION 3: Décodage direct SANS autocast (utilise l'autocast externe)
                 sample = self.vae.decode(latent).sample
+                del latent
                 #sample = self.vae.decode(latent).sample
                 #sample = self.vae.decode(latent).sample
 
@@ -182,6 +189,7 @@ class VideoDiffusionInfer():
                     sample = self.vae.postprocess(sample)
 
                 samples.append(sample)
+                del sample
 
             # Ungroup back to individual sample with the original order.
             if self.config.vae.grouping:
@@ -273,9 +281,9 @@ class VideoDiffusionInfer():
             text_neg_embeds, text_neg_shapes = na.flatten(texts_neg)
 
         # Adapter les embeddings texte au dtype cible (compatible avec FP8)
-        if isinstance(text_pos_embeds, torch.Tensor):
+        if isinstance(text_pos_embeds, torch.Tensor) and text_pos_embeds.dtype != target_dtype:
             text_pos_embeds = text_pos_embeds.to(target_dtype)
-        if isinstance(text_neg_embeds, torch.Tensor):
+        if isinstance(text_neg_embeds, torch.Tensor) and text_neg_embeds.dtype != target_dtype:
             text_neg_embeds = text_neg_embeds.to(target_dtype)
 
         # Flatten.
@@ -285,7 +293,9 @@ class VideoDiffusionInfer():
         # Adapter les latents au dtype cible (compatible avec FP8)
         latents = latents.to(target_dtype) if latents.dtype != target_dtype else latents
         latents_cond = latents_cond.to(target_dtype) if latents_cond.dtype != target_dtype else latents_cond
-        self.dit = self.dit.to(device=self.device, dtype=target_dtype)
+        current_dit_param = next(self.dit.parameters())
+        if current_dit_param.dtype != target_dtype or current_dit_param.device != torch.device(self.device):
+            self.dit = self.dit.to(device=self.device, dtype=target_dtype)
 
         latents = self.sampler.sample(
             x=latents,
@@ -305,10 +315,7 @@ class VideoDiffusionInfer():
                     timestep=args.t.repeat(batch_size),
                 ).vid_sample,
                 scale=(
-                    cfg_scale
-                    if (args.i + 1) / len(self.sampler.timesteps)
-                    <= self.config.diffusion.cfg.get("partial", 1)
-                    else 1.0
+                    cfg_scale if (args.i + 1) / len(self.sampler.timesteps) <= self.config.diffusion.cfg.get("partial", 1) else 1.0
                 ),
                 rescale=self.config.diffusion.cfg.rescale,
             ),
@@ -320,6 +327,7 @@ class VideoDiffusionInfer():
         vae_dtype = self.vae.dtype
         decode_dtype = torch.float16 if (vae_dtype == torch.float16 or target_dtype == torch.float16) else vae_dtype
         samples = self.vae_decode(latents, target_dtype=decode_dtype)
+        del latents
 
         if samples and len(samples) > 0 and samples[0].dtype != torch.float16:
             samples = [sample.to(torch.float16, non_blocking=True) for sample in samples]

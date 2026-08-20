@@ -1,6 +1,12 @@
 from fastapi import Body
 
 
+def dependencies():
+    from installer import install
+    for pkg in ["dctorch==0.1.2", "pymatting", "pooch", "rembg", "numba"]:
+        install(pkg, no_deps=True, ignore=False)
+
+
 async def post_rembg(
     input_image: str = Body("", title='rembg input image'),
     model: str = Body("u2net", title='rembg model'),
@@ -22,10 +28,11 @@ async def post_rembg(
     if model == "ben2":
         from modules.rembg import ben2
         image = ben2.remove(input_image, refine=refine)
+    elif model == "lucida":
+        from modules.rembg import lucida
+        image = lucida.remove(input_image)
     else:
-        from installer import install
-        for pkg in ["dctorch==0.1.2", "pymatting", "pooch", "rembg"]:
-            install(pkg, no_deps=True, ignore=False)
+        dependencies()
         import rembg
         image = rembg.remove( # pylint: disable=c-extension-no-member
             input_image,

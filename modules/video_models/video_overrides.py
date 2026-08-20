@@ -36,10 +36,10 @@ def load_override(selected: Model, **load_args):
         from diffusers.pipelines.ltx2 import LTX2TextConnectors
         ltx2_connectors_cls = LTX2TextConnectors
     except ImportError as e:
-        log.warning(f'Video load: LTX2TextConnectors unavailable ({e}); dedup of LTX-2.3 connectors disabled')
+        log.warning(f'Load video: LTX2TextConnectors unavailable ({e}); dedup of LTX-2.3 connectors disabled')
     if ('LTXVideo 2.3' in selected.name and shared.opts.te_shared_te and ltx2_connectors_cls is not None):
         conn_repo = 'OzzyGT/LTX-2.3-sdnq-dynamic-int4' if 'SDNQ' in selected.name else 'OzzyGT/LTX-2.3'
-        log.debug(f'Video load: module=connectors repo="{conn_repo}" cls={ltx2_connectors_cls.__name__} shared={shared.opts.te_shared_te}')
+        log.debug(f'Load video: module=connectors repo="{conn_repo}" cls={ltx2_connectors_cls.__name__} shared={shared.opts.te_shared_te}')
         kwargs['connectors'] = ltx2_connectors_cls.from_pretrained(
             conn_repo,
             subfolder='connectors',
@@ -52,9 +52,9 @@ def load_override(selected: Model, **load_args):
     if 'WAN 2.1 14B' in selected.name:
         kwargs['vae'] = diffusers.AutoencoderKLWan.from_pretrained(selected.repo, subfolder="vae", torch_dtype=torch.float32, cache_dir=shared.opts.hfcache_dir, **load_args)
     if ('A14B' in selected.name) or ('14B VACE' in selected.name):
-        if shared.opts.model_wan_stage == 'combined':
-            kwargs['boundary_ratio'] = shared.opts.model_wan_boundary
-        elif shared.opts.model_wan_stage == 'high noise':
+        # combined keeps both experts loaded and tunes boundary_ratio at runtime (set_pipeline_args), so
+        # it is not set here; only the single-expert stages need load time because they drop a transformer.
+        if shared.opts.model_wan_stage == 'high noise':
             kwargs['transformer_2'] = None
             kwargs['boundary_ratio'] = 0.0
         elif shared.opts.model_wan_stage == 'low noise':

@@ -21,6 +21,7 @@ import { timer, logTimers } from './timers';
 import { getUIDefaults } from './uiConfig';
 import { log } from './logger';
 import { appStartTime, removeSplash } from './loader';
+import { addLegacyNotice } from './legacy';
 
 window.api = '/sdapi/v1';
 window.subpath = '';
@@ -56,6 +57,15 @@ async function postStartup() {
   logTimers();
 }
 
+async function updateSubpath() {
+  log('mountURL', window.opts.subpath);
+  if (window.opts.subpath?.length > 0) {
+    window.subpath = window.opts.subpath;
+    window.api = `${window.subpath}/sdapi/v1`;
+  }
+  log('API', { url: window.api });
+}
+
 async function initStartup() {
   const t0 = performance.now();
   log('initGradio', Math.round(t0 - appStartTime));
@@ -81,14 +91,7 @@ async function initStartup() {
   // reconnect server session
   await reconnectUI();
   await waitForOpts();
-
-  log('mountURL', window.opts.subpath);
-  if (window.opts.subpath?.length > 0) {
-    window.subpath = window.opts.subpath;
-    window.api = `${window.subpath}/sdapi/v1`;
-  }
-
-  startupPromises.push(initLogMonitor());
+  await updateSubpath();
 
   executeCallbacks(uiReadyCallbacks);
 
@@ -96,6 +99,7 @@ async function initStartup() {
   if (window.waitForUiReady) await window.waitForUiReady();
 
   // post startup tasks that may take longer but are not critical
+  startupPromises.push(Promise.resolve(initLogMonitor()));
   startupPromises.push(Promise.resolve(initGallery()));
   startupPromises.push(Promise.resolve(setRefreshInterval()));
   startupPromises.push(Promise.resolve(setupExtraNetworks()));
@@ -106,6 +110,8 @@ async function initStartup() {
   startupPromises.push(Promise.resolve(applyStyles()));
   startupPromises.push(Promise.resolve(initIndexDB()));
   startupPromises.push(Promise.resolve(initTableSorter()));
+
+  if (window.opts.theme_type !== 'Modern') addLegacyNotice();
 
   const t1 = performance.now();
   log('initStartup', Math.round(1000 * (t1 - t0) / 1000000));

@@ -17,9 +17,6 @@ processors = [
     'None',
     # pose
     'OpenPose',
-    'DWPose',
-    'MediaPipe Face',
-    'DWPose (ONNX)',
     'RTMW',
     'RTMO',
     'ViTPose',
@@ -31,8 +28,7 @@ processors = [
     'HED',
     'PidiNet',
     'MLSD',
-    'TEED',
-    'Anyline',
+    'Anyline (Legacy)',
     # depth
     'Midas Depth Hybrid',
     'Leres Depth',
@@ -47,16 +43,20 @@ processors = [
     'Marigold Depth LCM',
     'Lotus Depth',
     # normal
-    'Normal Bae',
+    'Normal Bae (Legacy)',
     'DSINE',
     'StableNormal',
     'Marigold Normals',
     # segmentation
-    'SegmentAnything',
-    'SAM 2.1',
+    'SegmentAnything 1.0',
+    'SegmentAnything 2.1',
     'OneFormer',
     # other
     'Shuffle',
+    # legacy
+    'MediaPipe Face (Legacy)',
+    'DWPose (Legacy)',
+    'TEED (Legacy)',
 ]
 
 

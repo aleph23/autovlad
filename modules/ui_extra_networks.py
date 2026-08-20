@@ -1,5 +1,6 @@
 import os
 import io
+from functools import lru_cache
 import random
 import re
 import time
@@ -14,8 +15,9 @@ from html.parser import HTMLParser
 from collections import OrderedDict
 import gradio as gr
 from PIL import Image
+from fastapi.exceptions import HTTPException
 from starlette.responses import FileResponse, JSONResponse
-from modules import paths, shared, files_cache, errors, infotext, ui_symbols, ui_components, modelstats
+from modules import paths, shared, devices, files_cache, errors, infotext, ui_symbols, ui_components, modelstats
 from modules.logger import log
 from modules.json_helpers import writefile
 
@@ -55,11 +57,12 @@ preview_map = None
 def init_api():
 
     def get_thumb(filename: str = ""):
-        global allowed_dirs # pylint: disable=global-statement
-        if len(allowed_dirs) == 0:
-            allowed_dirs = shared.demo.allowed_paths
+        if os.path.join('ui', 'assets') not in allowed_dirs:
+            allowed_dirs.append(os.path.join('ui', 'assets'))
         if filename is None or len(filename) == 0:
             return JSONResponse({ "error": "no filename" }, status_code=400)
+        if not any(Path(folder).absolute() in Path(filename).absolute().parents for folder in allowed_dirs):
+            raise HTTPException(status_code=403, detail=f"file {filename}: must be in one of allowed directories")
         if not os.path.exists(filename) or not os.path.isfile(filename) or os.path.getsize(filename) == 0:
             return FileResponse('ui/assets/missing.png', headers={"Accept-Ranges": "bytes"})
         if filename.startswith('html/') or filename.startswith('models/') or filename.startswith('data/') or filename.startswith('ui/'):
@@ -196,10 +199,18 @@ class ExtraNetworksPage:
             errors.display(e, 'Network version')
         return all_versions[0]
 
+    @lru_cache(maxsize=2048, typed=False)
     def link_preview(self, filename: str):
+        if filename == 'ui/assets/missing.png':
+            return f"{shared.opts.subpath}/sdapi/v1/network/thumb?filename={filename}"
+        just_file = not bool(os.path.dirname(filename))
+        if just_file or not os.path.exists(filename):
+            ref = os.path.join(paths.reference_path, filename)
+            if os.path.exists(ref):
+                filename = ref
+            else:
+                filename = 'ui/assets/missing.png'
         quoted_filename = urllib.parse.quote(filename.replace('\\', '/'))
-        # mtime = os.path.getmtime(filename) if os.path.exists(filename) else 0
-        # preview = f"{shared.opts.subpath}/sdapi/v1/network/thumb?filename={quoted_filename}&mtime={mtime}"
         preview = f"{shared.opts.subpath}/sdapi/v1/network/thumb?filename={quoted_filename}"
         return preview
 
@@ -314,10 +325,11 @@ class ExtraNetworksPage:
         subdirs = OrderedDict(sorted(subdirs.items()))
         if self.name == 'model' and shared.opts.extra_network_reference_enable:
             subdirs['Local'] = 1
-            subdirs['Reference'] = 1
+            subdirs['Base'] = 1
             subdirs['Distilled'] = 1
             subdirs['Quantized'] = 1
-            subdirs['Nunchaku'] = 1
+            if devices.backend == 'cuda':
+                subdirs['Nunchaku'] = 1
             subdirs['Community'] = 1
             subdirs['Cloud'] = 1
             subdirs[diffusers_base] = 1
@@ -331,6 +343,8 @@ class ExtraNetworksPage:
             subdirs.move_to_end('Local', last=True)
         if os.path.basename(shared.opts.diffusers_dir) in subdirs:
             subdirs.move_to_end(os.path.basename(shared.opts.diffusers_dir), last=True)
+        if 'Base' in subdirs:
+            subdirs.move_to_end('Base', last=True)
         if 'Reference' in subdirs:
             subdirs.move_to_end('Reference', last=True)
         if 'Distilled' in subdirs:
@@ -347,7 +361,11 @@ class ExtraNetworksPage:
         for subdir in subdirs:
             if len(subdir) == 0:
                 continue
-            if subdir in ['All', 'Local', 'Diffusers', 'Reference', 'Distilled', 'Quantized', 'Nunchaku', 'Community', 'Cloud']:
+            if subdir in ['All', 'Local', 'Diffusers']:
+                style = 'network-local'
+            elif subdir in ['Base', 'Reference', 'Distilled', 'Quantized', 'Community', 'Cloud']:
+                style = 'network-reference'
+            elif subdir in ['Nunchaku'] and devices.backend == 'cuda':
                 style = 'network-reference'
             else:
                 style = 'network-folder'
@@ -406,6 +424,13 @@ class ExtraNetworksPage:
 
         try:
             onclick = f'cardClicked({item.get("prompt", None)})'
+            tags = item.get("tags", {})
+            if isinstance(tags, list):
+                tags = '|'.join(tags)
+            elif isinstance(tags, dict):
+                tags = '|'.join(list(tags.keys()))
+            else:
+                tags = str(tags)
             args = {
                 # "tabname": tabname,
                 "page": self.name,
@@ -413,7 +438,7 @@ class ExtraNetworksPage:
                 "title": os.path.basename(item["name"].replace('_', ' ')),
                 "filename": html.escape(item.get('filename', ''), quote=True),
                 "short": os.path.splitext(os.path.basename(item.get('filename', '')))[0],
-                "tags": '|'.join([item.get('tags')] if isinstance(item.get('tags', {}), str) else list(item.get('tags', {}).keys())),
+                "tags": tags,
                 "preview": html.escape(item.get('preview', None) or self.link_preview('ui/assets/missing.png')),
                 "width": 'var(--card-size)',
                 "height": 'var(--card-size)' if shared.opts.extra_networks_card_square else 'auto',
@@ -438,10 +463,13 @@ class ExtraNetworksPage:
                 errors.display(e, 'Networks')
             return ""
 
+    @lru_cache(maxsize=2048, typed=False)
     def find_preview_file(self, path: str | None):
         if path is None:
             return 'ui/assets/missing.png'
         if os.path.join('models', 'Reference') in path:
+            if shared.cmd_opts.test and not os.path.exists(path):
+                log.warning(f'Networks: missing-preview type="{self.name}" fn="{path}"')
             return path
         exts = ["jpg", "jpeg", "png", "webp", "tiff", "jp2", "jxl"]
         reference_path = os.path.abspath(os.path.join('models', 'Reference'))
@@ -459,6 +487,7 @@ class ExtraNetworksPage:
                 return file
         return 'ui/assets/missing.png'
 
+    @lru_cache(maxsize=2048, typed=False)
     def find_preview(self, filename: str):
         t0 = time.time()
         preview_file = self.find_preview_file(filename)
@@ -477,7 +506,7 @@ class ExtraNetworksPage:
         all_previews = list(files_cache.list_files(*possible_paths, ext_filter=exts, recursive=False))
         all_previews_fn = [os.path.basename(x) for x in all_previews]
         for item in items:
-            if item.get('preview', None) is not None:
+            if item.get('preview', None) is not None and 'missing.png' not in item.get('preview', 'missing.png'):
                 continue
             base = os.path.splitext(item['filename'])[0]
             if item.get('local_preview', None) is None:
@@ -502,14 +531,14 @@ class ExtraNetworksPage:
                         self.missing_thumbs.append(all_previews[file_idx])
                     item['preview'] = self.link_preview(all_previews[file_idx])
                     break
-            if item.get('preview', None) is None:
+            if item.get('preview', None) is None or 'missing.png' in item.get('preview', ''):
                 found = preview_map.get(base, None)
                 if found is not None:
                     item['preview'] = self.link_preview(found)
-                    debug(f'EN mapped-preview: {item["name"]}={found}')
+                    debug(f'EN: mapped-preview {item["name"]}={found}')
             if item.get('preview', None) is None:
                 item['preview'] = self.link_preview('ui/assets/missing.png')
-                debug(f'EN missing-preview: {item["name"]}')
+                debug(f'Networks: missing-preview type={item["type"]} name="{item["name"]}"')
         self.preview_time += time.time() - t0
 
     def find_description(self, path: str | None, info=None):
@@ -756,7 +785,7 @@ def create_ui(container, button_parent: gr.Button, tabname: str, skip_indexing =
         def ui_tab_change(page):
             scan_visible = page in ['Model', 'Lora', 'VAE', 'UNet/DiT', 'Hypernetwork', 'Embedding']
             save_visible = page in ['Style']
-            model_visible = page in ['Model']
+            model_visible = page in ['Model', 'UNet/DiT']
             return [gr.update(visible=scan_visible), gr.update(visible=save_visible), gr.update(visible=model_visible)]
 
         ui.button_refresh = ui_components.ToolButton(ui_symbols.refresh, elem_id=f"{tabname}_extra_refresh")
@@ -948,6 +977,7 @@ def create_ui(container, button_parent: gr.Button, tabname: str, skip_indexing =
                         <tr><td>Title</td><td>{meta.get('modelspec.title', 'N/A')}</td></tr>
                         <tr><td>Resolution</td><td>{meta.get('modelspec.resolution', 'N/A')}</td></tr>
                     '''
+            tags = None
             if page.title == 'Lora':
                 try:
                     tags = getattr(item, 'tags', {})
@@ -978,6 +1008,9 @@ def create_ui(container, button_parent: gr.Button, tabname: str, skip_indexing =
                     <tr><td>Description</td><td>{item.description}</td></tr>
                     <tr><td>Preview Embedded</td><td>{item.preview.startswith('data:')}</td></tr>
                 '''
+            if tags is None:
+                tags = getattr(item, 'tags', [])
+                tags = ' '.join(tags) if isinstance(tags, list) else tags
             if item.name.startswith('Diffusers'):
                 url = item.name.replace('Diffusers/', '')
                 url = f'<a href="https://huggingface.co/{url}" target="_blank">https://huggingface.co/models/{url}</a>'
@@ -996,6 +1029,7 @@ def create_ui(container, button_parent: gr.Button, tabname: str, skip_indexing =
                     <tr><td>Size</td><td>{round(stat_size/1024/1024, 2)} MB</td></tr>
                     <tr><td>Last modified</td><td>{stat_mtime}</td></tr>
                     <tr><td>Source URL</td><td>{url}</td></tr>
+                    <tr><td>Tags</td><td>{tags}</td></tr>
                     <tr><td style="border-top: 1px solid var(--button-primary-border-color);"></td><td></td></tr>
                     {lora}
                     {model}

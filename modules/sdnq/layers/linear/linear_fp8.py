@@ -3,19 +3,24 @@
 import torch
 
 from ...common import compile_func
+from ...kernel_wrappers import fp8_scaled_mm_func, is_fp8_mm_supported, include_mm_kernel_in_compile
 from ...quant_utils import quantize_fp_mm, rotate_hadamard, get_hadamard
 from ...packed_float import unpack_float
 
 from .forward import check_mats
 
 
-def quantize_fp_mm_input(input: torch.FloatTensor, matmul_dtype: str = "float8_e4m3fn") -> tuple[torch.Tensor, torch.FloatTensor]:
-    input = input.flatten(0,-2).to(dtype=torch.float32)
+def quantize_fp_mm_input(input: torch.FloatTensor, dtype: torch.dtype | None = None, matmul_dtype: str = "float8_e4m3fn") -> tuple[torch.Tensor, torch.FloatTensor]:
+    input = input.flatten(0,-2)
+    if dtype is not None:
+        input = input.to(dtype=dtype)
     input, input_scale = quantize_fp_mm(input, dim=-1, matmul_dtype=matmul_dtype)
+    if input_scale.dtype == torch.float16: # fp16 will overflow
+        input_scale = input_scale.to(dtype=torch.float32)
     return input, input_scale
 
 
-def fp8_matmul(
+def get_fp8_matmul_inputs(
     input: torch.FloatTensor,
     weight: torch.Tensor,
     scale: torch.FloatTensor,
@@ -31,20 +36,42 @@ def fp8_matmul(
         scale = scale.t()
     return_dtype = input.dtype
     output_shape = (*input.shape[:-1], weight.shape[-1])
+
     if hadamard is not None:
         input = rotate_hadamard(input, hadamard=hadamard)
     if svd_up is not None:
         input = input.flatten(0,-2)
-        svd_bias = torch.mm(torch.mm(input.to(dtype=svd_down.dtype), svd_down), svd_up)
-    input, input_scale = quantize_fp_mm_input(input)
-    input, weight = check_mats(input, weight, allow_contiguous_mm=False)
-    if bias is not None and bias.dtype != torch.bfloat16:
-        bias = bias.to(dtype=torch.bfloat16)
-    result = torch._scaled_mm(input, weight, scale_a=input_scale, scale_b=scale, bias=bias, out_dtype=torch.bfloat16)
-    if svd_up is not None:
-        result.add_(svd_bias)
-    result = result.view(output_shape).to(return_dtype)
-    return result
+        if bias is not None:
+            bias = torch.addmm(bias.to(dtype=svd_down.dtype), torch.mm(input.to(dtype=svd_down.dtype), svd_down), svd_up)
+        else:
+            bias = torch.mm(torch.mm(input.to(dtype=svd_down.dtype), svd_down), svd_up)
+
+    input, input_scale = quantize_fp_mm_input(input, dtype=scale.dtype)
+    input, weight = check_mats(input, weight, matmul_dtype="float8_e4m3fn")
+    return input, weight, input_scale, scale, bias, return_dtype, output_shape
+
+
+def fp8_matmul(
+    input: torch.FloatTensor,
+    weight: torch.Tensor,
+    scale: torch.FloatTensor,
+    bias: torch.FloatTensor | None = None,
+    svd_up: torch.FloatTensor | None = None,
+    svd_down: torch.FloatTensor | None = None,
+    hadamard: torch.FloatTensor | None = None,
+    quantized_weight_shape: torch.Size | None = None,
+    weights_dtype: str | None = None,
+) -> torch.FloatTensor:
+    input, weight, input_scale, scale, bias, return_dtype, output_shape = get_fp8_matmul_inputs(
+        input, weight, scale,
+        bias=bias,
+        svd_up=svd_up,
+        svd_down=svd_down,
+        hadamard=hadamard,
+        quantized_weight_shape=quantized_weight_shape,
+        weights_dtype=weights_dtype,
+    )
+    return fp8_scaled_mm_func(input, weight, input_scale, scale, bias=bias, out_dtype=return_dtype).view(output_shape)
 
 
 def quantized_linear_forward_fp8_matmul(self, input: torch.FloatTensor) -> torch.FloatTensor:
@@ -72,4 +99,7 @@ def quantized_linear_forward_fp8_matmul(self, input: torch.FloatTensor) -> torch
     )
 
 
-fp8_matmul = compile_func(fp8_matmul)
+if is_fp8_mm_supported and not include_mm_kernel_in_compile:
+    get_fp8_matmul_inputs = compile_func(get_fp8_matmul_inputs)
+else:
+    fp8_matmul = compile_func(fp8_matmul)

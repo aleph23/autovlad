@@ -48,6 +48,8 @@ class ProgressRequest(BaseModel):
 
 class InternalProgressResponse(BaseModel):
     job: str = Field(default=None, title="Job name", description="Internal job name")
+    job_timestamp: str|None = Field(default=None, title="Job timestamp", description="Timestamp of the job start")
+    job_time: float|None = Field(default=None, title="Job start time", description="Time of the job start")
     textinfo: str|None = Field(default=None, title="Info text", description="Info text used by WebUI.")
     # status fields
     active: bool = Field(title="Whether the task is being worked on right now")
@@ -97,10 +99,13 @@ def api_progress(req: ProgressRequest):
     if active and (req.id_live_preview != -1):
         have_image = shared.state.set_current_image()
         if have_image and shared.state.current_image is not None:
-            buffered = io.BytesIO()
-            shared.state.current_image.save(buffered, format='jpeg', quality=60)
-            b64 = base64.b64encode(buffered.getvalue())
-            live_preview = f'data:image/jpeg;base64,{b64.decode("ascii")}'
+            try:
+                buffered = io.BytesIO()
+                shared.state.current_image.save(buffered, format='jpeg', quality=60)
+                b64 = base64.b64encode(buffered.getvalue())
+                live_preview = f'data:image/jpeg;base64,{b64.decode("ascii")}'
+            except Exception:
+                live_preview = None
         else:
             live_preview = None
 
@@ -119,7 +124,8 @@ def api_progress(req: ProgressRequest):
         steps=steps,
         batch_no=batch_no,
         batch_count=batch_count,
-        job_timestamp=shared.state.time_start,
+        job_timestamp=shared.state.job_timestamp,
+        job_time=shared.state.time_start,
         eta=eta,
         live_preview=live_preview,
         id_live_preview=id_live_preview,

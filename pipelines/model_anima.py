@@ -1,9 +1,6 @@
-import os
-import sys
 import importlib.util
 import transformers
 import diffusers
-import huggingface_hub as hf
 from modules import shared, devices, sd_models, model_quant, sd_hijack_te, sd_hijack_vae, errors
 from modules.logger import log
 from pipelines import generic
@@ -61,32 +58,10 @@ def load_anima(checkpoint_info, diffusers_load_config=None):
     if repo_id is None or repo_id.lower() == 'none':
         return None
 
-    # load-or-download custom pipeline modules from repo
-    if os.path.exists(os.path.join(repo_id, 'pipeline.py')):
-        pipeline_file = os.path.join(repo_id, 'pipeline.py')
-    else:
-        try:
-            pipeline_file = hf.hf_hub_download(repo_id, filename='pipeline.py', cache_dir=shared.opts.hfcache_dir)
-        except Exception as e:
-            log.error(f'Load model: type=Anima failed to download custom modules: {e}')
-            return None
-    if os.path.exists(os.path.join(repo_id, 'llm_adapter/modeling_llm_adapter.py')):
-        adapter_file = os.path.join(repo_id, 'llm_adapter/modeling_llm_adapter.py')
-    else:
-        try:
-            adapter_file = hf.hf_hub_download(repo_id, filename='llm_adapter/modeling_llm_adapter.py', cache_dir=shared.opts.hfcache_dir)
-        except Exception as e:
-            log.error(f'Load model: type=Anima failed to download custom modules: {e}')
-            return None
-
-    # dynamically import custom classes and register in sys.modules so Diffusers' from_pretrained can resolve them via trust_remote_code
-    adapter_mod = _import_from_file('modeling_llm_adapter', adapter_file)
-    sys.modules['modeling_llm_adapter'] = adapter_mod
-    pipeline_mod = _import_from_file('pipeline', pipeline_file)
-    sys.modules['pipeline'] = pipeline_mod
-    AnimaTextToImagePipeline = pipeline_mod.AnimaTextToImagePipeline
-    AnimaLLMAdapter = adapter_mod.AnimaLLMAdapter
-
+    import sys
+    from pipelines.anima import modeling_llm_adapter
+    sys.modules['modeling_llm_adapter'] = modeling_llm_adapter
+    from pipelines.anima.pipeline import AnimaTextToImagePipeline
     from pipelines.anima.anima_image import build_anima_pipeline_classes
     AnimaImageToImagePipeline, AnimaInpaintPipeline = build_anima_pipeline_classes(AnimaTextToImagePipeline)
     diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["anima"] = AnimaTextToImagePipeline
@@ -96,21 +71,20 @@ def load_anima(checkpoint_info, diffusers_load_config=None):
 
     # UNET dropdown (shared.opts.sd_unet) may redirect the transformer to a
     # community file that bundles both the transformer and the llm_adapter.
-    transformer, llm_adapter = init_transformer_component(repo_id, diffusers_load_config, AnimaLLMAdapter)
+    transformer, llm_adapter = init_transformer_component(repo_id, diffusers_load_config, modeling_llm_adapter.AnimaLLMAdapter)
     if transformer is None:
         return None
     text_encoder = generic.load_text_encoder(
         repo_id,
         cls_name=transformers.Qwen3Model,
         load_config=diffusers_load_config,
-        subfolder="text_encoder",
-        allow_shared=False
+        subfolder="text_encoder"
     )
 
     if llm_adapter is None:
         shared.state.begin('Load adapter')
         try:
-            llm_adapter = AnimaLLMAdapter.from_pretrained(
+            llm_adapter = modeling_llm_adapter.AnimaLLMAdapter.from_pretrained(
                 repo_id,
                 subfolder="llm_adapter",
                 cache_dir=shared.opts.hfcache_dir,
@@ -133,7 +107,6 @@ def load_anima(checkpoint_info, diffusers_load_config=None):
         **load_args,
     )
 
-    # generic.load_vae_override(pipe, diffusers_load_config, override_cls=diffusers.AutoencoderKLQwenImage, override_args={'low_cpu_mem_usage': False, 'ignore_mismatched_sizes': True})
     generic.load_vae_override(pipe, diffusers_load_config)
 
     del text_encoder

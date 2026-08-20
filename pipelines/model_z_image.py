@@ -1,3 +1,4 @@
+import os
 import torch
 import transformers
 import diffusers
@@ -42,12 +43,24 @@ def load_z_image(checkpoint_info, diffusers_load_config=None):
     transformer = None
     if model_quant.check_nunchaku('Model'): # only available model
         transformer = init_nunchaku()
+    if 'nunchaku-lite' in repo_id.lower():
+        from modules.attention import hijack_kernels
+        hijack_kernels()
     if transformer is None:
         transformer = generic.load_transformer(repo_id, cls_name=diffusers.ZImageTransformer2DModel, load_config=diffusers_load_config)
 
     text_encoder = generic.load_text_encoder(repo_id, cls_name=transformers.Qwen3ForCausalLM, load_config=diffusers_load_config)
 
     if repo_id is None or repo_id.lower() == 'none':
+        return None
+    if os.path.exists(repo_id): # local file so map to default repo
+        repo_id = generic.transformers_map.get('ZImageTransformer2DModel', repo_id)
+
+    if transformer is None:
+        log.error(f'Load model: type=ZImage repo="{repo_id}" failed to load transformer ')
+        return None
+    if text_encoder is None:
+        log.error(f'Load model: type=ZImage repo="{repo_id}" failed to load text encoder ')
         return None
 
     pipe = diffusers.ZImagePipeline.from_pretrained(

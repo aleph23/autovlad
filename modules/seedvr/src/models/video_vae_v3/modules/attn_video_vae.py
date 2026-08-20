@@ -1044,7 +1044,7 @@ class VideoAutoencoderKL(diffusers.AutoencoderKL):
         norm_num_groups: int = 32,
         sample_size: int = 32,
         scaling_factor: float = 0.18215,
-        force_upcast: float = True,
+        force_upcast: float = False,
         attention: bool = True,
         temporal_scale_num: int = 0,
         slicing_up_num: int = 0,
@@ -1146,25 +1146,29 @@ class VideoAutoencoderKL(diffusers.AutoencoderKL):
 
     @apply_forward_hook
     def encode(self, x: torch.FloatTensor, return_dict: bool = True) -> AutoencoderKLOutput:
-        # h = self.slicing_encode(x)
-        h = self.tiled_encode(x)
-        posterior = DiagonalGaussianDistribution(h)
-
+        if self.use_slicing_encode:
+            encoded = self.slicing_encode(x)
+        elif self.use_tiling_encode:
+            encoded = self.tiled_encode(x)
+        else:
+            encoded = self._encode(x)
+        posterior = DiagonalGaussianDistribution(encoded)
         if not return_dict:
             return (posterior,)
-
         return AutoencoderKLOutput(latent_dist=posterior)
 
     @apply_forward_hook
     def decode(
         self, z: torch.Tensor, return_dict: bool = True
     ) -> Union[DecoderOutput, torch.Tensor]:
-        # decoded = self.slicing_decode(z)
-        decoded = self.tiled_decode(z)
-
+        if self.use_slicing_decode:
+            decoded = self.slicing_decode(z)
+        elif self.use_tiling_decode:
+            decoded = self.tiled_decode(z)
+        else:
+            decoded = self._decode(z)
         if not return_dict:
             return (decoded,)
-
         return DecoderOutput(sample=decoded)
 
     def _encode(
@@ -1244,12 +1248,14 @@ class VideoAutoencoderKL(diffusers.AutoencoderKL):
         blend_extent = int(self.tile_latent_min_size * self.tile_overlap_factor)
         row_limit = self.tile_latent_min_size - blend_extent
         rows = []
+        self.tiles = 0
         for i in range(0, x.shape[3], overlap_size):
             row = []
             for j in range(0, x.shape[4], overlap_size):
                 tile = x[:, :, :, i : i + self.tile_sample_min_size, j : j + self.tile_sample_min_size]
                 tile = self._encode(tile)
                 row.append(tile)
+                self.tiles += 1
             rows.append(row)
         result_rows = []
         for i, row in enumerate(rows):
@@ -1329,6 +1335,7 @@ class VideoAutoencoderKLWrapper(VideoAutoencoderKL):
         self.spatial_downsample_factor = spatial_downsample_factor
         self.temporal_downsample_factor = temporal_downsample_factor
         self.freeze_encoder = freeze_encoder
+        self.freeze_encoder = True
         super().__init__(*args, **kwargs)
 
     def forward(self, x: torch.FloatTensor) -> CausalAutoencoderOutput:

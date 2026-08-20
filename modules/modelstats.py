@@ -13,20 +13,62 @@ def walk(folder: str):
     return files
 
 
-def stat(fn: str):
-    if fn is None or len(fn) == 0 or not os.path.exists(fn):
-        return 0, datetime.fromtimestamp(0)
-    fs_stat = os.stat(fn, follow_symlinks=False)
-    mtime = datetime.fromtimestamp(fs_stat.st_mtime).replace(microsecond=0)
-    if os.path.islink(fn):
-        size = 0
-    elif os.path.isfile(fn):
-        size = round(fs_stat.st_size)
-    elif os.path.isdir(fn):
-        size = round(sum(stat(fn)[0] for fn in walk(fn)))
-    else:
-        size = 0
-    return size, mtime
+def stat(folder: str, follow: bool = False, extended: bool = False, exclude: list[str] = []):
+    _files = 0
+    _folders = 0
+    _symlinks = 0
+    _errors = 0
+    _size = 0
+    _mtime = 0.0
+
+    def recurse(folder: str):
+        nonlocal _size, _mtime, _files, _folders, _symlinks, _errors
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                try:
+                    if any(part == ex for part in entry.path.split(os.sep) for ex in exclude):
+                        continue
+                    if entry.is_file(follow_symlinks=follow):
+                        try:
+                            _stat = entry.stat(follow_symlinks=follow)
+                        except Exception:
+                            _stat = os.stat(entry.path, follow_symlinks=follow)
+                        _size += _stat.st_size
+                        _files += 1
+                        if _stat.st_mtime > _mtime:
+                            _mtime = _stat.st_mtime
+                    elif entry.is_symlink():
+                        _symlinks += 1
+                    elif entry.is_dir(follow_symlinks=follow):
+                        _folders += 1
+                        recurse(entry.path)
+                except (FileNotFoundError, PermissionError):
+                    _errors += 1
+                    continue
+
+    try:
+        s_folder = str(folder)
+        if any(s_folder in ex for ex in exclude):
+            return _size, datetime.fromtimestamp(_mtime).replace(microsecond=0), _files, _folders, _symlinks, _errors
+        elif os.path.isfile(folder):
+            _stat = os.stat(folder, follow_symlinks=follow)
+            _size = _stat.st_size
+            _mtime = _stat.st_mtime
+            _files = 1
+        elif os.path.isdir(folder):
+            _folders = 1
+            recurse(folder)
+        else:
+            pass
+    except (FileNotFoundError, PermissionError):
+        _errors += 1
+    try:
+        _datetime = datetime.fromtimestamp(_mtime).replace(microsecond=0)
+    except (OSError, ValueError):
+        _datetime = datetime.fromtimestamp(0)
+    if extended:
+        return _size, _datetime, _files, _folders, _symlinks, _errors
+    return _size, _datetime
 
 
 class Module:

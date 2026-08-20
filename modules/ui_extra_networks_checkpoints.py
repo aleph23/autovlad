@@ -16,12 +16,19 @@ version_map = {
     "FluxKontext": "Flux",
     "SDXL 1.0": "SD XL",
     "SDXL Hyper": "SD XL",
+    "StableDiffusion": "SD 1.5",
     "StableDiffusion3": "SD 3",
     "StableDiffusionXL": "SD XL",
     "WanToVideo": "Wan",
     "WanVACE": "Wan",
     "Z": "Z-Image",
     "Glm": "GLM-Image",
+    "Krea2": "Krea 2",
+    "AnimaTextTo": "Anima",
+    "Ideogram4": "Ideogram 4",
+    "Flux2": "Flux 2",
+    "Flux2Klein": "Flux 2 Klein",
+    "Flux2KleinKV": "Flux 2 Klein",
 }
 
 class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
@@ -44,20 +51,19 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
             return []
         count = { 'total': 0, 'ready': 0, 'hidden': 0, 'experimental': 0, 'base': 0, 'quantized': 0, 'distilled': 0, 'community': 0, 'cloud': 0, 'nunchaku': 0 }
 
-        reference_base = readfile(os.path.join('data', 'reference.json'), as_type="dict")
-        reference_quant = readfile(os.path.join('data', 'reference-quant.json'), as_type="dict")
-        reference_distilled = readfile(os.path.join('data', 'reference-distilled.json'), as_type="dict")
-        reference_community = readfile(os.path.join('data', 'reference-community.json'), as_type="dict")
-        reference_cloud = readfile(os.path.join('data', 'reference-cloud.json'), as_type="dict")
-        reference_nunchaku = readfile(os.path.join('data', 'reference-nunchaku.json'), as_type="dict")
         shared.reference_models = {}
-        shared.reference_models.update(reference_base)
-        shared.reference_models.update(reference_quant)
-        shared.reference_models.update(reference_community)
-        shared.reference_models.update(reference_distilled)
-        shared.reference_models.update(reference_cloud)
-        shared.reference_models.update(reference_nunchaku)
+        for tag in count.keys():
+            fn = os.path.join('data', f'reference-{tag}.json')
+            dct = readfile(fn, as_type="dict", silent=True)
+            for k, v in dct.items():
+                v['skip'] = 'safetensors' not in v.get('path', '')
+                v['tags'] = [tag.capitalize()]
+                size = v.get('size', 0)
+                if size > 0:
+                    v['tags'].append(f'Size: {size} GB')
+                shared.reference_models[k] = v
 
+        models = []
         for k, v in shared.reference_models.items():
             count['total'] += 1
             url = v['path']
@@ -76,33 +82,44 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
             name = os.path.normpath(os.path.join(paths.reference_path, k)).replace('\\', '/')
             size = int(float(v.get('size', 0)) * 1024 * 1024 * 1024)
             mtime = v.get('date', None)
+            _size, _mtime = modelstats.stat(preview_file)
             if mtime is None:
-                _size, mtime = modelstats.stat(preview_file)
+                mtime = _mtime
             else:
                 try:
                     mtime = datetime.strptime(mtime, '%Y %B') # 2025 January
                 except Exception:
-                    _size, mtime = modelstats.stat(preview_file)
+                    mtime = _mtime
+            if size == 0:
+                size = _size
             if len(v.get("subfolder", "")) > 0:
                 path = f'{v.get("path", "")}+{v.get("subfolder", "")}'
             else:
                 path = f'{v.get("path", "")}'
 
-            tag = v.get('tags', '')
-            tag = tag.split(',')[0].strip() # take first tag if multiple
-            if tag == 'nunchaku' and (devices.backend != 'cuda' and not shared.cmd_opts.experimental):
+            tag = v.get('tags', [])
+            if isinstance(tag, list):
+                tag = ', '.join(tag)
+            if isinstance(tag, list) and len(tag) > 0:
+                primary = tag[0].strip()
+            elif isinstance(tag, str):
+                primary = tag.split(',')[0].strip() if len(tag) > 0 else ''
+            else:
+                primary = ''
+
+            if ('nunchaku' in tag) and (devices.backend != 'cuda' and not shared.cmd_opts.experimental):
                 count['hidden'] += 1
                 continue
-            if tag in count:
-                count[tag] += 1
-            elif tag != '':
-                count[tag] = 1
+            if primary in count:
+                count[primary] += 1
+            elif primary != '':
+                count[primary] = 1
             else:
                 count['base'] += 1
 
             ready = reference_downloaded(url)
             version = "ready" if ready else "download"
-            if tag == 'cloud':
+            if 'cloud' in tag :
                 version = 'Cloud'
             if not ready and shared.opts.offline_mode:
                 count['hidden'] += 1
@@ -110,14 +127,14 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
             if ready:
                 count['ready'] += 1
 
-            yield {
+            model = {
                 "type": 'Model',
                 "name": name,
                 "title": name,
                 "filename": url,
                 "preview": self.find_preview(os.path.join(paths.reference_path, preview)),
                 "local_preview": preview_file,
-                "onclick": '"' + html.escape(f"selectReference({json.dumps(path)})") + '"',
+                "onclick": '"' + html.escape(f"""return selectReference({json.dumps(path)})""") + '"',
                 "hash": None,
                 "mtime": mtime,
                 "size": size,
@@ -125,9 +142,11 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
                 "metadata": {},
                 "description": v.get('desc', ''),
                 "version": version,
-                "tags": tag,
+                "tags": v.get('tags', []),
             }
+            models.append(model)
         log.debug(f'Networks: type="reference" {count}')
+        return models
 
     def create_item(self, name):
         record = None
@@ -141,7 +160,7 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
                 "filename": checkpoint.filename,
                 "hash": checkpoint.shorthash,
                 "metadata": checkpoint.metadata,
-                "onclick": '"' + html.escape(f"selectCheckpoint({json.dumps(name)})") + '"',
+                "onclick": '"' + html.escape(f"""return selectCheckpoint({json.dumps(name)})""") + '"',
                 "mtime": mtime,
                 "size": size,
             }
@@ -174,8 +193,7 @@ class ExtraNetworksPageCheckpoints(ui_extra_networks.ExtraNetworksPage):
                 item = future.result()
                 if item is not None:
                     items.append(item)
-        for record in self.list_reference():
-            items.append(record)
+        items += self.list_reference()
         self.update_all_previews(items)
         return items
 

@@ -3,7 +3,7 @@ import time
 import torch
 from PIL import Image
 
-from modules import shared, errors, timer, memstats, progress, processing, sd_models, sd_samplers, devices, extra_networks, call_queue
+from modules import shared, errors, timer, memstats, progress, processing, sd_models, sd_samplers, devices, extra_networks, call_queue, scripts_manager
 from modules.logger import log
 from modules.ltx import ltx_capabilities
 from modules.ltx.ltx_diffusers_patch import apply_patch as apply_ltx_diffusers_patch
@@ -151,6 +151,8 @@ def run_ltx(task_id,
             mp4_thumb: bool,
             audio_enable: bool,
             _overrides,
+            *args,
+            **_kwargs,
            ):
 
     def abort(e, ok: bool = False, p=None):
@@ -208,7 +210,7 @@ def run_ltx(task_id,
             final_w = base_w * 2
             final_h = base_h * 2
             if (final_w, final_h) != (target_w, target_h):
-                log.warning(f'LTX: two-stage refine needs resolution divisible by 64; adjusting {target_w}x{target_h} -> {final_w}x{final_h}')
+                log.warning(f'LTX: resolution={target_w}x{target_h} adjusted={final_w}x{final_h} two-stage refine needs resolution divisible by 64')
         elif effective_upsample_enable:
             base_w = target_w
             base_h = target_h
@@ -219,7 +221,7 @@ def run_ltx(task_id,
             base_h = target_h
             final_w = target_w
             final_h = target_h
-        log.debug(f'LTX: resolution planning target={target_w}x{target_h} base={base_w}x{base_h} final={final_w}x{final_h} auto_refine_upsample={auto_refine_upsample}')
+        log.debug(f'LTX: resolution planning target={target_w}x{target_h} base={base_w}x{base_h} final={final_w}x{final_h} upsample={auto_refine_upsample}')
 
         videojob = shared.state.begin('Video', task_id=task_id)
         shared.state.job_count = 1
@@ -234,8 +236,6 @@ def run_ltx(task_id,
         condition_images = []
         if ltx_init_image is not None:
             condition_images.append(ltx_init_image)
-        if condition_last is not None:
-            condition_images.append(condition_last)
         conditions = []
         conditions_stage2 = []
         if caps.supports_multi_condition:
@@ -246,14 +246,14 @@ def run_ltx(task_id,
                 base_w, base_h, condition_strength,
                 condition_images, condition_files, condition_video,
                 condition_video_frames, condition_video_skip,
-                family=caps.family,
+                family=caps.family, num_frames=get_frames(frames), condition_last=condition_last,
             )
             if (final_w, final_h) != (base_w, base_h):
                 conditions_stage2 = get_conditions(
                     final_w, final_h, condition_strength,
                     condition_images, condition_files, condition_video,
                     condition_video_frames, condition_video_skip,
-                    family=caps.family,
+                    family=caps.family, num_frames=get_frames(frames), condition_last=condition_last,
                 )
             else:
                 conditions_stage2 = conditions
@@ -284,12 +284,14 @@ def run_ltx(task_id,
             vae_tile_frames=16,
         )
         processing.fix_seed(p)
-        p.scripts = None
-        p.script_args = None
         p.do_not_save_grid = True
         p.do_not_save_samples = not mp4_frames
         p.outpath_samples = resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_video)
         p.ops.append('video')
+
+        p.scripts = scripts_manager.scripts_video
+        p.script_args = args
+        processed: processing.Processed = scripts_manager.scripts_video.run(p, *args)
 
         p.task_args['num_inference_steps'] = p.steps
         p.task_args['width'] = p.width
@@ -339,7 +341,9 @@ def run_ltx(task_id,
 
             try:
                 if needs_latent_path:
-                    prompt_final, negative_final, networks = get_prompts(prompt, negative, styles)
+                    if p.scripts is not None and isinstance(p.scripts, scripts_manager.ScriptRunner):
+                        p.scripts.before_process(p)
+                    prompt_final, negative_final, networks = get_prompts(p)
                     extra_networks.activate(p, networks)
                     # Encode once and reuse across stages; encode_prompt short-circuits when
                     # embeds are passed to __call__. CPU park keeps them off GPU between stages.
@@ -518,7 +522,7 @@ def run_ltx(task_id,
                             shift_terminal=None,
                         )
                         if caps.supports_canonical_stage2:
-                            log.info(f'LTX: canonical Stage 2 via distilled LoRA repo={caps.stage2_dev_lora_repo}')
+                            log.debug(f'LTX: stage=2 distilled=LoRA repo={caps.stage2_dev_lora_repo}')
                             offline_args = {'local_files_only': True} if shared.opts.offline_mode else {}
                             shared.sd_model.load_lora_weights(
                                 caps.stage2_dev_lora_repo,
@@ -528,7 +532,7 @@ def run_ltx(task_id,
                             )
                             shared.sd_model.set_adapters([STAGE2_DEV_LORA_ADAPTER], [1.0])
                         else:
-                            log.info('LTX: canonical Stage 2 (Distilled native, no LoRA)')
+                            log.debug('LTX: stage=2 distilled=native')
                         # Identity kwargs override any guidance left from earlier in refine_args.
                         refine_args.update(_canonical_stage2_kwargs())
                         refine_args.pop('num_inference_steps', None)
@@ -572,9 +576,9 @@ def run_ltx(task_id,
                                 from modules.lora.extra_networks_lora import unload_diffusers
                                 unload_diffusers()
                             except Exception as e:
-                                log.warning(f'LTX: canonical Stage 2 LoRA unload failed: {e}')
+                                log.warning(f'LTX: stage=2 distilled=LoRA unload failed: {e}')
                         shared.sd_model.scheduler = saved_scheduler_stage2
-                        log.debug('LTX: canonical Stage 2 cleanup done (scheduler restored)')
+                        # log.debug('LTX: stage=2 cleanup done')
                 t8 = time.time()
                 shared.sd_model = sd_models.apply_balanced_offload(shared.sd_model, silent=True)
                 t9 = time.time()

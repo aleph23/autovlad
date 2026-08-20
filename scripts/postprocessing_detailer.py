@@ -12,7 +12,7 @@ class ScriptPostprocessingDetailer(scripts_postprocessing.ScriptPostprocessing):
         # The detailer accordion (built by yolo.ui) now contains the Sampler sub-accordion too, so for 'extras'
         # it returns a 7th element: a dict of the sampler-block controls. Spread it into the control map; their
         # values are stamped onto the synthetic p in process()/make_processing(), applying to this pass only.
-        enabled, prompt, negative, steps, strength, resolution, sampler_block = shared.yolo.ui('extras')
+        enabled, prompt, negative, steps, strength, resolution, sampler_block = shared.detailer.ui('extras')
         return {
             "enabled": enabled,
             "prompt": prompt,
@@ -27,6 +27,10 @@ class ScriptPostprocessingDetailer(scripts_postprocessing.ScriptPostprocessing):
                 enabled=False, prompt='', negative='', steps=10, strength=0.3, resolution=1024,
                 sampler='Default', prediction='default', shift=3.0, cfg_scale=6.0, options=None, seed=-1):
         if not enabled:
+            return pp
+        if not shared.sd_loaded:
+            log.warning('Detailer postprocess: SD model not loaded')
+            pp.info["Detailer"] = "skipped (SD model not loaded)"
             return pp
         if shared.sd_model is None or not hasattr(shared.sd_model, 'sd_checkpoint_info'):
             log.warning('Detailer postprocess: no base model selected')
@@ -48,10 +52,10 @@ class ScriptPostprocessingDetailer(scripts_postprocessing.ScriptPostprocessing):
             'schedulers_rescale_betas': 'rescale' in options,
         }
         log.info(f'Detailer postprocess: strength={strength} steps={steps} resolution={resolution} sampler={sampler} cfg={cfg_scale}')
-        p = shared.yolo.make_processing(pp.image, prompt=prompt, negative=negative, steps=steps, strength=strength, resolution=resolution, seed=int(seed) if seed is not None else -1, overrides=overrides)
+        p = shared.detailer.make_processing(pp.image, prompt=prompt, negative=negative, steps=steps, strength=strength, resolution=resolution, seed=int(seed) if seed is not None else -1, overrides=overrides)
 
         try:
-            result = shared.yolo.restore(np.array(pp.image), p)
+            result = shared.detailer.restore(np.array(pp.image), p)
         except Exception as e:
             log.error(f'Detailer postprocess: {e}')
             return pp

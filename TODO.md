@@ -10,33 +10,40 @@
 
 - Chat-based interface, @vladmandic
 - Control tab verify overrides handling, @vladmandic
-- [nVidia LocateAnything](https://huggingface.co/nvidia/LocateAnything-3B) detection for Detailer, @vladmandic
-- [Object clear](https://huggingface.co/jixin0101/ObjectClear) remover for Kanvas, @vladmandic
-
 - Cloud providers, @CalamitousFelicitousness
-- Video processing add full API support, @CalamitousFelicitousness
+- Video processing add/verify full API support, @CalamitousFelicitousness
+- Lora: new handler, @CalamitousFelicitousness
+- Processing -> Video capabilities, @vladmandic
+  - `RIFE` in processing
 
 ### Unassigned
 
-- Processing -> Video capabilities
-  - `RIFE` in processing
-  - `SeedVR2` in processing
-- Video model loader: Add video models to Reference
+- [Object clear](https://huggingface.co/jixin0101/ObjectClear) remover for Kanvas
+- [MiniMax H3](https://github.com/huggingface/diffusers/pull/14355)
+- Video models: add to Reference
+- Video models: support custom entries, finetunes
 - UI Lite vs Expert mode
-- TensorRT acceleration
 - Auto handle scheduler `prediction_type`
 - Cache models in memory
 - JSON image metadata
-- Integrate natural language image search: [ImageDB](https://github.com/vladmandic/imagedb)
+- Expand custom VAE support
+- Refactor: remove obsolete code:
+  - Remove `directml`
+  - Remove `olive-ai`
+- Integrate natural language image search
+  - [ImageDB](https://github.com/vladmandic/imagedb)
 - Unify *huggingface* and *diffusers* model folders
 
 ### OnHold
 
-- Implement [pruna](https://github.com/PrunaAI/pruna), @vladmandic, pending support for transformers 5.5
-- LoRA add OMI format support for SD35/FLUX.1, on-hold
+- [nVidia-VFX](https://pypi.org/project/nvidia-vfx/): not compatible with latest nVidia drivers
+- [QuantFunc](https://huggingface.co/QuantFunc/Klein-9B-Series): once its released as sdk
+- [nVidia LocateAnything](https://huggingface.co/nvidia/LocateAnything-3B) detection for Detailer, once its compatible with transformers==5
+- LoRA add OMI format support for SD35/FLUX.1
 - Remote Text-Encoder support, sidelined for the moment
 - Multi-user support
 - Settings profile manager
+- TensorRT acceleration
 
 ### Modular
 

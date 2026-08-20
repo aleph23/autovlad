@@ -15,6 +15,30 @@ from modules.sd_checkpoint import CheckpointInfo # pylint: disable=unused-import
 debug = log.trace if os.environ.get('SD_LOAD_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
+class StateDictCache:
+    _enabled: bool = True
+    _cache: dict[str, dict] = {}
+
+    def get(self, key: str):
+        if not self._enabled:
+            return None
+        return self._cache.get(key, None)
+
+    def set(self, key: str, value: dict):
+        if not self._enabled:
+            return
+        self._cache[key] = value
+
+    def enable(self):
+        self._enabled = True
+
+    def disable(self):
+        self._enabled = False
+        self._cache.clear()
+
+state_dict_cache = StateDictCache()
+
+
 class NoWatermark:
     def apply_watermark(self, img):
         return img
@@ -34,7 +58,7 @@ def get_call(cls):
     return signature.parameters
 
 
-def path_to_repo(checkpoint_info):
+def path_to_repo(checkpoint_info: CheckpointInfo | str):
     if isinstance(checkpoint_info, CheckpointInfo):
         if os.path.exists(checkpoint_info.path) and 'models--' not in checkpoint_info.path:
             return checkpoint_info.path # local models
@@ -48,7 +72,7 @@ def path_to_repo(checkpoint_info):
     for opt in [shared.opts.ckpt_dir, shared.opts.diffusers_dir, shared.opts.hfcache_dir]:
         remove_prefix.append(opt.replace('\\', '/'))
         try:
-            relative = os.path.relpath(opt, start=shared.opts.models_dir).replace('\\', '/')
+            relative = os.path.relpath(opt, start=shared.models_path).replace('\\', '/')
             if not relative.startswith('.'):
                 remove_prefix.append(relative)
         except Exception:
@@ -97,12 +121,18 @@ def convert_to_faketensors(tensor):
 
 
 def read_state_dict(checkpoint_file, map_location=None, what:str='model'): # pylint: disable=unused-argument
+    cached = state_dict_cache.get(checkpoint_file)
+    if cached is not None:
+        return cached
     if not os.path.isfile(checkpoint_file):
-        log.error(f'Load dict: path="{checkpoint_file}" not a file')
+        log.error(f'Load dict: file="{checkpoint_file}" not a file')
         return None
     _, extension = os.path.splitext(checkpoint_file)
     if extension.lower() == ".ckpt" and shared.opts.sd_disable_ckpt:
-        log.warning(f"Checkpoint loading disabled: {checkpoint_file}")
+        log.warning(f'Load dict: file="{checkpoint_file}" checkpoint loading disabled')
+        return None
+    if shared.state.interrupted:
+        log.warning(f'Load dict: file="{checkpoint_file}" interrupted before read')
         return None
     try:
         pl_sd = None
@@ -123,6 +153,7 @@ def read_state_dict(checkpoint_file, map_location=None, what:str='model'): # pyl
                 else:
                     pl_sd = torch.load(f, map_location='cpu')
         sd = get_state_dict_from_checkpoint(pl_sd)
+        state_dict_cache.set(checkpoint_file, sd)
         del pl_sd
     except Exception as e:
         errors.display(e, f'Load model: {checkpoint_file}')

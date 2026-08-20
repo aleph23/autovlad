@@ -4,11 +4,16 @@ import { authFetch } from './authWrap';
 import { timer } from './timers';
 
 const activePromptTextarea = {};
+const selectedNetworks = {};
 let sortVal = -1;
 let totalCards = -1;
 let lastTab = 'control';
 
 // helpers
+
+export function getSelectedNetworks() {
+  return selectedNetworks;
+}
 
 export const getENActiveTab = () => {
   let tabName = '';
@@ -153,6 +158,12 @@ async function filterExtraNetworksForTab(searchTerm) {
           .toLowerCase()
           .includes('reference/') && elem.dataset.tags === '' ? '' : 'none';
       });
+    } else if (searchTerm === 'base/') {
+      cards.forEach((elem) => {
+        elem.style.display = elem.dataset.tags
+          .toLowerCase()
+          .includes('base') ? '' : 'none';
+      });
     } else if (searchTerm === 'distilled/') {
       cards.forEach((elem) => {
         elem.style.display = elem.dataset.tags
@@ -201,9 +212,16 @@ async function filterExtraNetworksForTab(searchTerm) {
       cards.forEach((elem) => {
         elem.style.display = re.test(`filename: ${elem.dataset.filename}|name: ${elem.dataset.name}|tags: ${elem.dataset.tags}`) ? '' : 'none';
       });
-    } else {
-      const searchList = searchTerm.split('|').filter((s) => s !== '' && !s.startsWith('-')).map((s) => s.trim());
-      const excludeList = searchTerm.split('|').filter((s) => s !== '' && s.trim().startsWith('-')).map((s) => s.trim().substring(1).trim());
+    } else { // actual user search
+      // try strict search first
+      let multiStr = false;
+      let searchList = searchTerm.split('|').filter((s) => s !== '' && !s.startsWith('-')).map((s) => s.trim());
+      let excludeList = searchTerm.split('|').filter((s) => s !== '' && s.trim().startsWith('-')).map((s) => s.trim().substring(1).trim());
+      if (searchList.length === 1 && searchTerm.includes(' ')) {
+        searchList = searchTerm.split(' ').filter((s) => s !== '' && !s.startsWith('-')).map((s) => s.trim());
+        excludeList = searchTerm.split(' ').filter((s) => s !== '' && s.trim().startsWith('-')).map((s) => s.trim().substring(1).trim());
+        multiStr = true;
+      }
       const searchListAll = searchList.map((s) => s.split('&').map((t) => t.trim()));
       const excludeListAll = excludeList.map((s) => s.split('&').map((t) => t.trim()));
       cards.forEach((elem) => {
@@ -212,7 +230,9 @@ async function filterExtraNetworksForTab(searchTerm) {
         if (elem.dataset.name) text += `${elem.dataset.name} `;
         if (elem.dataset.tags) text += `${elem.dataset.tags} `;
         text = text.toLowerCase().replace('models--', 'diffusers').replaceAll('\\', '/');
-        if (searchListAll.some((sl) => sl.every((st) => text.includes(st))) && !excludeListAll.some((el) => el.every((et) => text.includes(et)))) {
+        if (multiStr && searchListAll.every((sl) => sl.every((st) => text.includes(st))) && !excludeListAll.some((el) => el.every((et) => text.includes(et)))) {
+          elem.style.display = '';
+        } else if (!multiStr && searchListAll.some((sl) => sl.every((st) => text.includes(st))) && !excludeListAll.some((el) => el.every((et) => text.includes(et)))) {
           elem.style.display = '';
         } else {
           elem.style.display = 'none';
@@ -289,18 +309,19 @@ function sortExtraNetworks(fixed = 'no') {
   }
   const desc = sortDesc[sortVal];
   const t1 = performance.now();
-  log('sortNetworks', { name: pagename, val: sortVal, order: desc, fixed: fixed === 'fixed', items: num, time: Math.round(t1 - t0) });
+  log('sortNetworks', { page: pagename, key: sortVal, order: desc, items: num, time: Math.round(t1 - t0) });
   timer(`sortExtraNetworks:${desc}`, t1 - t0);
   return desc;
 }
 
 function refreshENInput(tabName) {
-  log('refreshNetworks', tabName, gradioApp().querySelector(`#${tabName}_extra_networks textarea`)?.value);
+  log('refreshNetworks', { tab: tabName, value: gradioApp().querySelector(`#${tabName}_extra_networks textarea`)?.value });
   gradioApp().querySelector(`#${tabName}_extra_networks textarea`)?.dispatchEvent(new Event('input'));
 }
 
 export async function markSelectedCards(selected, page = '') {
-  log('markSelectedCards', selected, page);
+  log('markSelectedCards', { page, selected });
+  selectedNetworks[page] = selected;
   gradioApp().querySelectorAll('.extra-network-cards .card').forEach((el) => {
     if (page.length > 0 && el.dataset.page !== page) return; // filter by page
     if (selected.includes(el.dataset.name) || selected.includes(el.dataset.short)) el.classList.add('card-selected');
@@ -321,7 +342,7 @@ function extractLoraNames(prompt) {
 
 function cardClicked(textToAdd) {
   const tabName = getENActiveTab();
-  log('cardClicked', tabName, textToAdd);
+  log('cardClicked', { tab: tabName, text: textToAdd });
   const textarea = activePromptTextarea[tabName];
   if (textarea.value.indexOf(textToAdd) !== -1) textarea.value = textarea.value.replace(textToAdd, '');
   else textarea.value += textToAdd;
@@ -490,6 +511,7 @@ function setupExtraNetworksForTab(tabName) {
   const txtSearch = gradioApp().querySelector(`#${tabName}_extra_search`);
   const txtSearchValue = gradioApp().querySelector(`#${tabName}_extra_search textarea`);
   const txtDescription = gradioApp().getElementById(`${tabName}_description`);
+  if (!txtSearch || !txtSearchValue || !txtDescription) return;
   txtSearch.classList.add('search');
   txtDescription.classList.add('description');
   div.appendChild(txtSearch);
@@ -653,6 +675,7 @@ window.applyStyles = applyStyles;
 window.closeDetailsEN = closeDetailsEN;
 window.getENActivePage = getENActivePage;
 window.getCardDetails = getCardDetails;
+window.getSelectedNetworks = getSelectedNetworks;
 window.sortExtraNetworks = sortExtraNetworks;
 window.refeshDetailsEN = refeshDetailsEN;
 window.extraNetworksSearchButton = extraNetworksSearchButton;

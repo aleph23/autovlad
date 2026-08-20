@@ -28,7 +28,7 @@ def load_model(engine: str, model: str):
     selected: models_def.Model = [m for m in models_def.models[engine] if m.name == model][0]
     # video_load owns the cache; pipe-class mismatch inside it invalidates the name-based hit
     # when Unload Models (or any external swap) silently replaced shared.sd_model.
-    log.info(f'Video load: engine="{engine}" selected="{model}" {selected}')
+    log.info(f'Load video: engine="{engine}" selected="{model}" {selected}')
     video_load.load_model(selected)
     t1 = time.time()
     shared.sd_model = sd_models.apply_balanced_offload(shared.sd_model)
@@ -41,7 +41,7 @@ def load_upsample(upsample_pipe, upsample_repo_id):
     if upsample_pipe is None:
         t0 = time.time()
         from diffusers.pipelines.ltx.pipeline_ltx_latent_upsample import LTXLatentUpsamplePipeline
-        log.info(f'Video load: cls={LTXLatentUpsamplePipeline.__name__} repo="{upsample_repo_id}"')
+        log.info(f'Load video: cls={LTXLatentUpsamplePipeline.__name__} repo="{upsample_repo_id}"')
         upsample_pipe = LTXLatentUpsamplePipeline.from_pretrained(
             upsample_repo_id,
             vae=shared.sd_model.vae,
@@ -61,7 +61,7 @@ def load_upsample_2x(upsample_pipe, upsample_repo_id):
         from diffusers.pipelines.ltx2.pipeline_ltx2_latent_upsample import LTX2LatentUpsamplePipeline
         from diffusers.pipelines.ltx2.latent_upsampler import LTX2LatentUpsamplerModel
         from modules import sd_checkpoint
-        log.info(f'Video load: cls={LTX2LatentUpsamplePipeline.__name__} repo="{upsample_repo_id}"')
+        log.info(f'Load video: cls={LTX2LatentUpsamplePipeline.__name__} repo="{upsample_repo_id}"')
         latent_upsampler = LTX2LatentUpsamplerModel.from_pretrained(
             upsample_repo_id,
             subfolder='latent_upsampler',
@@ -123,7 +123,7 @@ def ltx_scheduler_opts(sd_model, *, dynamic_shift=None, sampler_shift=None):
             if orig_flow_shift is not None and hasattr(sd_model.scheduler.config, 'flow_shift'):
                 sd_model.scheduler.config.flow_shift = orig_flow_shift
                 sd_model.scheduler.register_to_config(flow_shift=orig_flow_shift)
-        log.debug(f'LTX: scheduler/opts restored dynamic_shift={orig_dynamic_shift} sampler_shift={orig_sampler_shift}')
+        # log.debug(f'LTX: scheduler/opts restored dynamic_shift={orig_dynamic_shift} sampler_shift={orig_sampler_shift}')
 
 
 def _condition_cls(family: str):
@@ -138,15 +138,15 @@ def _condition_cls(family: str):
     return LTXVideoCondition
 
 
-def make_condition(condition_cls, family: str, frames, strength: float, is_video: bool):
+def make_condition(condition_cls, family: str, frames, strength: float, is_video: bool, index: int = 0):
     if family == '2.x':
-        return condition_cls(frames=frames, index=0, strength=strength)
+        return condition_cls(frames=frames, index=index, strength=strength)
     if is_video:
-        return condition_cls(video=frames, frame_index=0, strength=strength)
-    return condition_cls(image=frames, frame_index=0, strength=strength)
+        return condition_cls(video=frames, frame_index=index, strength=strength)
+    return condition_cls(image=frames, frame_index=index, strength=strength)
 
 
-def get_conditions(width, height, condition_strength, condition_images, condition_files, condition_video, condition_video_frames, condition_video_skip, family: str = '0.9'):
+def get_conditions(width, height, condition_strength, condition_images, condition_files, condition_video, condition_video_frames, condition_video_skip, family: str = '0.9', num_frames=None, condition_last=None):
     condition_cls = _condition_cls(family)
     if condition_cls is None:
         return []
@@ -186,12 +186,24 @@ def get_conditions(width, height, condition_strength, condition_images, conditio
                 log.debug(f'Video condition: family={family} frames={len(condition_frames)} size={condition_frames[0].size} strength={condition_strength}')
         except Exception as e:
             log.error(f'LTX condition video: {e}')
+    if condition_last is not None:
+        try:
+            if isinstance(condition_last, str):
+                from modules.api.api import decode_base64_to_image
+                condition_last = decode_base64_to_image(condition_last)
+            condition_last = condition_last.convert('RGB').resize((width, height), resample=Image.Resampling.LANCZOS)
+            # 2.x reads index as a latent index and accepts -1 for the final frame; 0.9 uses a pixel index.
+            last_index = -1 if family == '2.x' else max((num_frames or 1) - 1, 0)
+            conditions.append(make_condition(condition_cls, family, condition_last, condition_strength, is_video=False, index=last_index))
+            log.debug(f'Video condition: family={family} last={condition_last.size} index={last_index} strength={condition_strength}')
+        except Exception as e:
+            log.error(f'LTX condition last image: {e}')
     return conditions
 
 
-def get_prompts(prompt, negative, styles):
-    prompt = shared.prompt_styles.apply_styles_to_prompt(prompt, styles)
-    negative = shared.prompt_styles.apply_negative_styles_to_prompt(negative, styles)
+def get_prompts(p):
+    prompt = shared.prompt_styles.apply_styles_to_prompt(p.prompt, p.styles)
+    negative = shared.prompt_styles.apply_negative_styles_to_prompt(p.negative_prompt, p.styles)
     prompts, networks = extra_networks.parse_prompts([prompt])
     prompt = prompts[0] if len(prompts) > 0 else prompt
     return prompt, negative, networks

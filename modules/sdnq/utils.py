@@ -1,7 +1,29 @@
 import re
 import torch
 
-from .common import dtype_dict, common_skip_keys, module_skip_keys_dict, conv_types, conv_transpose_types
+from .common import (
+    dtype_dict,
+    common_skip_keys,
+    module_skip_keys_dict,
+    allowed_types,
+    embedding_types,
+    conv_types,
+    conv_transpose_types,
+)
+
+
+def is_pow2(n: int) -> bool:
+    return (n & (n - 1)) == 0
+
+
+def is_pow4(n: int) -> bool:
+    return is_pow2(n) and (n.bit_length() & 1 == 1)
+
+
+def next_power_of_2(n: int) -> int:
+    if is_pow2(n):
+        return n
+    return 2 ** n.bit_length()
 
 
 def check_param_name_in(param_name: str, param_list: list[str]) -> str:
@@ -19,6 +41,34 @@ def check_param_name_in(param_name: str, param_list: list[str]) -> str:
         ):
             return param
     return None
+
+
+def check_quant_is_allowed(layer_class_name: str, weight: torch.Tensor, quantization_config, pre_quantized: bool = False) -> bool:
+    if (
+        layer_class_name in allowed_types
+        and weight.dtype in {torch.float64, torch.float32, torch.float16, torch.bfloat16}
+        and not (layer_class_name in embedding_types and not quantization_config.quant_embedding)
+        and not ((layer_class_name in conv_types or layer_class_name in conv_transpose_types) and not quantization_config.quant_conv)
+    ):
+        if pre_quantized:
+            return True
+        if layer_class_name in conv_types:
+            channel_size = weight.shape[1]
+        elif layer_class_name in conv_transpose_types:
+            channel_size = weight.shape[0]
+        else:
+            channel_size = weight.shape[-1]
+        if channel_size >= quantization_config.minimum_allowed_channel_size and weight.numel() >= quantization_config.minimum_allowed_numel:
+            return True
+    return False
+
+
+def check_quantized_matmul_is_allowed(use_quantized_matmul: bool, output_channel_size: int, channel_size: int) -> bool:
+    return bool(
+        use_quantized_matmul
+        and output_channel_size >= 32 and channel_size >= 32
+        and output_channel_size % 16 == 0 and channel_size % 16 == 0
+    )
 
 
 def get_quant_args_from_config(quantization_config: dict) -> dict:
@@ -40,7 +90,7 @@ def get_quant_args_from_config(quantization_config: dict) -> dict:
     quantization_config_dict.pop("is_training", None)
     quantization_config_dict.pop("sdnq_version", None)
     if quantization_config_dict.get("modules_quant_config", None) is not None:
-        for key in quantization_config_dict["modules_quant_config"].keys():
+        for key in quantization_config_dict["modules_quant_config"]:
             quantization_config_dict["modules_quant_config"][key] = get_quant_args_from_config(quantization_config_dict["modules_quant_config"][key])
     return quantization_config_dict
 
@@ -50,7 +100,7 @@ def get_minimum_dtype(weights_dtype: str, param_name: str, modules_dtype_dict: d
         for key, value in modules_dtype_dict.items():
             if check_param_name_in(param_name, value) is not None:
                 key = key.lower()
-                if key.startswith("minimum") or key.endswith("bit") or key.endswith("bits"):
+                if key.startswith("minimum") or key.endswith(("bit", "bits")):
                     minimum_bits_str = key.removeprefix("minimum").removeprefix("-").removeprefix("_").removesuffix("bits").removesuffix("bit").removesuffix("-").removesuffix("_")
                     if minimum_bits_str.startswith("uint"):
                         is_unsigned = True
@@ -121,6 +171,20 @@ def get_quant_kwargs(layer: torch.nn.Module, quantization_config, torch_dtype: t
     return quant_kwargs
 
 
+def get_quantized_matmul_dtype(weights_dtype: str, quantized_matmul_dtype: str | None = None) -> str:
+    if quantized_matmul_dtype is None:
+        if dtype_dict[weights_dtype]["is_integer"]:
+            if weights_dtype == "uint8":
+                quantized_matmul_dtype = "uint8"
+            else:
+                quantized_matmul_dtype = "int8"
+        elif dtype_dict[weights_dtype]["num_bits"] < 16:
+            quantized_matmul_dtype = "float8_e4m3fn"
+        else:
+            quantized_matmul_dtype = "float16"
+    return quantized_matmul_dtype
+
+
 def add_module_skip_keys(model: torch.nn.Module, quantization_config):
     if getattr(model, "_keep_in_fp32_modules", None) is not None:
         quantization_config.modules_to_not_convert.extend(model._keep_in_fp32_modules) # pylint: disable=protected-access
@@ -135,20 +199,12 @@ def add_module_skip_keys(model: torch.nn.Module, quantization_config):
     if skip_key_list is not None:
         quantization_config.modules_to_not_convert.extend(skip_key_list[0])
         for key, value in skip_key_list[1].items():
-            if key in quantization_config.modules_dtype_dict.keys():
+            if key in quantization_config.modules_dtype_dict:
                 quantization_config.modules_dtype_dict[key].extend(value)
             else:
                 quantization_config.modules_dtype_dict[key] = value
 
-        if quantization_config.quantized_matmul_dtype is None:
-            if dtype_dict[quantization_config.weights_dtype]["is_integer"]:
-                quantized_matmul_dtype = "int8"
-            elif dtype_dict[quantization_config.weights_dtype]["num_bits"] < 16:
-                quantized_matmul_dtype = "float8_e4m3fn"
-            else:
-                quantized_matmul_dtype = "float16"
-        else:
-            quantized_matmul_dtype = quantization_config.quantized_matmul_dtype
+        quantized_matmul_dtype = get_quantized_matmul_dtype(quantization_config.weights_dtype, quantization_config.quantized_matmul_dtype)
         quantization_config.modules_to_not_use_matmul.extend(skip_key_list[2].get(quantized_matmul_dtype, []))
     else:
         quantization_config.modules_to_not_convert.extend(common_skip_keys)

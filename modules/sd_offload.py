@@ -21,8 +21,8 @@ offload_post = ['h1']
 offload_hook_instance = None
 balanced_offload_exclude = ['CogView4Pipeline', 'MeissonicPipeline']
 no_split_module_classes = [
-    "Linear", "Conv1d", "Conv2d", "Conv3d", "ConvTranspose1d", "ConvTranspose2d", "ConvTranspose3d",
-    "SDNQLinear", "SDNQConv1d", "SDNQConv2d", "SDNQConv3d", "SDNQConvTranspose1d", "SDNQConvTranspose2d", "SDNQConvTranspose3d",
+    "Linear", "Conv1d", "Conv2d", "Conv3d", "ConvTranspose1d", "ConvTranspose2d", "ConvTranspose3d", "Embedding",
+    "SDNQLinear", "SDNQConv1d", "SDNQConv2d", "SDNQConv3d", "SDNQConvTranspose1d", "SDNQConvTranspose2d", "SDNQConvTranspose3d", "SDNQEmbedding",
     "WanTransformerBlock",
 ]
 accelerate_dtype_byte_size = None
@@ -250,12 +250,12 @@ class OffloadHook(accelerate.hooks.ModelHook):
                     for module_name in get_module_names(pipe):
                         module_instance = getattr(pipe, module_name, None)
                         module_cls = module_instance.__class__.__name__
-                        if (module_instance is not None) and (_id != id(module_instance)) and (module_cls not in self.offload_never) and (not devices.same_device(module_instance.device, devices.cpu)):
+                        if (module_instance is not None) and (_id != id(module_instance)) and (module_cls not in self.offload_never) and (not devices.same_device(getattr(module_instance, "device", devices.cpu), devices.cpu)):
                             apply_balanced_offload_to_module(module_instance, op='pre')
                 self.last_cls = module.__class__.__name__
                 process_timer.add('offload', time.time() - t0)
 
-        if not devices.same_device(module.device, devices.device): # move-to-device
+        if not devices.same_device(getattr(module, "device", devices.cpu), devices.device): # move-to-device
             t0 = time.time()
             device_index = torch.device(devices.device).index
             if device_index is None:
@@ -280,12 +280,12 @@ class OffloadHook(accelerate.hooks.ModelHook):
                 skip_keys = getattr(module, "_skip_keys", None)
                 try:
                     module = accelerate.dispatch_model(module,
-                                                    main_device=torch.device(devices.device),
-                                                    device_map=device_map,
-                                                    offload_dir=offload_dir,
-                                                    skip_keys=skip_keys,
-                                                    force_hooks=True,
-                                                    )
+                                                       main_device=torch.device(devices.device),
+                                                       device_map=device_map,
+                                                       offload_dir=offload_dir,
+                                                       skip_keys=skip_keys,
+                                                       force_hooks=True,
+                                                      )
                 except Exception as e: # reapply hook
                     log.warning(f'Offload: type=balanced op=dispatch module={module.__class__.__name__} {e}')
                     module = accelerate.hooks.remove_hook_from_module(module, recurse=True)
@@ -301,7 +301,7 @@ class OffloadHook(accelerate.hooks.ModelHook):
             for _i, pipe in enumerate(get_pipe_variants()):
                 for module_name in get_module_names(pipe):
                     module_instance = getattr(pipe, module_name, None)
-                    log.trace(f'Offload: type=balanced op=pre:status forward={module.__class__.__name__} module={module_name} class={module_instance.__class__.__name__} pipe={_i} device={module_instance.device} dtype={module_instance.dtype}')
+                    log.trace(f'Offload: type=balanced op=pre:status forward={module.__class__.__name__} module={module_name} class={module_instance.__class__.__name__} pipe={_i} device={getattr(module_instance, "device", devices.cpu)} dtype={module_instance.dtype}')
 
         self.last_pre = _id
         return args, kwargs

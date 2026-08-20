@@ -1,11 +1,11 @@
 import os
 import gradio as gr
 from PIL import Image
-from modules import scripts_postprocessing
-
+from modules import errors, scripts_postprocessing
 
 models = [
     "none",
+    "lucida",
     "ben2",
     "silueta",
     "u2net",
@@ -16,6 +16,12 @@ models = [
     # "u2net_cloth_seg",
     # "sam",
 ]
+
+
+def dependencies():
+    from installer import install
+    for pkg in ["dctorch==0.1.2", "pymatting", "pooch", "rembg", "numba"]:
+        install(pkg, no_deps=True, ignore=False)
 
 
 class ScriptPostprocessingRembg(scripts_postprocessing.ScriptPostprocessing):
@@ -69,7 +75,8 @@ class ScriptPostprocessingRembg(scripts_postprocessing.ScriptPostprocessing):
         else:
             image = pp.image
             info = pp.info
-
+        if image is None:
+            return pp
         log.info(f'RemoveBackground: model={model} merge_alpha={merge_alpha} refine={refine} mask_only={mask_only} postprocess_mask={postprocess_mask} alpha_matting={alpha_matting} alpha_matting_foreground_threshold={alpha_matting_foreground_threshold} alpha_matting_background_threshold={alpha_matting_background_threshold} alpha_matting_erode_size={alpha_matting_erode_size}')
         if model == 'ben2':
             try:
@@ -77,12 +84,19 @@ class ScriptPostprocessingRembg(scripts_postprocessing.ScriptPostprocessing):
                 image = ben2.remove(image, refine=refine)
             except Exception as e:
                 log.error(f'RemoveBackground: model={model} {e}')
+                errors.display(e, 'Rembg model=ben2')
+                return pp
+        elif model == 'lucida':
+            try:
+                from modules.rembg import lucida
+                image = lucida.remove(image)
+            except Exception as e:
+                log.error(f'RemoveBackground: model={model} {e}')
+                errors.display(e, 'Rembg model=lucida')
                 return pp
         else:
             try:
-                from installer import install
-                for pkg in ["dctorch==0.1.2", "pymatting", "pooch", "rembg"]:
-                    install(pkg, no_deps=True, ignore=False)
+                dependencies()
                 import rembg
                 if "U2NET_HOME" not in os.environ:
                     from modules.paths import models_path
@@ -96,6 +110,7 @@ class ScriptPostprocessingRembg(scripts_postprocessing.ScriptPostprocessing):
                                     session=rembg.new_session(model))
             except Exception as e:
                 log.error(f'RemoveBackground: model={model} {e}')
+                errors.display(e, f'Rembg model={model}')
                 return pp
 
         if mask_only and image.mode == "RGBA":

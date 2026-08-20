@@ -264,7 +264,7 @@ def run_segment(input_image: gr.Image, input_mask: np.ndarray):
 def run_rembg(input_image: Image.Image, input_mask: np.ndarray):
     try:
         from installer import install
-        for pkg in ["dctorch==0.1.2", "pymatting", "pooch", "rembg"]:
+        for pkg in ["dctorch==0.1.2", "pymatting", "pooch", "rembg", "numba"]:
             install(pkg, no_deps=True, ignore=False)
         import rembg
     except Exception as e:
@@ -340,7 +340,7 @@ def get_mask(input_image: gr.Image, input_mask: gr.Image):
             largest_size = cv2.contourArea(contours[0]) if len(contours) > 0 else 0
             for i, contour in enumerate(contours):
                 area_size = cv2.contourArea(contour)
-                luminance = int(255.0 * area_size / largest_size)
+                luminance = int(255.0 * area_size / largest_size) if largest_size > 0 else 0
                 if luminance < 1:
                     break
                 cv2.drawContours(output_mask, contours, i, (luminance), -1)

@@ -12,6 +12,7 @@ from threading import Thread
 from installer import git_commit, custom_excepthook, version
 from modules.logger import log
 from modules import timer
+import modules.errors
 import modules.loader
 import modules.hashes
 import modules.paths
@@ -36,6 +37,7 @@ import modules.progress
 import modules.ui
 import modules.txt2img
 import modules.img2img
+import modules.detailer
 import modules.upscaler
 import modules.upscaler_simple
 import modules.upscaler_vae
@@ -67,8 +69,7 @@ fastapi_args = {
     "description": "SD.Next",
     "docs_url": None,
     "redoc_url": None,
-    # "docs_url": "/docs" if cmd_opts.docs else None, # custom handler in api.py
-    # "redoc_url": "/redocs" if cmd_opts.docs else None,
+    "openapi_url": "/openapi.json" if shared.cmd_opts.docs else None,  # only expose OpenAPI schema if docs are enabled
 }
 
 
@@ -92,8 +93,6 @@ def initialize():
     def _scan_models():
         modules.modelloader.cleanup_models()
         modules.sd_checkpoint.setup_model()
-        from modules.sd_checkpoint import write_metadata
-        write_metadata()
     def _scan_lora():
         from modules.lora import lora_load
         lora_load.list_available_networks()
@@ -109,13 +108,15 @@ def initialize():
                 future.result()
             except Exception as e:
                 log.error(f'Scan error: {name} {e}')
+    from modules.sd_checkpoint import write_metadata
+    write_metadata()
+
     timer.startup.record("scans")
 
     shared.prompt_styles.reload()
     timer.startup.record("styles")
 
-    import modules.postprocess.yolo as yolo
-    yolo.initialize()
+    modules.detailer.initialize()
     timer.startup.record("detailer")
 
     modules.extensions.list_extensions()
@@ -134,10 +135,17 @@ def initialize():
     modules.extra_networks.register_default_extra_networks()
     timer.startup.record("networks")
 
-    from modules.models_hf import hf_init, hf_check_cache
+    from modules.models_hf import hf_init
     hf_init()
-    hf_check_cache()
+    if shared.cmd_opts.test:
+        from modules.models_hf import hf_check_cache
+        hf_check_cache()
+        timer.startup.record("huggingface")
 
+    if shared.cmd_opts.test:
+        from modules.storage import check_storage
+        check_storage()
+        timer.startup.record("storage")
 
     if shared.cmd_opts.tls_keyfile is not None and shared.cmd_opts.tls_certfile is not None:
         try:
@@ -155,6 +163,8 @@ def initialize():
     # make the program just exit at ctrl+c without waiting for anything
     def sigint_handler(_sig, _frame):
         log.trace(f'State history: uptime={round(time.time() - shared.state.server_start)} jobs={shared.state.job_history} tasks={shared.state.task_history} latents={shared.state.latent_history} images={shared.state.image_history}')
+        if modules.errors._profiler is not None: # pylint: disable=protected-access
+            modules.errors.profile_print('SIGINT')
         log.info('Exiting')
         try:
             for f in glob.glob("*.lock"):
@@ -184,6 +194,7 @@ def load_model():
     shared.opts.onchange("sd_model_refiner", wrap_queued_call(lambda: modules.sd_models.reload_model_weights(op='refiner')), call=False)
     shared.opts.onchange("sd_vae", wrap_queued_call(lambda: modules.sd_vae.reload_vae_weights()), call=False)
     shared.opts.onchange("sd_unet", wrap_queued_call(lambda: modules.sd_unet.load_unet(shared.sd_model)), call=False)
+    shared.opts.onchange("sd_unet_secondary", wrap_queued_call(lambda: modules.sd_unet.load_unet_secondary(shared.sd_model)), call=False)
     shared.opts.onchange("sd_text_encoder", wrap_queued_call(lambda: modules.sd_models.reload_text_encoder()), call=False)
     shared.opts.onchange("temp_dir", modules.gr_tempdir.on_tmpdir_changed)
     timer.startup.record("onchange")
@@ -196,30 +207,56 @@ def create_api(app):
     return api
 
 
-def async_policy():
-    _BasePolicy = asyncio.WindowsSelectorEventLoopPolicy if sys.platform == "win32" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy") else asyncio.DefaultEventLoopPolicy
+def verbose_task_factory(loop, coro, context=None):
+    """Custom task factory that intercepts and logs every created task."""
+    # Retrieve the origin frame (where asyncio.create_task was called)
+    frame = coro.cr_frame if hasattr(coro, 'cr_frame') and coro.cr_frame else None
+    origin = f"{frame.f_code.co_filename}:{frame.f_lineno}" if frame else "unknown origin"
 
-    class AnyThreadEventLoopPolicy(_BasePolicy):
-        def handle_exception(self, context):
-            msg = context.get("exception", context["message"])
-            log.error(f"AsyncIO loop: {msg}")
+    # Get the coroutine function name
+    coro_name = getattr(coro, '__qualname__', str(coro))
+
+    print(f"[TASK CREATED] {coro_name} | Origin: {origin}")
+
+    # Fallback to the default Task creation (handles Python 3.11+ context kwargs)
+    if context is not None:
+        return asyncio.Task(coro, loop=loop, name=coro_name, context=context)
+    return asyncio.Task(coro, loop=loop, name=coro_name)
+
+
+def async_policy():
+    if sys.platform == "win32" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+        AsyncPolicy = asyncio.WindowsSelectorEventLoopPolicy
+    else:
+        AsyncPolicy = asyncio.DefaultEventLoopPolicy
+
+    class AnyThreadEventLoopPolicy(AsyncPolicy):
+        @staticmethod
+        def handle_exception(loop, context):
+            msg = context.get("exception", context.get("message"))
+            log.error(f"AsyncIO: loop={loop}: {msg}")
+
+        def new_event_loop(self) -> asyncio.AbstractEventLoop:
+            """Ensure custom exception handler is attached whenever a loop is created."""
+            loop = super().new_event_loop()
+            if shared.cmd_opts.profile:
+                loop.slow_callback_duration = 0.001
+            loop.set_debug(shared.cmd_opts.profile)
+            log.debug(f'AsyncIO: loop={loop}')
+            loop.set_task_factory(verbose_task_factory)
+            loop.set_exception_handler(self.handle_exception)
+            return loop
 
         def get_event_loop(self) -> asyncio.AbstractEventLoop:
+            """Get current thread's event loop, creating one if none exists (thread-safe)."""
             try:
-                self.loop = super().get_event_loop()
+                return super().get_event_loop()
             except (RuntimeError, AssertionError):
-                self.loop = self.new_event_loop()
-                self.set_event_loop(self.loop)
-            return self.loop
-
-        def __init__(self):
-            super().__init__()
-            self.loop = self.get_event_loop()
-            self.loop.set_exception_handler(self.handle_exception)
-            # log.debug(f"Event loop: {self.loop}")
+                loop = self.new_event_loop()
+                self.set_event_loop(loop)
+                return loop
 
     asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
-
 
 def get_external_ip():
     import socket
@@ -243,7 +280,7 @@ def get_remote_ip():
 
 
 def start_common():
-    log.debug('Entering start sequence')
+    log.debug('Server start sequence...')
     if shared.cmd_opts.data_dir is not None and len(shared.cmd_opts.data_dir) > 0:
         log.info(f'Base path: data="{shared.cmd_opts.data_dir}"')
     if shared.cmd_opts.models_dir is not None and len(shared.cmd_opts.models_dir) > 0 and shared.cmd_opts.models_dir != 'models':
@@ -275,8 +312,44 @@ def mount_subpath(app):
     import gradio
     if not shared.opts.subpath.startswith('/'):
         shared.opts.subpath = f'/{shared.opts.subpath}'
+    shared.cmd_opts.subpath = shared.opts.subpath # update cmd_opts to match opts
     gradio.mount_gradio_app(app, shared.demo, path=shared.opts.subpath)
     log.info(f'Mounted: subpath="{shared.opts.subpath}"')
+
+
+def start_server(
+    blocks,
+    server_name: str | None = None, # pylint: disable=redefined-outer-name
+    server_port: int | None = None,
+    ssl_keyfile: str | None = None,
+    ssl_certfile: str | None = None,
+    ssl_keyfile_password: str | None = None, # pylint: disable=unused-argument
+    app_kwargs: dict | None = None,
+):
+    from gradio.routes import App
+    from modules.server import UvicornServer
+    if ssl_keyfile is not None and ssl_certfile is None:
+        raise ValueError("ssl_certfile must be provided if ssl_keyfile is provided.")
+    server_name = server_name or "127.0.0.1"
+    server_port = server_port or 7860
+    url_host_name = "localhost" if server_name == "0.0.0.0" else server_name
+    if server_name.startswith("[") and server_name.endswith("]"):
+        server_name = server_name[1:-1]
+    app = App.create_app(blocks, app_kwargs=app_kwargs)
+    server = UvicornServer(
+        app=app,
+        listen=server_name == '0.0.0.0',
+        host=server_name,
+        port=server_port,
+        keyfile=ssl_keyfile,
+        certfile=ssl_certfile,
+    )
+    server.start()
+    if ssl_keyfile is not None:
+        path_to_local_server = f"https://{url_host_name}:{server_port}/"
+    else:
+        path_to_local_server = f"http://{url_host_name}:{server_port}/"
+    return server_name, server_port, path_to_local_server, app, server
 
 
 def start_ui():
@@ -324,8 +397,10 @@ def start_ui():
         allowed_paths.append(shared.cmd_opts.models_dir)
     if shared.cmd_opts.allowed_paths is not None:
         allowed_paths += [p for p in shared.cmd_opts.allowed_paths if os.path.isdir(p)]
-    log.debug(f'Root paths: {allowed_paths}')
+    log.info(f'Server: name={server_name} port={shared.cmd_opts.port} paths={allowed_paths} ssl={shared.cmd_opts.tls_keyfile}:{shared.cmd_opts.tls_certfile} auth={len(auth_pairs)}')
     with contextlib.redirect_stdout(stdout):
+        import gradio.networking
+        gradio.networking.start_server = start_server
         app, local_url, share_url = shared.demo.launch( # app is FastAPI(Starlette) instance
             share=shared.cmd_opts.share,
             server_name=server_name,
@@ -344,6 +419,11 @@ def start_ui():
             app_kwargs=fastapi_args,
             _frontend=True and shared.cmd_opts.share,
         )
+
+    uc = shared.demo.server.config
+    get_name = lambda c: getattr(c, '__name__', c) # pylint: disable=unnecessary-lambda-assignment
+    log.debug(f'Server config: loop={shared.demo.server.loop} http={get_name(uc.http_protocol_class)} ws={get_name(uc.ws_protocol_class)} interface={uc.interface} workers={uc.workers} backlog={uc.backlog} timeout_keep_alive={uc.timeout_keep_alive} timeout_notify={uc.timeout_notify} ws_max_size={uc.ws_max_size} ws_max_queue={uc.ws_max_queue} ws_ping_interval={uc.ws_ping_interval} ws_ping_timeout={uc.ws_ping_timeout}')
+
     if shared.cmd_opts.data_dir is not None:
         modules.gr_tempdir.register_tmp_file(shared.demo, os.path.join(shared.cmd_opts.data_dir, 'x'))
     log.info(f'Local URL: {local_url}')
@@ -369,6 +449,7 @@ def start_ui():
     # log.debug(f'Gradio functions: registered={len(shared.demo.fns)}')
     shared.demo.server.wants_restart = False
     modules.api.middleware.setup_middleware(app, shared.cmd_opts)
+    modules.api.middleware.setup_logging(debug=shared.cmd_opts.profile)
 
     timer.startup.record("launch")
 
@@ -391,7 +472,7 @@ def start_ui():
     return app
 
 
-def webui(restart=False, _exit=False):
+def webui(restart=False, _exit=False, profiler=None):
     if restart:
         modules.script_callbacks.app_reload_callback()
         modules.script_callbacks.script_unloaded_callback()
@@ -420,9 +501,10 @@ def webui(restart=False, _exit=False):
         log.info(f"Launch time: {timer.launch.summary(min_time=0)}")
         log.info(f"Installer time: {timer.init.summary(min_time=0)}")
         log.info(f"Startup time: {timer.startup.summary(min_time=0)}")
+        modules.errors._profiler = profiler # pylint: disable=protected-access
     else:
         timer.startup.add('launch', timer.launch.get_total())
-        timer.startup.add('installer', timer.launch.get_total())
+        timer.startup.add('installer', timer.init.get_total())
         log.info(f"Startup time: {timer.startup.summary()}")
     timer.startup.reset()
 

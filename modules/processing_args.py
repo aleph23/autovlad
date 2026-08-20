@@ -6,7 +6,7 @@ import inspect
 import torch
 import numpy as np
 from PIL import Image
-from modules import shared, sd_models, processing, processing_vae, processing_helpers, sd_hijack_hypertile, extra_networks, sd_vae
+from modules import shared, sd_models, processing, processing_vae, processing_helpers, sd_hijack_hypertile, sd_vae
 from modules.logger import log
 from modules.processing_callbacks import diffusers_callback_legacy, diffusers_callback, set_callbacks_p
 from modules.processing_helpers import get_generator, apply_circular # pylint: disable=unused-import
@@ -211,6 +211,15 @@ def set_pipeline_args(p, model, prompts:list, negative_prompts:list, prompts_2:l
     if hasattr(model, 'pipe') and not hasattr(model, 'no_recurse'): # recurse
         model = model.pipe
         has_vae = has_vae or hasattr(model, 'vae')
+    # Wan 2.2 MoE: apply the high/low-noise expert boundary at generation time so it is tunable without
+    # a reload. Both experts resident (transformer + transformer_2) is the combined stage; single-expert
+    # stages keep their load-time boundary. -1 means use the value the checkpoint shipped with.
+    if getattr(model, 'transformer', None) is not None and getattr(model, 'transformer_2', None) is not None and getattr(getattr(model, 'config', None), 'boundary_ratio', None) is not None and hasattr(model, 'register_to_config'):
+        if not hasattr(model, 'wan_boundary_default'):
+            model.wan_boundary_default = model.config.boundary_ratio
+        boundary_target = shared.opts.model_wan_boundary if shared.opts.model_wan_boundary >= 0 else model.wan_boundary_default
+        if boundary_target is not None and model.config.boundary_ratio != boundary_target:
+            model.register_to_config(boundary_ratio=boundary_target)
     if hasattr(model, "set_progress_bar_config"):
         if disable_pbar:
             model.set_progress_bar_config(bar_format='Progress {rate_fmt}{postfix} {bar} {percentage:3.0f}% {n_fmt}/{total_fmt} {elapsed} {remaining} ' + '\x1b[38;5;71m' + desc, ncols=80, colour='#327fba', disable=disable_pbar)
@@ -231,9 +240,6 @@ def set_pipeline_args(p, model, prompts:list, negative_prompts:list, prompts_2:l
             pass # clip_skip = None
         else:
             args['clip_skip'] = clip_skip - 1
-
-    if shared.opts.lora_apply_te:
-        extra_networks.activate(p, include=['text_encoder', 'text_encoder_2', 'text_encoder_3'])
 
     if 'complex_human_instruction' in possible:
         chi = shared.opts.te_complex_human_instruction

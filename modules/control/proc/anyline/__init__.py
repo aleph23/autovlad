@@ -10,7 +10,7 @@ class AnylineDetector:
     def from_pretrained(cls, pretrained_model_or_path="TheMistoAI/MistoLine", cache_dir=None, local_files_only=False):
         from installer import install
         install('controlnet-aux', quiet=True)
-        from controlnet_aux import AnylineDetector as _AnylineDetector
+        from controlnet_aux.anyline import AnylineDetector as _AnylineDetector
         model = _AnylineDetector.from_pretrained(pretrained_model_or_path, filename="MTEED.pth", subfolder="Anyline", cache_dir=cache_dir)
         return cls(model)
 

@@ -2,13 +2,14 @@
 
 import torch
 
-from ...common import compile_func, fp_mm_func
-from ...dequantizer import dequantize_symmetric, dequantize_symmetric_with_bias
+from ...common import compile_func
+from ...kernel_wrappers import fp_mm_func, fp_scaled_mm_func
+from ...dequantizer import dequantize_symmetric, dequantize_asymmetric
 from ...quant_utils import rotate_hadamard, get_hadamard
 from ...packed_float import unpack_float
 
 from .forward import get_conv_args, process_conv_input
-from ..linear.linear_fp8_tensorwise import quantize_fp_mm_input_tensorwise
+from ..linear.linear_fp8 import quantize_fp_mm_input
 from ..linear.forward import check_mats
 
 
@@ -30,6 +31,13 @@ def conv_fp16_matmul(
 ) -> torch.FloatTensor:
     return_dtype = input.dtype
     input, mm_output_shape = process_conv_input(conv_type, input, reversed_padding_repeated_twice, padding_mode, result_shape, stride, padding, dilation)
+
+    if quantized_weight_shape is not None:
+        weight = unpack_float(weight, weights_dtype, quantized_weight_shape).to(dtype=torch.float16).t_()
+        scale = scale.t()
+    elif weight.dtype != torch.float16:
+        weight = weight.to(dtype=torch.float16) # fp8 weights
+
     if hadamard is not None:
         input = rotate_hadamard(input, hadamard=hadamard)
     if svd_up is not None:
@@ -39,16 +47,11 @@ def conv_fp16_matmul(
         else:
             bias = torch.mm(torch.mm(input.to(dtype=svd_down.dtype), svd_down), svd_up)
 
-    if quantized_weight_shape is not None:
-        weight = unpack_float(weight, weights_dtype, quantized_weight_shape).to(dtype=torch.float16).t_()
-        scale = scale.t()
-    elif weight.dtype != torch.float16:
-        weight = weight.to(dtype=torch.float16) # fp8 weights
-    input, input_scale = quantize_fp_mm_input_tensorwise(input, dtype=scale.dtype, matmul_dtype="float16")
-    input, weight = check_mats(input, weight)
+    input, input_scale = quantize_fp_mm_input(input, dtype=scale.dtype, matmul_dtype="float16")
+    input, weight = check_mats(input, weight, matmul_dtype="float16")
 
     if groups == 1:
-        result = fp_mm_func(input, weight).to(dtype=input_scale.dtype).mul_(input_scale)
+        result = fp_scaled_mm_func(input, weight, input_scale, scale, bias=bias, out_dtype=return_dtype).view(mm_output_shape)
     else:
         weight = weight.view(weight.shape[0], groups, weight.shape[1] // groups)
         input = input.view(input.shape[0], groups, input.shape[1] // groups)
@@ -56,10 +59,10 @@ def conv_fp16_matmul(
         for i in range(groups):
             result.append(fp_mm_func(input[:, i], weight[:, i]))
         result = torch.cat(result, dim=-1).to(dtype=input_scale.dtype).mul_(input_scale)
-    if bias is not None:
-        dequantize_symmetric_with_bias(result, scale, bias, dtype=return_dtype, result_shape=mm_output_shape)
-    else:
-        dequantize_symmetric(result, scale, dtype=return_dtype, result_shape=mm_output_shape)
+        if bias is not None:
+            result = dequantize_asymmetric(result, scale, bias, dtype=return_dtype, result_shape=mm_output_shape)
+        else:
+            result = dequantize_symmetric(result, scale, dtype=return_dtype, result_shape=mm_output_shape)
 
     if conv_type == 1:
         result = result.transpose_(1,2)
@@ -67,6 +70,7 @@ def conv_fp16_matmul(
         result = result.permute(0,3,1,2)
     elif conv_type == 3:
         result = result.permute(0,4,1,2,3)
+    result = result.contiguous()
     return result
 
 

@@ -1,17 +1,27 @@
 import os
 import copy
 import time
-from modules import shared, errors, sd_models, processing, devices, images, ui_common
+from modules import shared, errors, sd_models, processing, devices, images, ui_common, scripts_manager
 from modules.logger import log
-from modules.video_models import models_def, video_utils, video_load, video_vae, video_overrides, video_save, video_prompt
+from modules.video_models import models_def, video_utils, video_load, video_vae, video_overrides, video_save
 from modules.paths import resolve_output_path
 
 
 debug = log.trace if os.environ.get('SD_VIDEO_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
-def generate(*args, **kwargs):
-    task_id, ui_state, engine, model, prompt, negative, styles, width, height, frames, steps, sampler_index, sampler_shift, dynamic_shift, seed, guidance_scale, guidance_true, init_image, init_strength, last_image, vae_type, vae_tile_frames, mp4_fps, mp4_interpolate, mp4_codec, mp4_ext, mp4_opt, mp4_video, mp4_frames, mp4_sf, mp4_thumb, vlm_enhance, vlm_model, vlm_system_prompt, override_settings = args
+def generate(task_id, ui_state,
+             engine, model,
+             prompt, negative, styles,
+             width, height, frames, steps,
+             sampler_index, sampler_shift, dynamic_shift,
+             seed, guidance_scale, guidance_true,
+             init_image, init_strength, last_image,
+             vae_type, vae_tile_frames,
+             mp4_fps, mp4_interpolate, mp4_codec, mp4_ext, mp4_opt, mp4_video, mp4_frames, mp4_sf, mp4_thumb,
+             override_settings,
+             *args, **kwargs
+            ):
 
     if engine is None or model is None or engine == 'None' or model == 'None':
         return video_utils.queue_err('model not selected')
@@ -54,9 +64,12 @@ def generate(*args, **kwargs):
     if p.vae_type == 'Remote' and not selected.vae_remote:
         log.warning(f'Video: model={selected.name} remote vae not supported')
         p.vae_type = 'Default'
-    p.scripts = None
-    p.script_args = None
+
     p.state = ui_state
+    p.scripts = scripts_manager.scripts_video
+    p.script_args = args
+    processed: processing.Processed = scripts_manager.scripts_video.run(p, *args)
+
     p.do_not_save_grid = True
     p.do_not_save_samples = not mp4_frames
     p.outpath_samples = resolve_output_path(shared.opts.outdir_samples, shared.opts.outdir_video)
@@ -67,7 +80,13 @@ def generate(*args, **kwargs):
         if init_image is None:
             return video_utils.queue_err('No input image provided. Please upload or select an image.')
         p.task_args['image'] = images.resize_image(resize_mode=2, im=init_image, width=p.width, height=p.height, upscaler_name=None, output_type='pil')
-        log.debug(f'Video: op=I2V init={init_image} resized={p.task_args["image"]}')
+        if last_image is not None and video_utils.supports_last_frame(shared.sd_model):
+            p.task_args['last_image'] = images.resize_image(resize_mode=2, im=last_image, width=p.width, height=p.height, upscaler_name=None, output_type='pil')
+            log.debug(f'Video: op=FLF2V init={init_image} last={last_image} resized={p.task_args["image"]}')
+        elif last_image is not None:
+            log.warning(f'Video: op=I2V model="{model}" last frame not supported, ignoring')
+        else:
+            log.debug(f'Video: op=I2V init={init_image} resized={p.task_args["image"]}')
     elif 'FLF2V' in model:
         if init_image is None:
             return video_utils.queue_err('No input image provided. Please upload or select an image.')
@@ -95,9 +114,7 @@ def generate(*args, **kwargs):
     shared.sd_model = sd_models.apply_balanced_offload(shared.sd_model)
     devices.torch_gc(force=True, reason='video')
 
-
     # set args
-    video_prompt.prepare_prompts(p, init_image, prompt, vlm_enhance, vlm_model, vlm_system_prompt)
     processing.fix_seed(p)
     video_vae.set_vae_params(p)
     p.task_args['num_inference_steps'] = p.steps

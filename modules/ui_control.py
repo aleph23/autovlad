@@ -21,12 +21,12 @@ use_generator = os.environ.get('SD_USE_GENERATOR', None) is not None
 
 def return_stats(t: float | None = None):
     if t is None:
-        elapsed_text = ''
+        elapsed_text = '⏱ Idle'
     else:
         elapsed = time.perf_counter() - t
         elapsed_m = int(elapsed // 60)
         elapsed_s = elapsed % 60
-        elapsed_text = f"Time: {elapsed_m}m {elapsed_s:.2f}s |" if elapsed_m > 0 else f"Time: {elapsed_s:.2f}s |"
+        elapsed_text = f"⏱ {elapsed_m}m {elapsed_s:.2f}s |" if elapsed_m > 0 else f"⏱ {elapsed_s:.2f}s |"
     summary = timer.process.summary(total=False).replace('=', ' ')
     gpu = ''
     cpu = ''
@@ -34,18 +34,19 @@ def return_stats(t: float | None = None):
         mem_mon_read = shared.mem_mon.read()
         ooms = mem_mon_read.pop("oom")
         retries = mem_mon_read.pop("retries")
-        vram = {k: v//1048576 for k, v in mem_mon_read.items()}
-        peak = max(vram['active_peak'], vram['reserved_peak'], vram['used'])
-        used = round(100.0 * peak / vram['total']) if vram['total'] > 0 else 0
+        vram = {k: v // 1048576 for k, v in mem_mon_read.items()}
+        peak = max(vram.get('active_peak', 0), vram.get('reserved_peak', 0), vram.get('used', 0))
+        used = round(100.0 * peak / vram.get('total', 0)) if vram.get('total', 0) > 0 else 0
         if peak > 0:
-            gpu += f"| GPU {peak} MB"
+            gpu += f"| 🕮 GPU {peak} MB"
             gpu += f" {used}%" if used > 0 else ''
-            gpu += f" | retries {retries} oom {ooms}" if retries > 0 or ooms > 0 else ''
+            gpu += f" | Retries {retries} OOM {ooms}" if retries > 0 or ooms > 0 else ''
     ram = ram_stats()
     if ram['used'] > 0:
-        cpu += f"| RAM {ram['used']} GB"
+        # change emoji/symbol for ram to something better
+        cpu += f"| 🗒 RAM {ram['used']} GB"
         cpu += f" {round(100.0 * ram['used'] / ram['total'])}%" if ram['total'] > 0 else ''
-    return f"<div class='performance'><p>{elapsed_text} {summary} {gpu} {cpu}</p></div>"
+    return f"<div class='performance hint' id='control-performance'><p>{elapsed_text} {summary} {gpu} {cpu}</p></div>"
 
 
 def return_controls(res, t: float | None = None):
@@ -206,7 +207,7 @@ def create_ui(_blocks: gr.Blocks=None):
                         video_type, video_duration, video_loop, video_pad, video_interpolate = create_video_inputs(tab='control')
 
                 enable_hr, hr_sampler_index, hr_denoising_strength, hr_resize_mode, hr_resize_context, hr_upscaler, hr_force, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, refiner_steps, refiner_start, refiner_prompt, refiner_negative = ui_sections.create_hires_inputs('control')
-                detailer_enabled, detailer_prompt, detailer_negative, detailer_steps, detailer_strength, detailer_resolution = shared.yolo.ui('control')
+                detailer_enabled, detailer_prompt, detailer_negative, detailer_steps, detailer_strength, detailer_resolution = shared.detailer.ui('control')
 
             with gr.Row():
                 override_script_name = gr.State(value='', visible=False, elem_id='control_override_script_name')
@@ -247,7 +248,7 @@ def create_ui(_blocks: gr.Blocks=None):
                     gr.HTML('<span id="control-output-button">Output</p>')
                     with gr.Tabs(elem_classes=['control-tabs'], elem_id='control-tab-output') as output_tabs:
                         with gr.Tab('Gallery', id='out-gallery'):
-                            output_gallery, _output_gen_info, _output_html_info, _output_html_info_formatted, output_html_log = ui_common.create_output_panel("control", preview=False, prompt=prompt, height=gr_height, result_info=result_txt)
+                            output_gallery, _output_gen_info, _output_html_info, _output_html_info_formatted, output_html_log = ui_common.create_output_panel("control", preview=False, prompt=prompt, height=gr_height, result_info=result_txt, html_log_val=return_stats())
                         with gr.Tab('Image', id='out-image'):
                             output_image = gr.Image(label="Output", show_label=False, type="pil", interactive=False, tool="editor", height=gr_height, elem_id='control_output_image', elem_classes=['control-image'])
                         with gr.Tab('Video', id='out-video'):

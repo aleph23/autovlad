@@ -1,7 +1,6 @@
 from threading import Lock
 from pydantic import BaseModel, Field # pylint: disable=no-name-in-module
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import HTTPException
 from modules.api.helpers import decode_base64_to_image, encode_pil_to_base64
 from modules import errors, shared, postprocessing
 from modules.api import models, helpers
@@ -20,12 +19,17 @@ class ResPreprocess(BaseModel):
     model: str = Field(default='', title="Model", description="The processor model used")
     image: str = Field(default='', title="Image", description="The processed image in base64 format")
 
+
 class ReqMask(BaseModel):
     image: str = Field(title="Image", description="The base64 encoded image")
     type: str = Field(title="Mask type", description="Type of masking image to return")
     mask: str | None = Field(title="Mask", description="If optional mask image is not provided auto-masking will be performed")
     model: str | None = Field(title="Model", description="The model to use for preprocessing")
     params: dict | None = Field(default={}, title="Settings", description="Preprocessor settings")
+
+class ResMask(BaseModel):
+    mask: str = Field(default='', title="Image", description="The processed image in base64 format")
+
 
 class ReqFace(BaseModel):
     image: str = Field(title="Image", description="The base64 encoded image")
@@ -38,8 +42,6 @@ class ResFace(BaseModel):
     images: list[str] = Field(title="Image", description="The base64 encoded images of detected faces")
     scores: list[float] = Field(title="Scores", description="The scores of the detected faces")
 
-class ResMask(BaseModel):
-    mask: str = Field(default='', title="Image", description="The processed image in base64 format")
 
 class ItemPreprocess(BaseModel):
     name: str = Field(title="Name", description="Preprocessor name")
@@ -118,7 +120,6 @@ class APIProcess:
 
     def post_detect(self, req: ReqFace):
         """Detect faces/objects in an image using YOLO. Returns bounding boxes, labels, scores, and cropped images."""
-        from modules.shared import yolo # pylint: disable=no-name-in-module
         image = decode_base64_to_image(req.image)
         jobid = shared.state.begin('API-FACE', api=True)
         images = []
@@ -127,7 +128,7 @@ class APIProcess:
         boxes = []
         labels = []
         with self.queue_lock:
-            items = yolo.predict(req.model, image)
+            items = shared.detailer.predict(req.model, req.model, image)
             for item in items:
                 images.append(encode_pil_to_base64(item.item))
                 scores.append(item.score)
@@ -145,7 +146,6 @@ class APIProcess:
         """
         import numpy as np
         from PIL import Image
-        from modules.shared import yolo # pylint: disable=no-name-in-module
 
         if shared.sd_model is None or not hasattr(shared.sd_model, 'sd_checkpoint_info'):
             return JSONResponse(status_code=400, content={"error": "no base model selected"})
@@ -182,7 +182,7 @@ class APIProcess:
 
         jobid = shared.state.begin('API-DETAIL', api=True)
         try:
-            p = yolo.make_processing(
+            p = shared.detailer.make_processing(
                 image,
                 prompt=req.detailer_prompt or '',
                 negative=req.detailer_negative or '',
@@ -194,7 +194,7 @@ class APIProcess:
             )
 
             with self.queue_lock:
-                result = yolo.restore(np.array(image), p)
+                result = shared.detailer.restore(np.array(image), p)
 
             annotated_b64 = None
             if isinstance(result, list) and len(result) > 0:
@@ -217,50 +217,37 @@ class APIProcess:
         seed = req.seed or -1
         seed = processing_helpers.get_fixed_seed(seed)
         prompt = ''
-        if req.type in ('text', 'image'):
-            from modules.scripts_manager import scripts_txt2img
-            default_model = 'google/gemma-3-4b-it' if req.type == 'image' else 'google/gemma-3-1b-it'
-            model = default_model if req.model is None or len(req.model) < 4 else req.model
-            instance = [s for s in scripts_txt2img.scripts if 'prompt_enhance.py' in s.filename][0]
-            prompt = instance.enhance(
-                model=model,
-                prompt=req.prompt,
-                system=req.system_prompt,
-                prefix=req.prefix,
-                suffix=req.suffix,
-                sample=req.do_sample,
-                min_tokens=req.min_tokens,
-                max_tokens=req.max_tokens,
-                temperature=req.temperature,
-                penalty=req.repetition_penalty,
-                top_k=req.top_k,
-                top_p=req.top_p,
-                thinking=req.thinking,
-                keep_thinking=req.keep_thinking,
-                use_vision=req.use_vision,
-                prefill=req.prefill or '',
-                keep_prefill=req.keep_prefill,
-                image=decode_base64_to_image(req.image) if req.image else None,
-                seed=seed,
-                nsfw=req.nsfw,
-                custom_args=req.custom_args,
-                process_words=req.process_words,
-                semantic_threshold=req.semantic_threshold,
-                embedding_similarity=req.embedding_similarity,
-            )
-        elif req.type == 'video':
-            from modules.ui_video_vlm import enhance_prompt
-            model = 'Google Gemma 3 4B' if req.model is None or len(req.model) < 4 else req.model
-            prompt = enhance_prompt(
-                enable=True,
-                image=decode_base64_to_image(req.image),
-                prompt=req.prompt,
-                model=model,
-                system_prompt=req.system_prompt,
-                nsfw=req.nsfw,
-            )
-        else:
-            raise HTTPException(status_code=400, detail="prompt enhancement: invalid type")
+        from modules.scripts_manager import scripts_txt2img
+        default_model = 'google/gemma-3-4b-it' if req.type == 'image' else 'google/gemma-3-1b-it'
+        model = default_model if req.model is None or len(req.model) < 4 else req.model
+        instance = [s for s in scripts_txt2img.scripts if 'prompt_enhance.py' in s.filename][0]
+        prompt = instance.enhance(
+            model=model,
+            prompt=req.prompt,
+            system=req.system_prompt,
+            prefix=req.prefix,
+            suffix=req.suffix,
+            sample=req.do_sample,
+            min_tokens=req.min_tokens,
+            max_tokens=req.max_tokens,
+            temperature=req.temperature,
+            penalty=req.repetition_penalty,
+            top_k=req.top_k,
+            top_p=req.top_p,
+            thinking=req.thinking,
+            keep_thinking=req.keep_thinking,
+            use_vision=req.use_vision,
+            prefill=req.prefill or '',
+            keep_prefill=req.keep_prefill,
+            image=decode_base64_to_image(req.image) if req.image else None,
+            seed=seed,
+            nsfw=req.nsfw,
+            custom_args=req.custom_args,
+            process_words=req.process_words,
+            semantic_threshold=req.semantic_threshold,
+            embedding_similarity=req.embedding_similarity,
+            use_openai=req.use_openai
+        )
         res = models.ResPromptEnhance(prompt=prompt, seed=seed)
         return res
 
@@ -293,7 +280,7 @@ class APIProcess:
         reqDict, script_args = self.set_upscalers(req)
         reqDict['image'] = helpers.decode_base64_to_image(reqDict['image'])
         with self.queue_lock:
-            result = postprocessing.run_extras(extras_mode=0, image_folder="", input_dir="", output_dir="", save_output=False, script_args=script_args, **reqDict)
+            result = postprocessing.run_extras(extras_mode=0, image_folder="", input_dir="", output_dir="", video="", save_output=False, script_args=script_args, **reqDict)
         return models.ResProcessImage(image=helpers.encode_pil_to_base64(result[0][0]), html_info=result[1])
 
     def extras_batch_images_api(self, req: models.ReqProcessBatch):
@@ -302,5 +289,5 @@ class APIProcess:
         image_list = reqDict.pop('imageList', [])
         image_folder = [helpers.decode_base64_to_image(x.data) for x in image_list]
         with self.queue_lock:
-            result = postprocessing.run_extras(extras_mode=1, image_folder=image_folder, image="", input_dir="", output_dir="", save_output=False, script_args=script_args, **reqDict)
+            result = postprocessing.run_extras(extras_mode=1, image_folder=image_folder, image="", input_dir="", output_dir="", video="", save_output=False, script_args=script_args, **reqDict)
         return models.ResProcessBatch(images=list(map(helpers.encode_pil_to_base64, result[0])), html_info=result[1])
