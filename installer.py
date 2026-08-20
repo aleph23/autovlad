@@ -56,14 +56,14 @@ args = Dot({
     'skip_torch': False,
     'use_directml': False,
     'use_ipex': False,
-    'use_cuda': False,
+    'use_cuda': True,
     'use_rocm': False,
     'experimental': False,
     'test': False,
     'tls_selfsign': False,
     'reinstall': False,
     'version': False,
-    'ignore': False,
+    'ignore': True,
     'uv': False,
 })
 git_commit = "unknown"
@@ -212,10 +212,10 @@ def uninstall(package, quiet = False):
     packages = package if isinstance(package, list) else [package]
     txt = ''
     for p in packages:
-        if installed(p, p, quiet=True):
+        if installed(p, p, quiet=False):
             if not quiet:
                 log.warning(f'Package: {p} uninstall')
-            _result, _txt = pip(f"uninstall {p} --yes --quiet", ignore=True, quiet=True, uv=False)
+            _result, _txt = pip(f"uninstall {p} --yes --quiet", ignore=True, quiet=False, uv=False)
             txt += _txt
     ts('uninstall', t_start)
     return txt
@@ -289,7 +289,7 @@ def cleanup_broken_packages():
         pass
 
 
-def pip(arg: str, ignore: bool = False, quiet: bool = True, *, uv = True, constraints = True) -> tuple[subprocess.CompletedProcess | None, str]:
+def pip(arg: str, ignore: bool = False, quiet: bool = False, *, uv = True, constraints = True) -> tuple[subprocess.CompletedProcess | None, str]:
     t_start = time.time()
     originalArg = arg
     arg = arg.replace('>=', '==').strip()
@@ -309,6 +309,7 @@ def pip(arg: str, ignore: bool = False, quiet: bool = True, *, uv = True, constr
     all_args.append(arg)
     if env_args:
         all_args.append(env_args)
+    constraints = os.path.exists("constraints.txt")
     if constraints and "-c " not in env_args and arg.startswith("install"):
         all_args.append("-c constraints.txt")
     if not quiet:
@@ -623,15 +624,15 @@ def check_onnx():
     t_start = time.time()
     if args.skip_all or args.skip_requirements:
         return
-    if not installed('onnx', quiet=True):
+    if not installed('onnx', quiet=False):
         install('onnx', 'onnx', ignore=True)
-    if not installed('onnxruntime', quiet=True) and not (installed('onnxruntime-gpu', quiet=True) or installed('onnxruntime-openvino', quiet=True) or installed('onnxruntime-training', quiet=True)): # allow either
+    if not installed('onnxruntime', quiet=False) and not (installed('onnxruntime-gpu', quiet=False) or installed('onnxruntime-openvino', quiet=False) or installed('onnxruntime-training', quiet=False)): # allow either
         install(os.environ.get('ONNXRUNTIME_COMMAND', 'onnxruntime'), ignore=True)
     else:
         onnx_version = package_version('onnxruntime') or ''
         if onnx_version.startswith('1.1'):
             log.warning(f'ONNX: onnxruntime={onnx_version} upgrade required')
-            uninstall('onnxruntime', quiet=True)
+            uninstall('onnxruntime', quiet=False)
             install(os.environ.get('ONNXRUNTIME_COMMAND', 'onnxruntime'), ignore=True)
     ts('onnx', t_start)
 
@@ -643,7 +644,7 @@ def install_cuda():
     if args.use_nightly:
         cmd = os.environ.get('TORCH_COMMAND', '--upgrade --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu132 --extra-index-url https://download.pytorch.org/whl/nightly/cu130')
     else:
-        cmd = os.environ.get('TORCH_COMMAND', 'torch==2.13.0+cu132 torchvision==0.28.0+cu132 --index-url https://download.pytorch.org/whl/cu132')
+        cmd = os.environ.get('TORCH_COMMAND', 'torch==2.12.0+cu130 torchvision==0.27.0+cu130 --index-url https://download.pytorch.org/whl/cu130')
     return cmd
 
 
@@ -800,7 +801,7 @@ def install_torch_addons():
     t_start = time.time()
     triton_command = os.environ.get('TRITON_COMMAND', None)
     if triton_command is not None and triton_command != 'skip':
-        install(triton_command, 'triton', quiet=True)
+        install(triton_command, 'triton', quiet=False)
     xformers_package = os.environ.get('XFORMERS_PACKAGE', '--pre xformers') if opts.get('cross_attention_optimization', '') == 'xFormers' or args.use_xformers else 'none'
     if 'xformers' in xformers_package:
         try:
@@ -818,8 +819,8 @@ def install_torch_addons():
     if opts.get('samples_format', 'jpg') == 'jxl' or opts.get('grid_format', 'jpg') == 'jxl':
         install('pillow-jxl-plugin==1.3.7', 'pillow-jxl-plugin')
     if not args.experimental:
-        uninstall('wandb', quiet=True)
-        uninstall('pynvml', quiet=True)
+        uninstall('wandb', quiet=False)
+        uninstall('pynvml', quiet=False)
     ts('addons', t_start)
 
 
@@ -965,13 +966,13 @@ def check_torch():
                 if is_cuda_available:
                     if args.use_cuda:
                         log.warning(f'Torch: version="{torch.__version__}" CPU version installed and CUDA is selected - reinstalling')
-                        install(torch_command, 'torch torchvision', quiet=True, reinstall=True, force=True) # foce reinstall
+                        install(torch_command, 'torch torchvision', quiet=False, reinstall=True, force=True) # foce reinstall
                     else:
                         log.warning(f'Torch: version="{torch.__version__}" CPU version installed and CUDA is available - consider reinstalling')
                 elif is_rocm_available:
                     if args.use_rocm:
                         log.warning(f'Torch: version="{torch.__version__}" CPU version installed and ROCm is selected - reinstalling')
-                        install(torch_command, 'torch torchvision', quiet=True, reinstall=True, force=True) # foce reinstall
+                        install(torch_command, 'torch torchvision', quiet=False, reinstall=True, force=True) # foce reinstall
                     else:
                         log.warning(f'Torch: version="{torch.__version__}" CPU version installed and ROCm is available - consider reinstalling')
                 if args.use_openvino:
@@ -1252,11 +1253,12 @@ def install_gradio():
     if installed('gradio', quiet=True):
         return
     install('gradio==3.43.2', no_deps=True)
-    install('gradio-client==0.5.0', no_deps=True, quiet=True)
+    install('gradio-client==0.5.0', no_deps=True, quiet=False)
+    install('dctorch==0.1.2', no_deps=True, quiet=False)
     pkgs = ['fastapi', 'websockets', 'aiofiles', 'ffmpy', 'pydub', 'uvicorn', 'semantic-version', 'altair', 'python-multipart', 'matplotlib', 'importlib-resources']
     for pkg in pkgs:
-        if not installed(pkg, quiet=True):
-            install(pkg, quiet=True)
+        if not installed(pkg, quiet=False):
+            install(pkg, quiet=False)
 
 
 def install_compel():
@@ -1266,22 +1268,22 @@ def install_compel():
 
 
 def install_pydantic():
-    install('pydantic==2.13.4', ignore=True, quiet=True)
+    install('pydantic==2.13.4', ignore=True, quiet=False)
     reload('pydantic', '2.13.4')
 
 
 def install_scipy():
     if args.new or (sys.version_info >= (3, 14)):
-        install('scipy==1.17.1', ignore=True, quiet=True)
+        install('scipy==1.17.1', ignore=True, quiet=False)
     else:
-        install('scipy==1.14.1', ignore=True, quiet=True)
+        install('scipy==1.14.1', ignore=True, quiet=False)
 
 
 def install_opencv():
-    install('opencv-python==4.13.0.92', ignore=True, quiet=True)
-    install('opencv-python-headless==4.13.0.92', ignore=True, quiet=True)
-    install('opencv-contrib-python==4.13.0.92', ignore=True, quiet=True)
-    install('opencv-contrib-python-headless==4.13.0.92', ignore=True, quiet=True)
+    install('opencv-python==4.13.0.92', ignore=True, quiet=False)
+    install('opencv-python-headless==4.13.0.92', ignore=True, quiet=False)
+    install('opencv-contrib-python==4.13.0.92', ignore=True, quiet=False)
+    install('opencv-contrib-python-headless==4.13.0.92', ignore=True, quiet=False)
 
 
 def install_insightface():
@@ -1296,8 +1298,8 @@ def install_insightface():
         install('albumentations==1.4.3', ignore=True, quiet=True)
     """
     install('insightfacex==0.7.4', 'insightfacex', ignore=True, quiet=True)
-    uninstall('albumentations', quiet=True)
-    install('albumentationsx', quiet=True)
+    uninstall('albumentations')
+    install('albumentationsx')
     install('facexlib', no_deps=True)
     install_pydantic()
 
@@ -1308,20 +1310,20 @@ def install_optional():
     install('pi-heif')
     install('addict')
     install('yapf')
-    install('--no-build-isolation git+https://github.com/Disty0/BasicSR@23c1fb6f5c559ef5ce7ad657f2fa56e41b121754', 'basicsr', ignore=True, quiet=True)
-    install('av', ignore=True, quiet=True)
-    install('beautifulsoup4', ignore=True, quiet=True)
-    install('clean-fid', ignore=True, quiet=True)
-    install('clip_interrogator==0.6.0', ignore=True, quiet=True)
-    install('Cython', ignore=True, quiet=True)
-    install('gguf', ignore=True, quiet=True)
-    install('hf_transfer', ignore=True, quiet=True)
-    install('hf_xet', ignore=True, quiet=True)
-    install('nvidia-ml-py', ignore=True, quiet=True)
-    install('pillow-jxl-plugin==1.3.7', ignore=True, quiet=True)
-    install('ultralytics==8.4.67', ignore=True, quiet=True)
-    install('open-clip-torch', no_deps=True, quiet=True)
-    install('git+https://github.com/tencent-ailab/IP-Adapter.git', 'ip_adapter', ignore=True, quiet=True)
+    install('--no-build-isolation git+https://github.com/Disty0/BasicSR@23c1fb6f5c559ef5ce7ad657f2fa56e41b121754', 'basicsr', ignore=True, quiet=False)
+    install('av', ignore=True, quiet=False)
+    install('beautifulsoup4', ignore=True, quiet=False)
+    install('clean-fid', ignore=True, quiet=False)
+    install('clip_interrogator==0.6.0', ignore=True, quiet=False)
+    install('Cython', ignore=True, quiet=False)
+    install('gguf', ignore=True, quiet=False)
+    install('hf_transfer', ignore=True, quiet=False)
+    install('hf_xet', ignore=True, quiet=False)
+    install('nvidia-ml-py', ignore=True, quiet=False)
+    install('pillow-jxl-plugin==1.3.7', ignore=True, quiet=False)
+    install('ultralytics==8.4.67', ignore=True, quiet=False)
+    install('open-clip-torch', no_deps=True, quiet=False)
+    install('git+https://github.com/tencent-ailab/IP-Adapter.git', 'ip_adapter', ignore=True, quiet=False)
     # install('git+https://github.com/openai/CLIP.git', 'clip', quiet=True, no_build_isolation=True)
     ts('optional', t_start)
 
@@ -1335,7 +1337,7 @@ def install_requirements():
         pr.enable()
     if int(sys.version_info.minor) >= 13:
         install('audioop-lts')
-    if not installed('diffusers', quiet=True) or args.reinstall: # diffusers are not installed, so run initial installation
+    if not installed('diffusers', quiet=False) or args.reinstall: # diffusers are not installed, so run initial installation
         global quick_allowed # pylint: disable=global-statement
         quick_allowed = False
         log.info('Install requirements: this may take a while...')
@@ -1349,7 +1351,7 @@ def install_requirements():
     with open('requirements.txt', encoding='utf8') as f:
         lines = [line.strip() for line in f.readlines() if line.strip() != '' and not line.startswith('#') and line is not None]
         for line in lines:
-            if not installed(line, quiet=True) or args.reinstall:
+            if not installed(line, quiet=False) or args.reinstall:
                 if args.reinstall:
                     log.trace(f'Install: package="{line}" reinstall')
                 _res = install(line, reinstall=args.reinstall)
@@ -1628,7 +1630,7 @@ def check_version(reset=True): # pylint: disable=unused-argument
             url_parts = ver['url'].replace('https://github.com/', '').split('/tree/')[0]
             api_base = f'https://api.github.com/repos/{url_parts}'
         else:
-            api_base = 'https://api.github.com/repos/vladmandic/sdnext'
+            api_base = 'https://api.github.com/repos/aleph23/autovlad'
         branches = requests.get(f'{api_base}/branches', timeout=5).json()
         if not isinstance(branches, list):
             log.error(f'Repository: branches API returned {branches!r} from {api_base}')

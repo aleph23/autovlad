@@ -67,9 +67,10 @@ tunableop_results*.csv
 !/models/VAE-approx/model.pt
 !/models/Reference
 !/models/Reference/**/*
-
-# copilot instructions
-!/.github/
-!/.github/copilot-instructions.md
-!/.github/instructions/
-!/.github/instructions/**/*
+config.json-bak
+autovlad/
+config_states/civitai_subfolders.json
+extensions-builtin/sdnext-kanvas
+mochi
+extensions-builtin/sd-extension-chainner
+extensions-builtin/sdnext-kanvas

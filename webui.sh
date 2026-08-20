@@ -5,6 +5,8 @@
 
 # change to local directory
 cd -- "$(dirname -- "$0")"
+export MODELS_DIR=/home/a13ph/models/image/
+export COMMANDLINE_ARGS=" --models-dir $MODELS_DIR --embeddings-dir $MODELS_DIR/embeddings --use-cuda --cors-regex '.*' --ignore --insecure --allow-code --api --api-log --port 44333 "
 
 can_run_as_root=0
 use_uv=0
