@@ -69,3 +69,8 @@ tunableop_results*.csv
 !/models/Reference/**/*
 config.json-bak
 autovlad/
+config_states/civitai_subfolders.json
+extensions-builtin/sdnext-kanvas
+mochi
+extensions-builtin/sd-extension-chainner
+extensions-builtin/sdnext-kanvas
